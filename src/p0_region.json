@@ -1,0 +1,19 @@
+{
+  "_doc": "P0縦切りの対象区間。Blender(見た目)とJS(衝突・整合チェック)が同じ定義を読む。座標は building.json と同じ(x=東, z=南, 単位m)。rect=[x,z,w,d]",
+  "level": 4,
+  "air": [
+    { "id": "corridor", "rect": [6.0, 5.8, 1.8, 14.5] },
+    { "id": "junction", "rect": [6.0, 20.3, 2.7, 1.8] },
+    { "id": "room410_entry", "rect": [7.8, 5.8, 1.5, 2.9] }
+  ],
+  "clipPad": 0.07,
+  "minContactArea": 0.02,
+  "caps": [
+    { "id": "cap_junction_east", "x": 8.7, "z0": 20.3, "z1": 22.1, "normal": "W" },
+    { "id": "cap_room410", "x": 9.3, "z0": 5.8, "z1": 8.7, "normal": "W" }
+  ],
+  "capThickness": 0.12,
+  "operableDoors": ["410"],
+  "window": { "x": 6.9, "z": 5.8, "w": 0.75, "h": 0.9, "sill": 1.15 },
+  "spawn": { "x": 6.9, "z": 7.6, "yaw": 3.14159 }
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOLIFE 2 — P0</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+  #hint { position: fixed; left: 0; right: 0; bottom: 6vh; text-align: center; color: #8a8f96;
+    font: 13px/1.6 -apple-system, "Hiragino Sans", sans-serif; letter-spacing: .08em; pointer-events: none;
+    transition: opacity .6s; }
+  body.locked #hint { opacity: 0; }
+  #err { position: fixed; top: 12px; left: 12px; color: #c66; font: 12px monospace; white-space: pre; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "./vendor/three/build/three.module.js",
+  "three/addons/": "./vendor/three/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hint">クリックで開始 ／ WASD 移動・Shift 走る・Ctrl しゃがむ ／ F 懐中電灯 ／ E 扉</div>
+<div id="err"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
