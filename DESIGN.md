@@ -104,7 +104,7 @@ data/building.json
 | P6 | 仕上げ：UI・タイトル・演出・最終目視 | ユーザー合格 | Sonnet |
 
 ## 8. 検証環境の罠
-fable-method §7（rAF停止／keydown-keyupペア／ESMキャッシュ／ポインタロック不可／non-ASCII識別子禁止）を各委譲プロンプトに貼る。Blender関連の追加：`-b` ヘッドレスではGPUベイクにMetalデバイス指定が要る／ベイク結果は必ずPNGを目視／bpyのバージョン差でAPIが変わる（導入した版を本書に記録：**後述**）。
+fable-method §7（rAF停止／keydown-keyupペア／ESMキャッシュ／ポインタロック不可／non-ASCII識別子禁止）を各委譲プロンプトに貼る。Blender関連の追加：`-b` ヘッドレスではGPUベイクにMetalデバイス指定が要る／ベイク結果は必ずPNGを目視／bpyのバージョン差でAPIが変わる（導入版：**Blender 5.2.3 LTS／bpy Python 3.13**、`/Applications/Blender.app/Contents/MacOS/Blender -b` でヘッドレス実行確認済み 2026-10-31）。
 
 ## 9. 決定ログ
 - 2026-10-31 方針確定：自由移動／実写に近い光＋格段に良い3D（特に敵）／私的利用／ブラウザ／104室・出入り約30室／敵＝人間の管理人／幽霊会話なし／物語保留／チェックポイント再開／声はユーザー録音で後差し替え／Blender導入（公式DMG）
