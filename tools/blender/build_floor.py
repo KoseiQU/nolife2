@@ -47,12 +47,14 @@ HALL_RECT = SHELL['hall']
 REGION = {'air': SHELL['air']}
 STAIRS = {s['id']: s for s in BUILDING['stairs']}
 ROOFB = BUILDING['roofB'] if LEVEL == 7 else None
+BASEMENT = BUILDING.get('basement') if LEVEL == 1 else None   # P3a-2: 地下の踊り場(B1)は 1F の GLB に含める
 MAX_LEVEL = 7
 PLATES = json.load(open(os.path.join(TEX, 'room_plates.json')))
 CAR_PANEL = json.load(open(os.path.join(TEX, 'ev_car_panel.json')))
 
 INDOOR_KINDS = {'corridor', 'hall', 'alcove', 'lobby', 'theater', 'room', 'room410'}
-FULL_H_KINDS = {'stair', 'well', 'outdoor', 'roof'}
+FULL_H_KINDS = {'stair', 'well', 'outdoor', 'roof', 'gallery', 'ground'}
+B1_HEAD = 2.7    # 地下の踊り場の天井(1F の床スラブの下面 = B1 床 + 2.7)
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +65,11 @@ def make_zones():
     for a in SHELL['air']:
         h = FLOOR_H if a['kind'] in FULL_H_KINDS else CEIL_H
         zs.append(dict(a, y0=BASE_Y, y1=BASE_Y + h, set='floor', outdoor=a['kind'] == 'outdoor' or a.get('outdoor', False)))
+    if BASEMENT:
+        for a in BASEMENT['air']:
+            y = BASEMENT['y']
+            h = B1_HEAD if a['kind'] == 'room' else (BASE_Y - y + CEIL_H)
+            zs.append(dict(a, y0=y, y1=y + h, set='base', outdoor=False))
     if ROOFB:
         for a in ROOFB['air']:
             y = ROOFB['y']
@@ -453,20 +460,38 @@ def build_materials():
     pbr_material('M_Button', base=(0.1, 0.1, 0.1), rough=0.4, emit=(1.0, 0.55, 0.15), emit_strength=1.5)
     p0b_ev.build_materials(sys.modules[__name__])
     # P3a で追加
-    pbr_material('M_Stone', files=tex_files('stone_floor', rough=False), size=1.2, rough=0.32, normal_strength=0.5)
+    pbr_material('M_Stone', files=tex_files('stone_floor', rough=True), size=1.2, rough=0.32, normal_strength=0.5)
     pbr_material('M_StoneWall', files=tex_files('stone_wall', rough=False), size=1.2, rough=0.55, normal_strength=0.5)
     pbr_material('M_Carpet', files=tex_files('carpet', rough=False), size=1.0, rough=0.95)
     pbr_material('M_DarkWall', base=(0.075, 0.075, 0.08), rough=0.85)
-    pbr_material('M_DarkCeil', base=(0.13, 0.125, 0.12), rough=0.75)
+    pbr_material('M_DarkCeil', base=(0.24, 0.225, 0.21), rough=0.7)
     pbr_material('M_ExtWall', files=tex_files('concrete', rough=False), size=2.0, rough=0.9)
     pbr_material('M_PaintWall', base=(0.58, 0.58, 0.56), rough=0.8)
     pbr_material('M_Deck', files=tex_files('diamond', rough=False), size=0.3, rough=0.5, metal=0.5)
     pbr_material('M_SteelStruct', base=(0.27, 0.27, 0.26), rough=0.6)
     pbr_material('M_Rail', base=(0.36, 0.36, 0.35), rough=0.45, metal=0.3)
     pbr_material('M_RoofSheet', base=(0.30, 0.32, 0.30), rough=0.85)
-    pbr_material('M_GlassClear', base=(0.85, 0.9, 0.92), rough=0.05, alpha=0.12)
+    # P3a-2: 透明ガラス(実行時は MeshPhysicalMaterial に置換: world.js)。粗さ=指紋・汚れのマップ。小口=薄い青緑
+    pbr_material('M_GlassClear', base=(0.85, 0.9, 0.92), rough=0.03, alpha=0.12, files={'roughness': tex('glass_smudge.jpg')})
+    pbr_material('M_GlassEdge', base=(0.30, 0.52, 0.45), rough=0.12)
+    pbr_material('M_HairV', base=(0.64, 0.64, 0.62), rough=0.25, metal=1.0, files={'roughness': tex('hairline_roughness.jpg')}, size=0.5)
+    pbr_material('M_HairH', base=(0.64, 0.64, 0.62), rough=0.25, metal=1.0, files={'roughness': tex('hairline_roughness.jpg')}, size=0.5, rot=True)
+    pbr_material('M_Sensor', base=(0.015, 0.015, 0.017), rough=0.18)
+    pbr_material('M_Decal', base=(0.55, 0.56, 0.56), rough=0.5)
+    pbr_material('M_OfficeDark', base=(0.01, 0.011, 0.012), rough=0.6, emit=(0.5, 0.6, 0.75), emit_strength=0.02)
+    pbr_material('M_Paper', base=(0.85, 0.85, 0.82), rough=0.8)
+    pbr_material('M_Intercom', base=(1, 1, 1), rough=0.35, metal=0.3)
+    _set_base_tex(MATS['M_Intercom'], load_img(tex('intercom.png'), False))
+    pbr_material('M_Paving', files=tex_files('paving', rough=False), size=2.0, rough=0.9)
+    pbr_material('M_GalleryFloor', files=tex_files('concrete', rough=False), size=1.6, rough=0.85)
+    pbr_material('M_BracketDim', base=(0.95, 0.9, 0.8), rough=0.4, emit=(1.0, 0.72, 0.45), emit_strength=0.7)
+    # 地下へ下る壁・床(館内と同じ仕上げ。実行時に少し暗く湿った色へ: manifest の tint)
+    pbr_material('M_WallDamp', files=tex_files('wall_cloth'), size=1.0, rough=0.8)
+    MAT_TEX['M_WallDamp']['tint'] = [0.62, 0.64, 0.61]
+    pbr_material('M_FloorDamp', files=tex_files('floor_sheet'), size=1.0, rough=0.55, normal_strength=0.6)
+    MAT_TEX['M_FloorDamp']['tint'] = [0.58, 0.6, 0.58]
     pbr_material('M_Backdrop', base=(0.0, 0.0, 0.0), rough=1.0, emit=(0.12, 0.16, 0.26), emit_strength=0.6)
-    pbr_material('M_Mailbox', base=(1, 1, 1), rough=0.45, metal=0.2)
+    pbr_material('M_Mailbox', base=(1, 1, 1), rough=0.42, metal=0.15, files={'normal': tex('mailbox_normal.jpg')}, normal_strength=0.8)
     _set_base_tex(MATS['M_Mailbox'], load_img(tex('mailbox.jpg'), False))
     pbr_material('M_RoomPlate', base=(1, 1, 1), rough=0.35, metal=0.4)
     _set_base_tex(MATS['M_RoomPlate'], load_img(tex('room_plates.png'), False))
@@ -491,7 +516,7 @@ def wall_mat(kind):
             'outdoor': 'M_ExtWall', 'roof': 'M_ExtWall'}.get(kind, 'M_Wall')
 
 def floor_mat(kind):
-    return {'lobby': 'M_Stone', 'theater': 'M_Carpet', 'stair': 'M_Floor'}.get(kind, 'M_Floor')
+    return {'lobby': 'M_Stone', 'theater': 'M_Carpet', 'stair': 'M_Floor', 'gallery': 'M_GalleryFloor'}.get(kind, 'M_Floor')
 
 def ceil_mat(kind):
     return {'lobby': 'M_DarkCeil', 'theater': 'M_DarkCeil'}.get(kind, 'M_Ceiling')
@@ -536,11 +561,12 @@ def doorway_contains(x, z, doors):
     return False
 
 
-def build_door(dd, col):
-    """扉枠+垂れ壁+扉板(ヒンジ原点)。P0 build_scene.build_door を全種類へ(居室=号室プレート・覗き穴、施錠扉は室内側の面なし)。"""
+def build_door(dd, col, base_y=None, zsets=('floor',)):
+    """扉枠+垂れ壁+扉板(ヒンジ原点)。P0 build_scene.build_door を全種類へ(居室=号室プレート・覗き穴、施錠扉は室内側の面なし)。
+    P3a-2: base_y/zsets で地下の踊り場(B1)の扉にも使う。dd['solid'] = 窓なしの鉄扉"""
     px, pz = dd['pos']
     (gx0, gz0), (gx1, gz1) = dd['gap_min'], dd['gap_max']
-    y0 = BASE_Y
+    y0 = BASE_Y if base_y is None else base_y
     facing = dd['facing']
     fx, fz = FACING_OUT[facing]
     rid = dd['id']
@@ -555,15 +581,15 @@ def build_door(dd, col):
     FM = 'M_SteelFrameP' if dd['steel'] else 'M_Frame'
     lin = MeshBuilder(f'Lintel_{rid}')
     # 屋上B(7F の屋根の上の空気)は扉の高さの判定に入れない(7F の居室の扉の垂れ壁が屋根を突き抜けた)
-    zin = zone_at(px - fx * 0.2, pz - fz * 0.2, sets=('floor',))
-    top_in = (zin['y1'] - BASE_Y) if zin else CEIL_H
-    zout = zone_at(px + fx * 0.2, pz + fz * 0.2, sets=('floor',))
-    top = max(top_in, (zout['y1'] - BASE_Y) if zout else CEIL_H)
-    lin.box((gx0, y0 + DOOR_H + HEAD_H, gz0), (gx1, y0 + top, gz1), 'M_Wall',
-            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03, sets=('floor',)) is not None)
+    zin = zone_at(px - fx * 0.2, pz - fz * 0.2, sets=zsets)
+    top_in = (zin['y1'] - y0) if zin else CEIL_H
+    zout = zone_at(px + fx * 0.2, pz + fz * 0.2, sets=zsets)
+    top = max(top_in, (zout['y1'] - y0) if zout else CEIL_H)
+    lin.box((gx0, y0 + DOOR_H + HEAD_H, gz0), (gx1, y0 + top, gz1), 'M_WallDamp' if base_y is not None else 'M_Wall',
+            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03, sets=zsets) is not None)
     # 垂れ壁の材質を面ごとの空気に合わせる
     lin_ob = lin.finish(col, {'n2_kind': 'lintel', 'n2_room': rid})
-    if lin_ob:
+    if lin_ob and base_y is None:
         retint_by_zone(lin_ob)
     if dd['horiz']:
         fr.box((gx0, y0, gz0), (gx0 + JAMB, y0 + DOOR_H, gz1), FM)
@@ -608,7 +634,14 @@ def build_door(dd, col):
     # 施錠扉(中が作られていない部屋)は室内側の面を張らない(ライトマップの節約)
     room_face = {('+z' if room_dir[1] > 0 else '-z') if dd['horiz'] else ('+x' if room_dir[0] > 0 else '-x')}
     lkeep = None if dd['inside_visible'] else (lambda k, c, n: k not in room_face)
-    if dd['steel'] and not dd['horiz']:
+    if dd['steel'] and not dd['horiz'] and dd.get('solid'):
+        # 窓なしの鉄扉(地下の踊り場): 扉板＋ドアクローザー(踊り場側=部屋側)
+        leaf.box(lmin, lmax, leaf_mat, keep=lkeep)
+        face_ = lmax[0] if room_dir[0] > 0 else lmin[0]
+        sx_ = 1 if room_dir[0] > 0 else -1
+        xx_ = (face_, face_ + 0.055) if sx_ > 0 else (face_ - 0.055, face_)
+        leaf.box((min(xx_), ly0 + leaf_h - 0.11, lmin[2] + 0.05), (max(xx_), ly0 + leaf_h - 0.05, lmin[2] + 0.33), 'M_Closer')
+    elif dd['steel'] and not dd['horiz']:
         wz_c = lmin[2] + leaf_w * 0.45
         wz0, wz1 = wz_c - 0.065, wz_c + 0.065
         wy0, wy1 = ly0 + 0.30, ly0 + 1.80
@@ -717,49 +750,94 @@ def retint_by_zone(ob):
         poly.material_index = names.index(want)
 
 
+# ---------------------------------------------------------------------------
+# 風除室の透明ガラス(P3a-2 差し戻し「安っぽい」→ 写真 entrance_outside/windbreak の質)
+#  ガラスは厚み 12mm の板: 表裏 = M_GlassClear(実行時は物理材質・ベイク対象外)、小口 = M_GlassEdge(薄い青緑)。
+#  金物はヘアラインのステンレス(縦材 M_HairV・横材 M_HairH)。視認用の小さな四角いシール(M_Decal)を腰の高さに。
+# ---------------------------------------------------------------------------
+GLASS_T = 0.012
+AUTO_H = 2.27         # 自動ドア・固定ガラスの上端(その上は天井までヘアラインの無目＝駆動ボックス)
+
+
+def glass_slab(gl, ed, x0, x1, y0, y1, zc, t=GLASS_T):
+    """z = zc を中心にした厚み t のガラス板。表裏は gl(M_GlassClear)、小口は ed(M_GlassEdge)へ。"""
+    gl.box((x0, y0, zc - t / 2), (x1, y1, zc + t / 2), 'M_GlassClear', keep=lambda k, c, n: k in ('+z', '-z'))
+    ed.box((x0, y0, zc - t / 2), (x1, y1, zc + t / 2), 'M_GlassEdge', keep=lambda k, c, n: k not in ('+z', '-z'))
+
+
+def glass_decals(mb, xs, y, zc, t=GLASS_T, s=0.045):
+    """ガラスの両面の視認シール(小さな正方形)。"""
+    for x in xs:
+        for sg in (1, -1):
+            z = zc + sg * (t / 2 + 0.0006)
+            orient(mb.quad([(x - s / 2, y, z), (x + s / 2, y, z), (x + s / 2, y + s, z), (x - s / 2, y + s, z)], (0, 0, sg), 'M_Decal'), (0, 0, sg))
+
+
 def build_auto_door(dd, col, operable):
-    """風除室の自動ドア(DESIGN §2.3: 透明ガラス2枚が左右反対方向へ開く)。ステンレスの方立・無目＋ガラス扉2枚(左右別メッシュ)。"""
+    """風除室の自動ドア(DESIGN §2.3: 透明ガラス2枚が左右反対方向へ開く)。
+    扉板 = ガラス＋上下のヘアラインの框＋縦の細い框(左右別メッシュ。固定ガラスより 7.5cm 手前の面を滑る)。
+    開口の上は天井までヘアラインの駆動ボックス、その下面中央に黒いセンサー(両面)。床に下部レール。"""
     px, pz = dd['pos']
     w = dd['width']
     rid = dd['id']
     y0 = BASE_Y
-    H = 2.25
+    H = AUTO_H
+    lz = pz - 0.045                    # 扉板の面(固定ガラスは pz + 0.03)
     fr = MeshBuilder(f'AutoDoorFrame_{rid}')
-    t = 0.05
-    # 無目(扉の上の横材)と、その上のガラス欄間を壁の高さまで
-    fr.box((px - w / 2 - 0.06, y0 + H, pz - t), (px + w / 2 + 0.06, y0 + H + 0.12, pz + t), 'M_Stainless')
-    fr.box((px - w / 2 - 0.06, y0, pz - t), (px - w / 2, y0 + H, pz + t), 'M_Stainless')
-    fr.box((px + w / 2, y0, pz - t), (px + w / 2 + 0.06, y0 + H, pz + t), 'M_Stainless')
+    # 下部レール(床に埋めたガイド。扉板の走る範囲)
+    fr.box((px - w + 0.02, y0, lz - 0.03), (px + w - 0.02, y0 + 0.004, lz + 0.03), 'M_HairH', keep=lambda k, c, n: k != '-y')
+    # センサー(駆動ボックスの下、開口の中央・両面)と駆動ボックスのカバーの継ぎ目
+    for sg in (1, -1):
+        zf = pz + (0.09 if sg > 0 else -0.07)
+        za, zb = sorted((zf, zf + sg * 0.03))
+        fr.box((px - 0.13, y0 + H - 0.05, za), (px + 0.13, y0 + H, zb), 'M_Sensor', keep=lambda k, c, n: k != '+y')
+        fr.box((px - 0.035, y0 + H - 0.058, min(za, zb) + 0.004), (px + 0.035, y0 + H - 0.05, max(za, zb) - 0.004), 'M_Decal', keep=lambda k, c, n: k == '-y')
     fr.finish(col, {'n2_kind': 'autoframe', 'n2_room': rid})
-    tr = MeshBuilder(f'AutoDoorTransom_{rid}')
-    tr.quad([(px - w / 2, y0 + H + 0.12, pz), (px + w / 2, y0 + H + 0.12, pz), (px + w / 2, y0 + CEIL_H, pz), (px - w / 2, y0 + CEIL_H, pz)], (0, 0, 1), 'M_GlassClear')
-    tr.finish(col, {'n2_kind': 'glass', 'n2_room': rid})
     for side, sgn in (('L', -1), ('R', 1)):
         mb = MeshBuilder(f'AutoDoor_{side}_{rid}')
         xa, xb = (px - w / 2, px) if sgn < 0 else (px, px + w / 2)
-        g = 0.006
-        # 枠なしガラス＋上下の金物
-        mb.box((xa + 0.01, y0 + 0.03, pz - g), (xb - 0.01, y0 + H - 0.02, pz + g), 'M_GlassClear')
-        mb.box((xa + 0.01, y0 + 0.01, pz - 0.012), (xb - 0.01, y0 + 0.07, pz + 0.012), 'M_Stainless')
-        mb.box((xa + 0.01, y0 + H - 0.08, pz - 0.012), (xb - 0.01, y0 + H - 0.02, pz + 0.012), 'M_Stainless')
+        xa += 0.006; xb -= 0.006
+        st_w = 0.028
+        # ガラス(縦框の間)
+        gx0, gx1 = xa + st_w, xb - st_w
+        mb.box((gx0, y0 + 0.07, lz - GLASS_T / 2), (gx1, y0 + H - 0.07, lz + GLASS_T / 2), 'M_GlassClear', keep=lambda k, c, n: k in ('+z', '-z'))
+        mb.box((gx0, y0 + 0.07, lz - GLASS_T / 2), (gx1, y0 + H - 0.07, lz + GLASS_T / 2), 'M_GlassEdge', keep=lambda k, c, n: k in ('+y', '-y'))
+        # 上下の框(ヘアライン横)・左右の縦框(ヘアライン縦)
+        mb.box((xa, y0 + 0.012, lz - 0.016), (xb, y0 + 0.075, lz + 0.016), 'M_HairH')
+        mb.box((xa, y0 + H - 0.075, lz - 0.016), (xb, y0 + H - 0.006, lz + 0.016), 'M_HairH')
+        mb.box((xa, y0 + 0.075, lz - 0.014), (xa + st_w, y0 + H - 0.075, lz + 0.014), 'M_HairV')
+        mb.box((xb - st_w, y0 + 0.075, lz - 0.014), (xb, y0 + H - 0.075, lz + 0.014), 'M_HairV')
+        glass_decals(mb, [(gx0 + gx1) / 2 - 0.2, (gx0 + gx1) / 2 + 0.2], y0 + 0.95, lz)
         mb.finish(col, {'n2_kind': 'autodoor', 'n2_room': rid, 'n2_side': side, 'n2_slide': [float(sgn), 0.0, 0.0],
-                        'n2_slide_dist': w / 2 - 0.02, 'n2_operable': 1 if operable else 0})
+                        'n2_slide_dist': w / 2 - 0.03, 'n2_operable': 1 if operable else 0})
     return dict(id=rid, kind='auto', operable=operable)
 
 
-def build_glass_partition(x0, x1, z, col, name):
-    """風除室・正面玄関の自動ドアの左右の固定ガラス(ステンレスの方立)。"""
+def build_glass_line(x0, x1, z, door_x0, door_x1, col, name):
+    """風除室の内外のガラスの線(x0..x1): 開口(door_x0..door_x1)の左右に固定ガラス、端と開口の脇にヘアラインの方立、
+    下に沓摺(ヘアライン)、上は全幅のヘアラインの無目(駆動ボックスを兼ねる。天井まで)。"""
     y0 = BASE_Y
-    mb = MeshBuilder(name)
-    gl = MeshBuilder(name + '_glass')
-    n = max(1, round((x1 - x0) / 1.0))
-    for i in range(n + 1):
-        x = x0 + (x1 - x0) * i / n
-        mb.box((x - 0.025, y0, z - 0.04), (x + 0.025, y0 + CEIL_H, z + 0.04), 'M_Stainless')
-    mb.box((x0, y0, z - 0.04), (x1, y0 + 0.05, z + 0.04), 'M_Stainless')
-    gl.quad([(x0, y0 + 0.05, z), (x1, y0 + 0.05, z), (x1, y0 + CEIL_H, z), (x0, y0 + CEIL_H, z)], (0, 0, 1), 'M_GlassClear')
-    mb.finish(col, {'n2_kind': 'glassframe'})
+    fz = z + 0.03                      # 固定ガラスの面
+    fr = MeshBuilder(name + '_frame'); gl = MeshBuilder(name + '_glass'); ed = MeshBuilder(name + '_edge'); dc = MeshBuilder(name + '_decal')
+    # 無目(駆動ボックス)。全幅・天井まで。下面の継ぎ目
+    fr.box((x0, y0 + AUTO_H, z - 0.07), (x1, y0 + CEIL_H, z + 0.09), 'M_HairH', keep=lambda k, c, n: k != '+y')
+    fr.box((x0, y0 + AUTO_H - 0.004, z - 0.002), (x1, y0 + AUTO_H, z + 0.002), 'M_Sensor', keep=lambda k, c, n: k == '-y')
+    for xa, xb in ((x0, door_x0), (door_x1, x1)):
+        if xb - xa < 0.1:
+            continue
+        # 方立(端と開口の脇)
+        fr.box((xa, y0, fz - 0.04), (xa + 0.05, y0 + AUTO_H, fz + 0.04), 'M_HairV')
+        fr.box((xb - 0.05, y0, fz - 0.04), (xb, y0 + AUTO_H, fz + 0.04), 'M_HairV')
+        # 沓摺(下の溝形)
+        fr.box((xa + 0.05, y0, fz - 0.035), (xb - 0.05, y0 + 0.055, fz + 0.035), 'M_HairH', keep=lambda k, c, n: k != '-y')
+        ga, gb = xa + 0.05, xb - 0.05
+        glass_slab(gl, ed, ga, gb, y0 + 0.055, y0 + AUTO_H, fz)
+        n = max(1, round((gb - ga) / 0.45))
+        glass_decals(dc, [ga + (gb - ga) * (i + 0.5) / n for i in range(n)], y0 + 0.95, fz)
+    fr.finish(col, {'n2_kind': 'glassframe'})
     gl.finish(col, {'n2_kind': 'glass'})
+    ed.finish(col, {'n2_kind': 'glassedge'})
+    dc.finish(col, {'n2_kind': 'decal'})
 
 
 # ---------------------------------------------------------------------------
@@ -1096,34 +1174,157 @@ def build_external_stair(col):
 
 
 def build_north_stair(col):
+    """北階段(P3a-2: 屋外の鉄骨。主外階段と同じ部品=縞鋼板・角柱・縦格子・壁付け灯)。流れは東西(x)。
+    この階の踊り場→上りレーン(南)→中間踊り場→下りレーン(北)→上の階の踊り場まで。1F の踊り場は地面(暗い舗装)、
+    3F(最上階)は上りレーンの先が吹き抜け(縁に手すり)。2F・3F は鉄扉の外の屋外通路(build_gallery)。"""
     st = STAIRS['north']; g = st['geom']
     x0, z0, w, d = st['pos'] + st['size']
     lx0, lz0, lw, ld = g['landing']
     mx0, mz0, mw, md = g['mid']
     up, dn = g['lanes']['up'], g['lanes']['down']
-    rise = g['rise']
-    top = LEVEL == st['levels'][1]
-    dk = MeshBuilder('NorthStair_steps'); rl = MeshBuilder('NorthStair_rail'); wl = MeshBuilder('NorthStair_slab')
-    if not top:
-        build_flight(dk, st, up, lx0 + lw, mx0, BASE_Y, 'M_Floor', 'M_PaintWall')
-        dk.box((mx0, BASE_Y + rise - 0.04, mz0), (mx0 + mw, BASE_Y + rise, mz0 + md), 'M_Floor', keep=lambda k, c, n: k == '+y')
-        wl.box((mx0, BASE_Y + rise - 0.22, mz0), (mx0 + mw, BASE_Y + rise - 0.04, mz0 + md), 'M_PaintWall', keep=lambda k, c, n: k != '+y')
-        build_flight(dk, st, dn, mx0, lx0 + lw, BASE_Y + rise, 'M_Floor', 'M_PaintWall')
-        cmid = (up[0] + dn[1]) / 2
-        railing(rl, (lx0 + lw, BASE_Y + 0.18, cmid), (mx0, BASE_Y + rise + 0.18, cmid), h=0.9, mat='M_Stainless')
-        railing(rl, (lx0 + lw, BASE_Y + 2 * rise + 0.18, cmid), (mx0, BASE_Y + rise + 0.18, cmid), h=0.9, mat='M_Stainless')
+    rise = g['rise']; s0, s1 = g['s0'], g['s1']
+    lo, hi = st['levels']
+    y = BASE_Y
+    mb = MeshBuilder('NorthStair_steel'); dk = MeshBuilder('NorthStair_deck'); rl = MeshBuilder('NorthStair_rail')
+    if LEVEL == lo:
+        # 地面(暗い舗装)。歩けるのは踊り場の下だけ(周りは低い柵と闇)
+        gr = MeshBuilder('NorthGround')
+        orient(gr.quad([(x0, y, z0 + d + 2.5), (x0 + w + 2.5, y, z0 + d + 2.5), (x0 + w + 2.5, y, z0 - 2.5), (x0, y, z0 - 2.5)], (0, 1, 0), 'M_Paving'), (0, 1, 0))
+        gr.finish(col, {'n2_kind': 'ground'})
+        railing(rl, (x0 + 0.05, y, z0 + 0.03), (s0 + 0.3, y, z0 + 0.03), h=0.9, spacing=0.15)
+        railing(rl, (x0 + 0.05, y, z0 + d - 0.03), (s0 + 0.3, y, z0 + d - 0.03), h=0.9, spacing=0.15)
+        railing(rl, (s0 + 0.3, y, dn[0]), (s0 + 0.3, y, dn[1]), h=0.9, spacing=0.15)     # 下りレーンの下(頭上に段)
     else:
-        # 最上階: 上りのレーンの上は吹き抜け → 踊り場の縁に手すり、階段室に天井
-        railing(rl, (lx0 + lw, BASE_Y, up[0]), (lx0 + lw, BASE_Y, up[1]), h=1.1, mat='M_Stainless')
-        wl.quad([(x0, BASE_Y + FLOOR_H - 0.2, z0), (x0 + w, BASE_Y + FLOOR_H - 0.2, z0), (x0 + w, BASE_Y + FLOOR_H - 0.2, z0 + d), (x0, BASE_Y + FLOOR_H - 0.2, z0 + d)], (0, -1, 0), 'M_PaintWall')
-    if LEVEL == st['levels'][0]:
-        # 1F: 吹き抜けの底(下りレーンの下は床)
-        dk.quad([(lx0 + lw, BASE_Y, z0 + d), (x0 + w, BASE_Y, z0 + d), (x0 + w, BASE_Y, z0), (lx0 + lw, BASE_Y, z0)], (0, 1, 0), 'M_Floor')
+        dk.box((lx0, y - 0.04, lz0), (lx0 + lw, y, lz0 + ld), 'M_Deck', keep=lambda k, c, n: k == '+y')
+        mb.box((lx0, y - 0.20, lz0), (lx0 + lw, y - 0.04, lz0 + ld), 'M_SteelStruct', keep=lambda k, c, n: k != '+y')
+        railing(rl, (lx0, y, lz0 + 0.03), (lx0 + lw, y, lz0 + 0.03), h=1.1)
+        railing(rl, (lx0, y, lz0 + ld - 0.03), (lx0 + lw, y, lz0 + ld - 0.03), h=1.1)
+    if LEVEL < hi:
+        build_flight(dk, st, up, s0, s1, y, 'M_Deck', 'M_SteelStruct')
+        dk.box((mx0, y + rise - 0.04, mz0), (mx0 + mw, y + rise, mz0 + md), 'M_Deck', keep=lambda k, c, n: k == '+y')
+        mb.box((mx0, y + rise - 0.20, mz0), (mx0 + mw, y + rise - 0.04, mz0 + md), 'M_SteelStruct', keep=lambda k, c, n: k != '+y')
+        build_flight(dk, st, dn, s1, s0, y + rise, 'M_Deck', 'M_SteelStruct')
+        # 手すり: 上り(南)の外側・下り(北)の外側・中間踊り場の外周・2本のレーンの間
+        railing(rl, (s0, y + 0.18, up[1] + 0.06), (s1, y + rise + 0.18, up[1] + 0.06), h=0.95)
+        railing(rl, (s0, y + 2 * rise + 0.18, dn[0] - 0.06), (s1, y + rise + 0.18, dn[0] - 0.06), h=0.95)
+        railing(rl, (mx0, y + rise, mz0 + 0.03), (mx0 + mw - 0.03, y + rise, mz0 + 0.03), h=1.1)
+        railing(rl, (mx0 + mw - 0.03, y + rise, mz0 + 0.03), (mx0 + mw - 0.03, y + rise, mz0 + md - 0.03), h=1.1)
+        railing(rl, (mx0, y + rise, mz0 + md - 0.03), (mx0 + mw - 0.03, y + rise, mz0 + md - 0.03), h=1.1)
+        cmid = (dn[1] + up[0]) / 2
+        railing(rl, (s0, y + 0.18, cmid), (s1, y + rise + 0.18, cmid), h=0.95)
+        railing(rl, (s0, y + 2 * rise + 0.18, cmid), (s1, y + rise + 0.18, cmid), h=0.95)
+        # ベイク専用の遮蔽: 上の階の踊り場の床
+        oc = MeshBuilder('Occ_north_upper')
+        oc.box((lx0, y + FLOOR_H - 0.20, lz0), (lx0 + lw, y + FLOOR_H, lz0 + ld), 'M_SteelStruct')
+        oc.finish(col, {'n2_kind': 'occluder'}, bake_only=True)
     else:
-        # 2F・3F: 踊り場の床スラブの見付け(吹き抜け側の縁)
-        wl.box((lx0 + lw - 0.02, BASE_Y - 0.22, z0), (lx0 + lw, BASE_Y, z0 + d), 'M_PaintWall', keep=lambda k, c, n: k == '+x')
-    for mbx, kind in ((dk, 'stair_deck'), (rl, 'rail'), (wl, 'stair_slab')):
+        railing(rl, (s0, y, up[0] - 0.05), (s0, y, up[1] + 0.06), h=1.1)
+    # 柱(角柱): 箱の東の2隅と踊り場の東の2隅。この階の床から上の階の床まで(最上階は手すりの高さまで)
+    ytop = y + (FLOOR_H if LEVEL < hi else 1.15)
+    ybot = y - (0.0 if LEVEL == lo else 0.2)
+    for (cx, cz) in ((x0 + w - 0.08, z0 + 0.08), (x0 + w - 0.08, z0 + d - 0.08), (s0, z0 + 0.06), (s0, z0 + d - 0.06)):
+        mb.box((cx - 0.06, ybot, cz - 0.06), (cx + 0.06, ytop, cz + 0.06), 'M_SteelStruct', keep=lambda k, c, n: k not in ('+y', '-y'))
+    mb.finish(col, {'n2_kind': 'stair_steel'})
+    dk.finish(col, {'n2_kind': 'stair_deck'})
+    rl.finish(col, {'n2_kind': 'rail'})
+
+
+def build_gallery(col):
+    """北階段へ出る屋外通路(2F・3F: 鉄扉の外、213/313 の北)。北側はコンクリートの腰壁(手すり壁)、
+    2F は上(3F の通路の床スラブ)の下面を天井に。"""
+    a = next((a for a in SHELL['air'] if a['id'] == 'nst_gallery'), None)
+    if not a:
+        return
+    gx0, gz0, gw, gd = a['rect']
+    y = BASE_Y
+    pm = MeshBuilder('Gallery_parapet')
+    pm.box((gx0 + 0.06, y - 0.25, gz0 - 0.12), (gx0 + gw, y + 1.1, gz0 + 0.06), 'M_ExtWall', keep=lambda k, c, n: k != '-y' and k != '+x')
+    pm.box((gx0 + 0.06, y + 1.1, gz0 - 0.10), (gx0 + gw, y + 1.13, gz0 + 0.05), 'M_SteelStruct', keep=lambda k, c, n: k != '-y')   # 笠木
+    if LEVEL < STAIRS['north']['levels'][1]:
+        orient(pm.quad([(gx0, y + FLOOR_H - 0.2, gz0), (gx0 + gw, y + FLOOR_H - 0.2, gz0), (gx0 + gw, y + FLOOR_H - 0.2, gz0 + gd), (gx0, y + FLOOR_H - 0.2, gz0 + gd)], (0, -1, 0), 'M_ExtWall'), (0, -1, 0))
+    pm.finish(col, {'n2_kind': 'parapet'})
+
+
+B1_LIGHTS = []
+
+def build_basement_stair(col):
+    """地下への階段(P3a-2 異世界要素): 1F 食堂奥の踊り場から1層下りて、地下の踊り場(B1)の西壁に施錠された鉄扉。
+    館内と同じ仕上げ(クロス・長尺シート)だが、下るほど灯りが減る(中間踊り場に弱い壁付け灯、B1 は消えかけの小さな灯りだけ)。
+    1F の床から上(踊り場・吹き抜けの 1F 部分)は通常の壁の生成(zone 'room'/'bwell')。ここは 1F の床より下。"""
+    st = STAIRS['basement']; g = st['geom']
+    x0, z0, w, d = st['pos'] + st['size']
+    s0, s1 = g['s0'], g['s1']; rise = g['rise']
+    up, dn = g['lanes']['up'], g['lanes']['down']
+    mx0, mz0, mw, md = g['mid']
+    yb = BASEMENT['y']
+    T2 = WALL_T / 2
+    ix0, ix1, iz0, iz1 = x0 + T2, x0 + w - T2, z0 + T2, z0 + d - T2
+    wl = MeshBuilder('BStair_walls'); fl = MeshBuilder('BStair_floor'); sp = MeshBuilder('BStair_steps'); rl = MeshBuilder('BStair_rail')
+    room = BASEMENT['rooms'][0]
+    dz = room['door']['pos'][1]
+    dh = DOOR_W / 2
+    yt = BASE_Y                      # 1F の床(この上は 1F の壁)
+    yc = yb + B1_HEAD                # B1 の天井(1F の踊り場の床スラブの下面)
+    W = 'M_WallDamp'
+    def q(pts, n, mat, mbx=wl):
+        orient(mbx.quad(pts, n, mat), n)
+    q([(ix0, yb, iz0), (ix1, yb, iz0), (ix1, yt, iz0), (ix0, yt, iz0)], (0, 0, 1), W)          # 北
+    q([(ix1, yb, iz1), (ix0, yb, iz1), (ix0, yt, iz1), (ix1, yt, iz1)], (0, 0, -1), W)         # 南
+    q([(ix1, yb, iz0), (ix1, yb, iz1), (ix1, yt, iz1), (ix1, yt, iz0)], (-1, 0, 0), W)         # 東
+    q([(ix0, yb, iz0), (ix0, yb, dz - dh), (ix0, yt, dz - dh), (ix0, yt, iz0)], (1, 0, 0), W)  # 西(扉の左右と上)
+    q([(ix0, yb, dz + dh), (ix0, yb, iz1), (ix0, yt, iz1), (ix0, yt, dz + dh)], (1, 0, 0), W)
+    q([(ix0, yc, dz - dh), (ix0, yc, dz + dh), (ix0, yt, dz + dh), (ix0, yt, dz - dh)], (1, 0, 0), W)
+    # 幅木(B1 の踊り場)
+    for (a_, b_) in ((iz0, dz - dh), (dz + dh, iz1)):
+        wl.box((ix0, yb, a_), (ix0 + 0.012, yb + 0.06, b_), 'M_Baseboard', keep=lambda k, c, n: k in ('+x', '+y'))
+    wl.box((ix0, yb, iz0), (s0, yb + 0.06, iz0 + 0.012), 'M_Baseboard', keep=lambda k, c, n: k in ('+z', '+y'))
+    wl.box((ix0, yb, iz1 - 0.012), (s0, yb + 0.06, iz1), 'M_Baseboard', keep=lambda k, c, n: k in ('-z', '+y'))
+    # B1 の踊り場の床・天井(1F の踊り場のスラブの下面)・スラブの見付け
+    q([(ix0, yb, iz1), (s0, yb, iz1), (s0, yb, iz0), (ix0, yb, iz0)], (0, 1, 0), 'M_FloorDamp', fl)
+    q([(ix0, yc, iz0), (s0, yc, iz0), (s0, yc, iz1), (ix0, yc, iz1)], (0, -1, 0), 'M_PaintWall', fl)
+    q([(s0, yc, iz0), (s0, yc, iz1), (s0, yt, iz1), (s0, yt, iz0)], (1, 0, 0), 'M_PaintWall', fl)
+    # 下りレーン(北)の下は物入れの壁で塞ぐ(B1 から段の裏が見えないように)。レーンの間は背骨の壁
+    cm0, cm1 = dn[1], up[0]
+    q([(s0, yb, iz0), (s0, yb, cm1), (s0, yc, cm1), (s0, yc, iz0)], (-1, 0, 0), W)
+    q([(s0, yb, cm1), (s1, yb, cm1), (s1, yb + rise, cm1), (s0, yt, cm1)], (0, 0, 1), W)       # 背骨の南面(上りレーン側)
+    q([(s0, yt, cm0), (s1, yb + rise, cm0), (s1, yb + rise, cm1), (s0, yt, cm1)], (0, 1, 0), 'M_PaintWall')   # 背骨の上面(下りの段の脇)
+    # 中間踊り場(床と下のスラブ)
+    q([(mx0, yb + rise, iz1), (ix1, yb + rise, iz1), (ix1, yb + rise, iz0), (mx0, yb + rise, iz0)], (0, 1, 0), 'M_Floor', fl)
+    q([(mx0, yb + rise - 0.2, iz0), (mx0, yb + rise - 0.2, iz1), (mx0, yb + rise, iz1), (mx0, yb + rise, iz0)], (-1, 0, 0), 'M_PaintWall', fl)
+    # 段(蹴上げの閉じた段。上りレーン=B1→中間、下りレーン=中間→1F)
+    def solid_flight(c0, c1, s_from, s_to, y_from, mat, floor_y):
+        n = g['treads']; h = rise / (n + 1); ds = (s_to - s_from) / n
+        for i in range(1, n + 1):
+            sa, sb = s_from + ds * (i - 1), s_from + ds * i
+            ytop = y_from + h * i
+            stair_box(sp, st, sa, sb, c0, c1, (floor_y if floor_y is not None else ytop - h - 0.15), ytop, mat,
+                      keep=lambda k, c, nn: k in ('+y', '+x', '-x'))
+            # 段鼻のノンスリップ(暗い帯。段の縁が見分けられるように)
+            sg = 1 if ds > 0 else -1
+            stair_box(sp, st, sa, sa + sg * 0.045, c0 + 0.02, c1 - 0.02, ytop, ytop + 0.004, 'M_Baseboard',
+                      keep=lambda k, c, nn: k in ('+y', '+x', '-x'))
+    solid_flight(cm1, iz1, s0, s1, yb, 'M_FloorDamp', yb)
+    solid_flight(iz0, cm0, s1, s0, yb + rise, 'M_Floor', None)
+    # 手すり: 1F の踊り場の縁(上りレーンの吹き抜け)・下りの段の脇(背骨の上)・上りの段の壁の手すり
+    railing(rl, (s0, yt, up[0]), (s0, yt, iz1 - 0.02), h=1.1, mat='M_Stainless')
+    railing(rl, (s0, yt + 0.02, (cm0 + cm1) / 2), (s1, yb + rise + 0.02, (cm0 + cm1) / 2), h=0.9, mat='M_Stainless')
+    railing(rl, (s0, yb + 0.18, iz1 - 0.06), (s1, yb + rise + 0.18, iz1 - 0.06), h=0.85, spacing=0.9, bar=0.016, mat='M_Stainless')
+    for mbx, kind in ((wl, 'bstair_wall'), (fl, 'bstair_floor'), (sp, 'stair_deck'), (rl, 'rail')):
         mbx.finish(col, {'n2_kind': kind})
+    # 施錠された鉄扉(窓なし。開かない)
+    door = room['door']
+    px, pz = door['pos']
+    dd = dict(room=room, id=room['id'], kind='stair', pos=(px, pz), facing=door['facing'], width=DOOR_W, horiz=False,
+              gap_min=(px - WALL_T / 2, pz - DOOR_W / 2), gap_max=(px + WALL_T / 2, pz + DOOR_W / 2), steel=True, glass=False,
+              auto=False, common=False, unit=False, operable=False, inside_visible=True, solid=True)
+    build_door(dd, col, base_y=yb, zsets=('base',))
+    # 灯り: 中間踊り場の東壁に弱い壁付け灯、B1 は扉の脇に消えかけの小さな灯り(下るほど暗い)
+    B1_LIGHTS.append(build_bracket('BStairMid', ix1, (iz0 + iz1) / 2, yb + rise + 1.95, 'W', col, energy=1.4))
+    nb = build_bracket('BStairB1', ix0, dz + dh + 0.35, yb + 2.3, 'E', col, energy=0.22)
+    for o in bpy.data.objects:
+        if o.name.startswith('BStairB1_cover'):
+            o.data.materials[0] = MATS['M_BracketDim']
+    B1_LIGHTS.append(nb)
 
 
 # ---------------------------------------------------------------------------
@@ -1183,44 +1384,69 @@ def build_roof(col):
 # 1F の追加(集合ポスト・受付窓・外の背景・シアターのスクリーン)
 # ---------------------------------------------------------------------------
 def build_1f_extras(col):
-    mb = MeshBuilder('Mailboxes')
+    mb = MeshBuilder('Mailboxes'); mf = MeshBuilder('Mailboxes_trim')
     for p in FLOOR.get('props', []):
         if p['kind'] != 'mailboxes':
             continue
         x, _, z = p['pos']; dp, h, wd = p['size']
         x0, x1, z0, z1 = x + 0.06, x + 0.06 + dp, z, z + wd
         mb.box((x0, BASE_Y, z0), (x1, BASE_Y + h, z1), 'M_Stainless', keep=lambda k, c, n: k not in ('+x', '-x', '-y'))
-        f = mb.quad([(x1, BASE_Y, z1), (x1, BASE_Y, z0), (x1, BASE_Y + h, z0), (x1, BASE_Y + h, z1)], (1, 0, 0), 'M_Mailbox')
+        f = mb.quad([(x1, BASE_Y + 0.06, z1), (x1, BASE_Y + 0.06, z0), (x1, BASE_Y + h, z0), (x1, BASE_Y + h, z1)], (1, 0, 0), 'M_Mailbox')
         orient(f, (1, 0, 0))
         set_uv(f, mb, [(0, 0), (1, 0), (1, 1), (0, 1)])
+        # P3a-2: 台座(巾木)と前面の見切り(ヘアライン)、床の点検口(ステンレスの枠。写真 mailboxes_1F)
+        mf.box((x1 - 0.04, BASE_Y, z0), (x1 + 0.01, BASE_Y + 0.06, z1), 'M_Baseboard', keep=lambda k, c, n: k != '-y')
+        mf.box((x1, BASE_Y + h - 0.012, z0), (x1 + 0.012, BASE_Y + h + 0.01, z1), 'M_HairH', keep=lambda k, c, n: k != '-y')
+        hx0, hx1, hz0, hz1 = x1 + 0.25, x1 + 1.0, z0 + 1.2, z0 + 2.4
+        for (ax, az, bx, bz) in ((hx0, hz0, hx1, hz0 + 0.02), (hx0, hz1 - 0.02, hx1, hz1), (hx0, hz0, hx0 + 0.02, hz1), (hx1 - 0.02, hz0, hx1, hz1),
+                                 (hx0, (hz0 + hz1) / 2 - 0.01, hx1, (hz0 + hz1) / 2 + 0.01)):
+            mf.box((ax, BASE_Y, az), (bx, BASE_Y + 0.003, bz), 'M_HairH', keep=lambda k, c, n: k == '+y')
     mb.finish(col, {'n2_kind': 'mailboxes'})
+    mf.finish(col, {'n2_kind': 'mailtrim'})
     rooms = {r['id']: r for r in FLOOR['rooms']}
-    ent = rooms.get('ENTRANCE'); off = rooms.get('OFFICE'); th = rooms.get('THEATER')
+    ent = rooms.get('ENTRANCE'); th = rooms.get('THEATER')
     if ent:
         ex0, ez0, ew, ed = ent['rect']
-        # 受付の小窓(風除室の東壁=管理室)
-        rw = MeshBuilder('OfficeWindow')
+        # 管理室の受付の小窓(風除室の東壁): ヘアラインの額縁が壁から出て、奥に暗い事務室、表にガラス、下に受け台と書類
+        rw = MeshBuilder('OfficeWindow'); og = MeshBuilder('OfficeWindow_glass'); oe = MeshBuilder('OfficeWindow_edge')
         xw = ex0 + ew - 0.06
         zc = ez0 + ed / 2
-        rw.box((xw - 0.02, BASE_Y + 0.95, zc - 0.32), (xw, BASE_Y + 1.40, zc + 0.32), 'M_Stainless', keep=lambda k, c, n: k == '-x')
-        g = rw.quad([(xw - 0.025, BASE_Y + 0.99, zc + 0.28), (xw - 0.025, BASE_Y + 0.99, zc - 0.28), (xw - 0.025, BASE_Y + 1.36, zc - 0.28), (xw - 0.025, BASE_Y + 1.36, zc + 0.28)], (-1, 0, 0), 'M_Window')
-        orient(g, (-1, 0, 0))
-        rw.box((xw - 0.22, BASE_Y + 0.93, zc - 0.34), (xw - 0.02, BASE_Y + 0.96, zc + 0.34), 'M_Stainless')
+        wy0, wy1, hz = BASE_Y + 0.98, BASE_Y + 1.48, 0.36
+        fd = 0.07                                   # 額縁の出
+        for (za, zb, ya, yb) in ((zc - hz - 0.035, zc - hz, wy0 - 0.035, wy1 + 0.035), (zc + hz, zc + hz + 0.035, wy0 - 0.035, wy1 + 0.035),
+                                 (zc - hz, zc + hz, wy1, wy1 + 0.035), (zc - hz, zc + hz, wy0 - 0.035, wy0)):
+            rw.box((xw - fd, ya, za), (xw, yb, zb), 'M_HairV' if (zb - za) < 0.1 else 'M_HairH', keep=lambda k, c, n: k != '+x')
+        q = rw.quad([(xw - 0.004, wy0, zc + hz), (xw - 0.004, wy0, zc - hz), (xw - 0.004, wy1, zc - hz), (xw - 0.004, wy1, zc + hz)], (-1, 0, 0), 'M_OfficeDark')
+        orient(q, (-1, 0, 0))
+        for (za, zb) in ((zc - hz, zc + hz),):
+            for yy in (wy0, wy1):   # 額縁の内側(見込み)
+                rw.quad([(xw - fd, yy, za), (xw, yy, za), (xw, yy, zb), (xw - fd, yy, zb)], (0, 1 if yy == wy0 else -1, 0), 'M_HairH')
+            for zz, sg in ((za, 1), (zb, -1)):
+                orient(rw.quad([(xw - fd, wy0, zz), (xw, wy0, zz), (xw, wy1, zz), (xw - fd, wy1, zz)], (0, 0, sg), 'M_HairV'), (0, 0, sg))
+        og.box((xw - fd + 0.012, wy0, zc - hz), (xw - fd + 0.012 + GLASS_T, wy1, zc + hz), 'M_GlassClear', keep=lambda k, c, n: k in ('+x', '-x'))
+        oe.box((xw - fd + 0.012, wy0, zc - hz), (xw - fd + 0.012 + GLASS_T, wy1, zc + hz), 'M_GlassEdge', keep=lambda k, c, n: k not in ('+x', '-x'))
+        # 受け台(ヘアライン)と書類
+        rw.box((xw - 0.26, wy0 - 0.075, zc - hz - 0.04), (xw - fd, wy0 - 0.045, zc + hz + 0.04), 'M_HairH')
+        rw.box((xw - 0.22, wy0 - 0.045, zc - 0.18), (xw - 0.12, wy0 - 0.043, zc - 0.03), 'M_Paper', keep=lambda k, c, n: k == '+y')
         rw.finish(col, {'n2_kind': 'officewindow'})
-        # 正面玄関の外側(夜の街路の暗い明かり。外観は P3c)
-        bd = MeshBuilder('EntranceBackdrop')
-        zb = ez0 + ed + 1.6
-        q = bd.quad([(ex0 - 1.0, BASE_Y, zb), (ex0 + ew + 1.0, BASE_Y, zb), (ex0 + ew + 1.0, BASE_Y + 3.0, zb), (ex0 - 1.0, BASE_Y + 3.0, zb)], (0, 0, -1), 'M_Backdrop')
-        orient(q, (0, 0, -1))
-        bd.quad([(ex0 - 1.0, BASE_Y - 0.01, ez0 + ed + 0.06), (ex0 + ew + 1.0, BASE_Y - 0.01, ez0 + ed + 0.06), (ex0 + ew + 1.0, BASE_Y - 0.01, zb), (ex0 - 1.0, BASE_Y - 0.01, zb)], (0, 1, 0), 'M_Stone')
-        bd.finish(col, {'n2_kind': 'backdrop'})
-        # 外側の自動ドア(夜間は閉)・内外の固定ガラス
+        og.finish(col, {'n2_kind': 'glass'})
+        oe.finish(col, {'n2_kind': 'glassedge'})
+        # オートロックの操作盤(風除室の西壁、内側のガラスの脇。写真 entrance_windbreak の右手前)
+        ic = MeshBuilder('Intercom')
+        xi = ex0 + 0.06
+        icz0, icz1 = ez0 + 0.09, ez0 + 0.33
+        ic.box((xi, BASE_Y + 1.05, icz0), (xi + 0.022, BASE_Y + 1.53, icz1), 'M_HairV', keep=lambda k, c, n: k not in ('+x', '-x'))
+        f = ic.quad([(xi + 0.022, BASE_Y + 1.05, icz1), (xi + 0.022, BASE_Y + 1.05, icz0), (xi + 0.022, BASE_Y + 1.53, icz0), (xi + 0.022, BASE_Y + 1.53, icz1)], (1, 0, 0), 'M_Intercom')
+        orient(f, (1, 0, 0))
+        set_uv(f, ic, [(0, 0), (1, 0), (1, 1), (0, 1)])
+        ic.finish(col, {'n2_kind': 'intercom'})
+        # 外側の自動ドア(夜間は閉)・内外のガラスの線
+        dw = ent['door']['width']
         out = dict(id='ENTRANCE_OUT', pos=(ex0 + ew / 2, ez0 + ed), width=FLOOR['perimOpenings'][0]['width'])
         build_auto_door(out, col, operable=False)
-        dw = ent['door']['width']
         for zline, nm in ((ez0, 'Inner'), (ez0 + ed, 'Outer')):
-            build_glass_partition(ex0 + 0.07, ex0 + ew / 2 - dw / 2 - 0.06, zline, col, f'Glass{nm}_W')
-            build_glass_partition(ex0 + ew / 2 + dw / 2 + 0.06, ex0 + ew - 0.07, zline, col, f'Glass{nm}_E')
+            build_glass_line(ex0 + 0.06, ex0 + ew - 0.06, zline, ex0 + ew / 2 - dw / 2, ex0 + ew / 2 + dw / 2, col, f'Glass{nm}')
+        build_porch(ex0, ez0 + ed, ew, col)
     if th:
         tx0, tz0, tw, td = th['rect']
         sc = MeshBuilder('TheaterScreen')
@@ -1228,6 +1454,32 @@ def build_1f_extras(col):
         q = sc.quad([(tx0 + 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 2.2, zs), (tx0 + 1.0, BASE_Y + 2.2, zs)], (0, 0, -1), 'M_Screen')
         orient(q, (0, 0, -1))
         sc.finish(col, {'n2_kind': 'screen'})
+
+
+PORCH_LIGHTS = []
+
+def build_porch(ex0, zf, ew, col):
+    """正面玄関の外(P3c までは暗い舗装とポーチの灯りだけ): 庇の下の石の床・庇の天井(ダウンライト2灯)・左右の外壁(石)、
+    その先は暗いアスファルト。外へは出られない(外側の自動ドアは夜間閉)。"""
+    y = BASE_Y
+    pm = MeshBuilder('Porch')
+    zo = zf + 0.12                                   # 外周の壁の外面
+    px0, px1, pz1 = ex0 - 1.6, ex0 + ew + 1.6, zo + 2.0
+    ch = 2.75
+    orient(pm.quad([(px0, y, pz1), (px1, y, pz1), (px1, y, zo), (px0, y, zo)], (0, 1, 0), 'M_Stone'), (0, 1, 0))
+    orient(pm.quad([(px0 - 8, y - 0.01, pz1 + 9), (px1 + 8, y - 0.01, pz1 + 9), (px1 + 8, y - 0.01, pz1), (px0 - 8, y - 0.01, pz1)], (0, 1, 0), 'M_Paving'), (0, 1, 0))
+    pm.box((px0, y + ch, zo), (px1, y + ch + 0.3, pz1), 'M_ExtWall', mats={'-y': 'M_DarkCeil'}, keep=lambda k, c, n: k != '+y' and k != '-z')
+    # 正面のガラスの線の左右の外壁(石)
+    for xa, xb in ((px0, ex0), (ex0 + ew, px1)):
+        orient(pm.quad([(xa, y, zo), (xb, y, zo), (xb, y + ch, zo), (xa, y + ch, zo)], (0, 0, 1), 'M_StoneWall'), (0, 0, 1))
+    # ガラスの線の上(無目の上〜庇)は外壁
+    orient(pm.quad([(ex0, y + CEIL_H, zo - 0.08), (ex0 + ew, y + CEIL_H, zo - 0.08), (ex0 + ew, y + ch, zo - 0.08), (ex0, y + ch, zo - 0.08)], (0, 0, 1), 'M_StoneWall'), (0, 0, 1))
+    # 庇の端の柱(左右)
+    for xc in (px0 + 0.2, px1 - 0.2):
+        pm.box((xc - 0.15, y, pz1 - 0.35), (xc + 0.15, y + ch, pz1 - 0.05), 'M_StoneWall', keep=lambda k, c, n: k not in ('+y', '-y'))
+    pm.finish(col, {'n2_kind': 'porch'})
+    for i, xx in enumerate((ex0 + ew / 2 - 1.0, ex0 + ew / 2 + 1.0)):
+        PORCH_LIGHTS.append(build_downlight(f'PorchLight_{i}', xx, zo + 1.0, col, energy=5.0, y=y + ch - 0.002))
 
 
 # ---------------------------------------------------------------------------
@@ -1342,10 +1594,11 @@ def build():
     for zn in floor_zones:
         x0, z0, w, d = zn['rect']; x1, z1 = x0 + w, z0 + d
         k = zn['kind']
-        if k in ('well', 'outdoor'):
+        if k in ('well', 'outdoor', 'ground'):
             continue        # 外階段の床と吹き抜けは階段の生成側
-        fl.quad([(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)], (0, 1, 0), floor_mat(k))
-        if k != 'stair':
+        if k != 'bwell':    # 地下への階段の吹き抜け(1F の部分)は床なし・天井あり
+            fl.quad([(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)], (0, 1, 0), floor_mat(k))
+        if k != 'stair' and not zn['outdoor']:
             yc = y0 + CEIL_H
             ce.quad([(x0, yc, z0), (x1, yc, z0), (x1, yc, z1), (x0, yc, z1)], (0, -1, 0), ceil_mat(k))
     fl.finish(col, {'n2_kind': 'floor'}); ce.finish(col, {'n2_kind': 'ceiling'})
@@ -1366,7 +1619,7 @@ def build():
     downs, brackets = [], []
     for i, l in enumerate(SHELL['lights']):
         if l['kind'] == 'down':
-            downs.append(build_downlight(f'Down_{i}', l['pos'][0], l['pos'][1], col, energy=1.8))
+            downs.append(build_downlight(f'Down_{i}', l['pos'][0], l['pos'][1], col, energy=l.get('energy', 1.8)))
         elif l['kind'] == 'bracket':
             brackets.append(build_bracket(f'Bracket_{i}', l['pos'][0], l['pos'][1], BASE_Y + l['y'], l['facing'], col))
     # 隣の階の外階段・北階段の灯り(ベイクにだけ効く。階段の上下で明るさが繋がるように)
@@ -1376,7 +1629,9 @@ def build():
             by = (lv - 1) * FLOOR_H
             build_bracket(f'BracketAdj_{lv}', 6.0 - 0.06, 20.6, by + 2.3, 'W', col, light_only=True)
             if lv <= 3 and LEVEL <= 3:
-                build_bracket(f'BracketAdjN_{lv}', 8.6, 0.06, by + 2.3, 'S', col, light_only=True)
+                for l_ in next(f for f in BUILDING['floors'] if f['level'] == lv)['shell']['lights']:
+                    if l_['kind'] == 'bracket' and l_['pos'][1] < 3.0:   # 北階段の壁付け灯
+                        build_bracket(f'BracketAdjN_{lv}', l_['pos'][0], l_['pos'][1], by + l_['y'], l_['facing'], col, light_only=True)
     exits = []
     rooms = {r['id']: r for r in FLOOR['rooms']}
     for i, e in enumerate(SHELL['exits']):
@@ -1387,8 +1642,11 @@ def build():
     build_external_stair(col)
     if LEVEL <= STAIRS['north']['levels'][1]:
         build_north_stair(col)
+        build_gallery(col)
     if LEVEL == 1:
         build_1f_extras(col)
+    if BASEMENT:
+        build_basement_stair(col)
     roof_light = build_roof(col) if ROOFB else None
 
     world = bpy.data.worlds.new('N2_Night')
@@ -1402,12 +1660,28 @@ def build():
     meta = dict(level=LEVEL, baseY=BASE_Y, ceilH=CEIL_H, doors=door_info, lamps=lamps, walls=len(walls),
                 windows=windows, downlights=downs, brackets=brackets + ([roof_light] if roof_light else []), exits=exits,
                 evButtons=EV_BUTTONS, materials=MAT_TEX)
+    if LEVEL == 1:
+        ent = next((r for r in FLOOR['rooms'] if r['id'] == 'ENTRANCE'), None)
+        if ent:
+            ex0, ez0, ew, ed = ent['rect']
+            # P3a-2: 風除室の静的環境(world.js がキューブカメラで1回だけ描いて PMREM)。材質ごとの映り込みの強さ
+            meta['envProbe'] = dict(pos=[ex0 + ew / 2, BASE_Y + 1.35, ez0 + ed / 2], size=256,
+                                    intensity={'M_GlassClear': 1.0, 'M_GlassEdge': 0.7, 'M_HairV': 1.0, 'M_HairH': 1.0, 'M_Sensor': 1.0,
+                                               'M_Stainless': 0.8, 'M_Stone': 1.0, 'M_StoneWall': 0.4, 'M_Mailbox': 0.25, 'M_Intercom': 0.4})
     scene['n2_meta'] = json.dumps(meta)
     return col
 
 
+NO_LIGHTMAP_KINDS = {'glass', 'glassedge', 'decal'}   # P3a-2: 透明ガラスはベイクしない(ライトマップの UV は 0 に潰す)
+
+
 def lightmap_uvs(col):
-    meshes = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only')]
+    flat = [o for o in col.objects if o.type == 'MESH' and o.get('n2_kind') in NO_LIGHTMAP_KINDS]
+    for o in flat:
+        uvl = o.data.uv_layers.new(name='Lightmap')
+        uvl.data.foreach_set('uv', [0.0] * (2 * len(uvl.data)))
+        o.data.uv_layers.active = o.data.uv_layers['UVMap']
+    meshes = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only') and o.get('n2_kind') not in NO_LIGHTMAP_KINDS]
     for o in meshes:
         uvl = o.data.uv_layers.new(name='Lightmap')
         o.data.uv_layers.active = uvl

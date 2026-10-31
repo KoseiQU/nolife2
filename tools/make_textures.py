@@ -163,12 +163,130 @@ def stone_tile(n=1024, tiles=2, seed=31, base=0.47, joint=0.012, contrast=1.0):
     return alb, normal_from_height(h, 1.6)
 
 
-alb, nrm = stone_tile()
-save('stone_floor_albedo.jpg', alb, q=86)
+# P3a-2(風除室の質の差し戻し): 床=明るい灰の石目(雲状の濃淡＋白い筋)＋粗さマップ(0.22〜0.42)。
+# 壁=濃灰の大判タイル(細かい粒の御影石調・目地)。写真 entrance_* / lobby_1F_corridor
+def stone_floor2(n=1024, tiles=2, seed=31):
+    a = noise(n, ((3, 1.0), (9, 0.8), (27, 0.5), (90, 0.35), (300, 0.25)), seed)
+    v1 = n2tex._noise_aniso(n, n, 7, 3, seed + 1); v2 = n2tex._noise_aniso(n, n, 3, 9, seed + 5)
+    vein = np.exp(-((v1 - 0.5) / 0.010) ** 2) * 0.7 + np.exp(-((v2 - 0.47) / 0.007) ** 2) * 0.5
+    speck = np.random.default_rng(seed + 3).random((n, n)).astype(np.float32) - 0.5
+    v = 0.55 + 0.12 * (a - 0.5) + 0.016 * vein + 0.02 * speck
+    rng = np.random.default_rng(seed + 2)
+    per = rng.random((tiles, tiles)) * 0.07 - 0.035
+    yy, xx = n2tex._grid(n, n)
+    ti, tj = (yy * tiles // n).astype(int), (xx * tiles // n).astype(int)
+    v = v + per[ti, tj]
+    s_ = n / tiles
+    jx = np.minimum(xx % s_, s_ - (xx % s_)); jy = np.minimum(yy % s_, s_ - (yy % s_))
+    g = np.clip(1.0 - np.minimum(jx, jy) / 2.2, 0, 1)
+    v = v * (1 - 0.45 * g)
+    alb = np.stack([v, v * 0.993, v * 0.982], 2)
+    rough = 0.30 + 0.09 * (noise(n, ((5, 1.0), (40, 0.5)), seed + 9) - 0.5) + 0.25 * g - 0.04 * vein
+    h = a * 0.25 - g * 1.0
+    return alb, normal_from_height(h, 1.4), np.clip(rough, 0.18, 0.6)
+
+
+def stone_wall2(n=1024, tiles=2, seed=41):
+    a = noise(n, ((4, 1.0), (16, 0.6), (64, 0.4)), seed)
+    rng = np.random.default_rng(seed + 3)
+    grain = rng.random((n, n)).astype(np.float32)
+    grain = np.asarray(Image.fromarray((grain * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.7)), np.float32) / 255.0
+    dots = (rng.random((n, n)) > 0.985).astype(np.float32) * 0.6 - (rng.random((n, n)) > 0.99).astype(np.float32) * 0.4
+    v = 0.27 + 0.04 * (a - 0.5) + 0.07 * (grain - 0.5) + 0.03 * dots
+    per = rng.random((tiles, tiles)) * 0.03 - 0.015
+    yy, xx = n2tex._grid(n, n)
+    ti, tj = (yy * tiles // n).astype(int), (xx * tiles // n).astype(int)
+    v = v + per[ti, tj]
+    s_ = n / tiles
+    jx = np.minimum(xx % s_, s_ - (xx % s_)); jy = np.minimum(yy % s_, s_ - (yy % s_))
+    g = np.clip(1.0 - np.minimum(jx, jy) / 1.8, 0, 1)
+    v = v * (1 - 0.5 * g)
+    alb = np.stack([v * 0.99, v, v * 1.0], 2)
+    h = grain * 0.25 + a * 0.2 - g * 1.0
+    return alb, normal_from_height(h, 1.5)
+
+
+alb, nrm, rgh = stone_floor2()
+save('stone_floor_albedo.jpg', alb, q=88)
 save('stone_floor_normal.jpg', nrm, q=88, size=512)
-alb, nrm = stone_tile(seed=41, base=0.22, contrast=0.8)
+save('stone_floor_roughness.jpg', np.repeat(rgh[..., None], 3, 2), q=86, size=512)
+alb, nrm = stone_wall2()
 save('stone_wall_albedo.jpg', alb, q=86)
 save('stone_wall_normal.jpg', nrm, q=88, size=512)
+
+
+def hairline(n=512, seed=81):
+    """ヘアラインのステンレスの粗さ(縦の細い筋。0.14〜0.36)。横に使う材質は UV を入れ替えて貼る。"""
+    rng = np.random.default_rng(seed)
+    cols = rng.random(n).astype(np.float32)
+    cols = np.convolve(np.concatenate([cols[-3:], cols, cols[:3]]), np.ones(3) / 3, 'same')[3:-3]
+    fine = rng.random(n).astype(np.float32)
+    streak = 0.65 * cols[None, :] + 0.35 * fine[None, :]
+    along = n2tex._noise_aniso(n, n, 4, 64, seed + 1)   # 筋に沿ったゆるい揺らぎ
+    r = 0.22 + 0.10 * (streak - 0.5) + 0.05 * (along - 0.5)
+    return np.repeat(np.clip(r, 0.12, 0.4)[..., None], 3, 2)
+
+
+save('hairline_roughness.jpg', hairline(), q=88)
+
+
+def glass_smudge(n=512, seed=91):
+    """透明ガラスの粗さ(ほぼ鏡面 0.02。指紋・拭き跡のにじみ・埃)。1枚=1m。"""
+    rng = np.random.default_rng(seed)
+    blob = noise(n, ((3, 1.0), (7, 0.6), (18, 0.3)), seed)
+    smear = np.clip((blob - 0.58) * 3.0, 0, 1) ** 1.5
+    wipe = n2tex._noise_aniso(n, n, 40, 3, seed + 2)
+    wipe = np.clip((wipe - 0.62) * 4.0, 0, 1) * np.clip((noise(n, ((4, 1.0),), seed + 4) - 0.45) * 3, 0, 1)
+    dust = (rng.random((n, n)) > 0.997).astype(np.float32)
+    prints = np.zeros((n, n), np.float32)
+    yy, xx = n2tex._grid(n, n)
+    for _ in range(14):      # 指紋(小さな楕円の渦)
+        cx, cy, r = rng.random() * n, rng.random() * n, 7 + rng.random() * 6
+        d = np.sqrt(((xx - cx) / r) ** 2 + ((yy - cy) / (r * 1.3)) ** 2)
+        prints += np.clip(1 - d, 0, 1) * (0.5 + 0.5 * np.sin(d * 18.0))
+    r_ = 0.025 + 0.12 * smear + 0.08 * wipe + 0.10 * np.clip(prints, 0, 1) + 0.12 * dust
+    return np.repeat(np.clip(r_, 0.02, 0.35)[..., None], 3, 2)
+
+
+save('glass_smudge.jpg', glass_smudge(), q=88)
+
+
+def paving(n=512, seed=95):
+    """正面玄関の外の暗い舗装(アスファルト)。1枚=2m。"""
+    a = noise(n, ((6, 1.0), (40, 0.6), (200, 0.6)), seed)
+    rng = np.random.default_rng(seed)
+    grit = rng.random((n, n)).astype(np.float32)
+    v = 0.075 + 0.02 * (a - 0.5) + 0.035 * (grit - 0.5)
+    alb = np.stack([v, v, v * 1.02], 2)
+    return alb, normal_from_height(grit * 0.6 + a * 0.4, 2.0)
+
+
+alb, nrm = paving()
+save('paving_albedo.jpg', alb, q=84)
+save('paving_normal.jpg', nrm, q=86)
+
+
+def intercom(W=256, H=512):
+    """オートロックの操作盤(ヘアラインの板・黒い液晶・テンキー)。写真 entrance_windbreak の右手前の盤。"""
+    im = Image.new('RGB', (W, H), (150, 151, 150))
+    d = ImageDraw.Draw(im)
+    rng = np.random.default_rng(7)
+    for x in range(W):
+        c = int(144 + rng.random() * 14)
+        d.line([(x, 0), (x, H)], fill=(c, c, c - 1))
+    d.rectangle([2, 2, W - 3, H - 3], outline=(110, 110, 110), width=2)
+    d.rectangle([40, 40, W - 40, 190], fill=(10, 14, 22), outline=(60, 60, 64), width=3)
+    d.rectangle([52, 52, W - 52, 178], fill=(28, 56, 110))
+    d.rectangle([60, 64, W - 60, 74], fill=(110, 150, 210))
+    for r in range(4):
+        for c in range(3):
+            x0, y0 = 58 + c * 48, 230 + r * 50
+            d.rectangle([x0, y0, x0 + 38, y0 + 36], fill=(60, 62, 66), outline=(40, 40, 42))
+    d.ellipse([W / 2 - 20, 440, W / 2 + 20, 480], fill=(40, 40, 44), outline=(90, 90, 90), width=2)
+    save('intercom.png', im)
+
+
+intercom()
 
 
 def carpet(n=512, seed=51):
@@ -219,27 +337,60 @@ save('concrete_albedo.jpg', alb, q=84)
 save('concrete_normal.jpg', nrm, q=86, size=512)
 
 
-def mailbox_wall(W=1024, H=400):
-    """集合ポスト(上段: 小扉にダイヤル錠・号室窓)＋宅配BOX(下段: 大扉・緑のLED)。写真 mailboxes_1F.jpg の配置を簡略化。
-    幅 4.6m × 高さ 1.75m の面に UV 0..1 で貼る。"""
-    im = Image.new('RGB', (W, H), (150, 150, 146))
-    d = ImageDraw.Draw(im)
-    cols, rows = 16, 7
-    x0, x1, y0, y1 = 8, W - 8, 10, int(H * 0.66)
-    cw, ch = (x1 - x0) / cols, (y1 - y0) / rows
+def mailbox_wall(W=2048, H=780):
+    """集合ポスト＋宅配BOX(写真 mailboxes_1F.jpg)。幅 4.6m × 高さ 1.75m の面に UV 0..1 で貼る。
+    左端=操作盤(液晶・ボタン)の列、上段=小扉(ダイヤル錠・号室札)8段×12列、下段=宅配BOX の大扉(黒い番号札・緑の LED)。
+    P3a-2: 解像度を上げ、扉の隙間・ダイヤル錠の凹凸を法線マップ(mailbox_normal.jpg)に。"""
+    im = Image.new('RGB', (W, H), (176, 175, 170))
+    hm = Image.new('L', (W, H), 128)
+    d = ImageDraw.Draw(im); dh = ImageDraw.Draw(hm)
+    rng = np.random.default_rng(13)
+    face, gap, edge = (184, 183, 178), (70, 70, 68), (150, 149, 145)
+    x0, x1, y0, y1 = 6, W - 6, 6, int(H * 0.70)
+    px1 = x0 + 230                                   # 操作盤の列
+    d.rectangle([x0, y0, px1 - 4, H - 6], fill=face, outline=gap, width=2)
+    dh.rectangle([x0, y0, px1 - 4, H - 6], fill=150)
+    d.rectangle([x0 + 40, y0 + 150, x0 + 180, y0 + 250], fill=(20, 24, 30), outline=(90, 90, 90), width=4)   # 液晶
+    d.rectangle([x0 + 50, y0 + 160, x0 + 170, y0 + 240], fill=(54, 66, 78))
+    d.rectangle([x0 + 50, y0 + 40, x0 + 190, y0 + 110], fill=(236, 236, 232), outline=(120, 120, 120))         # 注意書き
+    for i in range(5):
+        d.line([(x0 + 60, y0 + 55 + i * 11), (x0 + 175, y0 + 55 + i * 11)], fill=(120, 140, 170), width=3)
+    for i, yy in enumerate((y0 + 60, y0 + 330, y0 + 470, y0 + 610)):
+        d.rectangle([x0 + 8, yy, x0 + 30, yy + 34], fill=(18, 18, 20))
+        d.ellipse([x0 + 14, yy + 10, x0 + 24, yy + 22], fill=(70, 240, 120))
+    cols, rows = 12, 8
+    cw, ch = (x1 - px1) / cols, (y1 - y0) / rows
     for c in range(cols):
         for r in range(rows):
-            ax, ay = x0 + c * cw, y0 + r * ch
-            d.rectangle([ax + 1, ay + 1, ax + cw - 2, ay + ch - 2], fill=(168, 168, 164), outline=(110, 110, 106))
-            d.ellipse([ax + 5, ay + ch / 2 - 5, ax + 15, ay + ch / 2 + 5], fill=(200, 200, 198), outline=(90, 90, 90))
-            d.rectangle([ax + cw - 24, ay + ch / 2 - 4, ax + cw - 7, ay + ch / 2 + 3], fill=(40, 40, 42))
-    by0 = y1 + 6
-    for c in range(8):
-        ax = x0 + c * (x1 - x0) / 8
-        d.rectangle([ax + 2, by0, ax + (x1 - x0) / 8 - 3, H - 8], fill=(160, 160, 156), outline=(105, 105, 100))
-        d.rectangle([ax + 10, by0 + 14, ax + 18, by0 + 26], fill=(30, 30, 32))
-        d.ellipse([ax + 12, by0 + 17, ax + 16, by0 + 21], fill=(60, 230, 110))
-    save('mailbox.jpg', im, q=86)
+            ax, ay = px1 + c * cw, y0 + r * ch
+            box = [ax + 3, ay + 3, ax + cw - 3, ay + ch - 3]
+            sh = int(rng.integers(-4, 5))
+            d.rectangle(box, fill=(face[0] + sh, face[1] + sh, face[2] + sh), outline=gap, width=3)
+            dh.rectangle(box, fill=160); dh.rectangle([ax, ay, ax + cw, ay + 3], fill=40); dh.rectangle([ax, ay, ax + 3, ay + ch], fill=40)
+            cx_, cy_ = ax + 22, ay + ch / 2
+            d.ellipse([cx_ - 11, cy_ - 11, cx_ + 11, cy_ + 11], fill=(214, 214, 212), outline=(80, 80, 80), width=2)   # ダイヤル錠
+            for k in range(10):
+                t = k / 10 * 6.283
+                d.line([(cx_ + 6 * np.cos(t), cy_ + 6 * np.sin(t)), (cx_ + 10 * np.cos(t), cy_ + 10 * np.sin(t))], fill=(60, 60, 60), width=1)
+            dh.ellipse([cx_ - 11, cy_ - 11, cx_ + 11, cy_ + 11], fill=230)
+            d.rectangle([ax + cw - 46, cy_ - 7, ax + cw - 12, cy_ + 6], fill=(32, 32, 34))                  # 号室札
+    by0 = y1 + 4
+    lc = 9
+    lw = (x1 - px1) / lc
+    for c in range(lc):
+        ax = px1 + c * lw
+        box = [ax + 3, by0, ax + lw - 3, H - 8]
+        d.rectangle(box, fill=(178, 177, 172), outline=gap, width=3)
+        dh.rectangle(box, fill=150); dh.rectangle([ax, by0, ax + 3, H], fill=40)
+        d.rectangle([ax + 14, by0 + 40, ax + 40, by0 + 72], fill=(20, 20, 22))
+        d.text((ax + 27, by0 + 56), str(15 + c), fill=(220, 220, 220), anchor='mm')
+        if c % 3 != 1:
+            d.ellipse([ax + 18, by0 + 14, ax + 28, by0 + 24], fill=(60, 230, 110))
+    im = im.filter(ImageFilter.SMOOTH)
+    save('mailbox.jpg', im, q=88)
+    h = np.asarray(hm.filter(ImageFilter.GaussianBlur(1.2)), np.float32) / 255.0
+    nm = Image.fromarray((np.clip(normal_from_height(h, 6.0), 0, 1) * 255 + 0.5).astype(np.uint8)).resize((1024, 390), Image.LANCZOS)
+    save('mailbox_normal.jpg', nm, q=88)   # 法線は 1024px 以下(check_glb)
 
 
 mailbox_wall()

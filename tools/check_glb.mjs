@@ -8,7 +8,8 @@
 //   4) 外周の閉じ: 当たり(扉は閉、階段の段の手前の当たり込み)を 0.3m 格子で塗り、外周の外へ漏れない(屋上B も)
 //   5) 扉: 居室の扉板の数 = その階の号室数(図面のインベントリ)。扉板は衝突箱(閉扉)の中(±5cm)。号室プレート付き
 //   6) EV と外階段の全階接続: 各階に EV 扉2枚・カゴの行き先ボタン・外階段の鉄扉と段(上の階の踊り場の高さまで)。
-//      7F の段は屋上B の高さまで。1〜3F に北階段
+//      7F の段は屋上B の高さまで。1〜3F に北階段(P3a-2: 屋外の鉄骨。2F・3F に鉄扉、1F は地面)。
+//   7) P3a-2: 1F に地下への階段(段が B1 の床まで下りる・B1 の施錠扉)。B1 の当たりが閉じている
 //  最後に追加アセットの合計(GLB＋ライトマップ＋build/tex)を表示し、25MB を超えたら失敗。
 // 実行: node tools/check_glb.mjs [--floor 4] [--verbose]   失敗時は非0終了。
 
@@ -101,7 +102,7 @@ function imageSize(bytes) {
 }
 
 // ---------------------------------------------------------------- 当たり(world.js と同じ箱)
-const levelY = (k) => (k === 'RB' ? 7 : k - 1) * GEOM.FLOOR_H;
+const levelY = (k) => (k === 'RB' ? 7 : k === 'B1' ? -1 : k - 1) * GEOM.FLOOR_H;
 function collisionBoxes(floor, key) {
   const bs = floorWallBoxes(floor).map((b) => ({ minX: b.cx - b.w / 2, maxX: b.cx + b.w / 2, minZ: b.cz - b.d / 2, maxZ: b.cz + b.d / 2, kind: b.kind, roomId: b.roomId || null, part: b.part }));
   if (floor.shell) for (const c of floor.shell.caps) { const minX = c.normal === 'W' ? c.x : c.x - 0.12; bs.push({ minX, maxX: minX + 0.12, minZ: c.z0, maxZ: c.z1, kind: 'cap' }); }
@@ -293,7 +294,7 @@ function checkFloor(N) {
   let doorMax = 0;
   for (const [n, i] of leafNodes) {
     const rid = n.name.slice(9);
-    const b = doorBoxes.find((d) => d.roomId === rid);
+    const b = (rid === 'B1DOOR' ? floorWallBoxes(building.basement) : doorBoxes).find((d) => d.kind === 'door' && d.roomId === rid);   // B1 の扉は地下の当たり
     if (!b) { fail(`F${N}: 扉ブロッカなし ${rid}`); continue; }
     const ts = nodeTris(g, world, i).map((t) => t.v).filter((t) => Math.abs(t[0][1] - t[1][1]) > 1.0 || Math.abs(t[0][1] - t[2][1]) > 1.0);
     let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
@@ -307,7 +308,10 @@ function checkFloor(N) {
 
   // 6) EV・外階段・北階段
   const need = [`EVDoor_L_EV${N}`, `EVDoor_R_EV${N}`, `EVCallPanel_EV${N}`, `EVCar_EV${N}`, `EVCarPanel_EV${N}`, `DoorLeaf_MST${N}`, 'ExtStair_deck'];
-  if (N <= 3) need.push(`DoorLeaf_NST${N}`, N < 3 ? 'NorthStair_steps' : 'NorthStair_rail');
+  if (N <= 3) need.push('NorthStair_deck', 'NorthStair_rail');
+  if (N === 2 || N === 3) need.push(`DoorLeaf_NST${N}`, 'Gallery_parapet');
+  if (N === 1) need.push('NorthGround', 'BStair_steps', 'BStair_walls', 'DoorLeaf_B1DOOR', 'AutoDoor_L_ENTRANCE', 'GlassInner_glass', 'GlassOuter_glass', 'Porch');
+  if (N === 1 && nodeNames.has('DoorLeaf_NST1')) fail('F1: 北階段の扉が 1F に残っている');
   if (N === 7) need.push('Roof_floor', 'Roof_parapet');
   for (const nm of need) if (!nodeNames.has(nm)) fail(`F${N}: ${nm} がない`);
   if ((man.evButtons || []).length !== 7) fail(`F${N}: カゴの行き先ボタンが 7 個でない`);
@@ -317,8 +321,18 @@ function checkFloor(N) {
   if (ext && ext[1] < topY - 0.25) fail(`F${N}: 外階段の段が上の踊り場の高さ(${topY.toFixed(2)})まで届かない(最高 ${ext[1].toFixed(2)})`);
   R.extStairY = ext && ext.map((v) => +v.toFixed(2));
   if (N <= 2) {
-    const ns = deckY('NorthStair_steps');
-    if (ns && ns[1] < base + GEOM.FLOOR_H - 0.25) fail(`F${N}: 北階段の段が上の階まで届かない`);
+    const ns = deckY('NorthStair_deck');
+    if (!ns || ns[1] < base + GEOM.FLOOR_H - 0.25) fail(`F${N}: 北階段の段が上の階まで届かない`);
+  }
+  if (N === 1) {
+    const bs = deckY('BStair_steps');
+    R.basementStairY = bs && bs.map((v) => +v.toFixed(2));
+    if (!bs || bs[0] > base - GEOM.FLOOR_H + 0.05 || bs[1] < base - 0.25) fail(`F1: 地下への段が B1 の床から 1F まで届かない ${JSON.stringify(bs)}`);
+    const b1 = flood({ ...building.basement }, 'B1', building.basement.spawn);
+    R.floodB1 = b1;
+    if (b1.reached === 0 || b1.leaks) fail(`B1 の外周が閉じていない(到達 ${b1.reached}・漏れ ${b1.leaks})`);
+    // 地下の扉は施錠(当たりに扉のブロッカがある)
+    if (!floorWallBoxes(building.basement).some((b) => b.kind === 'door' && b.roomId === 'B1DOOR')) fail('B1 の施錠扉の当たりがない');
   }
   return R;
 }
@@ -328,6 +342,8 @@ const main = building.stairs.find((s) => s.id === 'main');
 if (JSON.stringify(main.stops) !== JSON.stringify([1, 2, 3, 4, 5, 6, 7, 'RB'])) fail('外階段の stops が 1〜7F＋屋上B でない');
 const north = building.stairs.find((s) => s.id === 'north');
 if (JSON.stringify(north.stops) !== JSON.stringify([1, 2, 3])) fail('北階段の stops が 1〜3F でない');
+const basement = building.stairs.find((s) => s.id === 'basement');
+if (!basement || JSON.stringify(basement.stops) !== JSON.stringify(['B1', 1])) fail('地下への階段の stops が B1→1F でない');
 for (let lv = 1; lv <= 7; lv++) {
   const f = building.floors.find((ff) => ff.level === lv);
   if (!f.rooms.some((r) => r.kind === 'elevator')) fail(`F${lv}: EV がない`);

@@ -53,7 +53,7 @@ def main():
         doors=meta.get('doors', []), lamps=meta.get('lamps', []),
     )
     # P3a(build_floor.py): 窓・灯具・非常口・カゴのボタン・材質→実行時テクスチャの対応
-    for k in ('windows', 'downlights', 'brackets', 'exits', 'evButtons', 'materials', 'walls'):
+    for k in ('windows', 'downlights', 'brackets', 'exits', 'evButtons', 'materials', 'walls', 'envProbe'):
         if k in meta:
             manifest[k] = meta[k]
     with open(os.path.join(ROOT, ARGS['manifest']), 'w') as f:

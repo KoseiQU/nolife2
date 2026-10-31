@@ -71,7 +71,9 @@ def prepare(scene):
     # → 拡散板(照明に寄与させない設定のもの)以外を複製して1つに結合した「代理」を焼き、元は render から隠す。
     #   第2UV(Lightmap)は全メッシュ共通のアトラスなので、代理に焼いても結果は同じ画像になる。
     # P3a: ベイク専用の遮蔽(n2_bake_only)は焼き込み先にしない(影だけ落とす)
-    src = [o for o in meshes if o.get('n2_kind') != 'lampcover' and not o.get('n2_bake_only')]
+    # P3a-2: 透明ガラス(とその小口・シール)は焼き込み先にせず、光も遮らない(ベイク中は render から隠す)
+    clear = [o for o in meshes if o.get('n2_kind') in ('glass', 'glassedge', 'decal')]
+    src = [o for o in meshes if o.get('n2_kind') != 'lampcover' and not o.get('n2_bake_only') and o not in clear]
     for o in scene.objects:
         o.select_set(False)
     copies = []
@@ -85,7 +87,7 @@ def prepare(scene):
     proxy = copies[0]
     proxy.name = 'N2_BakeProxy'
     hidden = []
-    for o in src:
+    for o in src + clear:
         hidden.append((o, o.hide_render)); o.hide_render = True
     proxy.data.uv_layers.active = proxy.data.uv_layers['Lightmap']
     for o in scene.objects:
