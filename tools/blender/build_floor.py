@@ -1211,7 +1211,7 @@ def build_north_stair(col):
     if LEVEL == lo:
         # 地面(暗い舗装)。歩けるのは踊り場の下だけ(周りは低い柵と闇)
         gr = MeshBuilder('NorthGround')
-        orient(gr.quad([(x0, y, z0 + d + 2.5), (x0 + w + 2.5, y, z0 + d + 2.5), (x0 + w + 2.5, y, z0 - 2.5), (x0, y, z0 - 2.5)], (0, 1, 0), 'M_Paving'), (0, 1, 0))
+        orient(gr.quad([(x0, y, z0 + d), (x0 + w, y, z0 + d), (x0 + w, y, z0), (x0, y, z0)], (0, 1, 0), 'M_Paving'), (0, 1, 0))   # P3c: 箱の範囲だけ(周りは敷地の外構)
         gr.finish(col, {'n2_kind': 'ground'})
         railing(rl, (x0 + 0.05, y, z0 + 0.03), (s0 + 0.3, y, z0 + 0.03), h=0.9, spacing=0.15)
         railing(rl, (x0 + 0.05, y, z0 + d - 0.03), (s0 + 0.3, y, z0 + d - 0.03), h=0.9, spacing=0.15)
@@ -1464,10 +1464,10 @@ def build_1f_extras(col):
         orient(f, (1, 0, 0))
         set_uv(f, ic, [(0, 0), (1, 0), (1, 1), (0, 1)])
         ic.finish(col, {'n2_kind': 'intercom'})
-        # 外側の自動ドア(夜間は閉)・内外のガラスの線
+        # 外側の自動ドア・内外のガラスの線。P3c: 外側も近づくと開き、エントランス前(敷地 'G')へ出られる
         dw = ent['door']['width']
         out = dict(id='ENTRANCE_OUT', pos=(ex0 + ew / 2, ez0 + ed), width=FLOOR['perimOpenings'][0]['width'])
-        build_auto_door(out, col, operable=False)
+        build_auto_door(out, col, operable=True)
         for zline, nm in ((ez0, 'Inner'), (ez0 + ed, 'Outer')):
             build_glass_line(ex0 + 0.06, ex0 + ew - 0.06, zline, ex0 + ew / 2 - dw / 2, ex0 + ew / 2 + dw / 2, col, f'Glass{nm}')
         build_porch(ex0, ez0 + ed, ew, col)
@@ -1481,18 +1481,19 @@ def build_1f_extras(col):
 
 
 PORCH_LIGHTS = []
+PORCH_CH = 2.55     # P3c: 庇の下面の高さ(上端 2.70 = 2F のバルコニーの見付けの下端)
 
 def build_porch(ex0, zf, ew, col):
-    """正面玄関の外(P3c までは暗い舗装とポーチの灯りだけ): 庇の下の石の床・庇の天井(ダウンライト2灯)・左右の外壁(石)、
-    その先は暗いアスファルト。外へは出られない(外側の自動ドアは夜間閉)。"""
+    """正面玄関の外: 庇の下の石の床・庇の天井(ダウンライト2灯)・左右の外壁(石)。
+    P3c: その先の舗装・植え込みは敷地(tools/blender/build_exterior.py の外構)が作る。外側の自動ドアは開く(敷地 'G' へ出られる)。
+    庇は 2F の南面のバルコニーの床(見付けの下端 = 2F 床 − 0.2)に重ならない高さ(上端 2.70)。"""
     y = BASE_Y
     pm = MeshBuilder('Porch')
     zo = zf + 0.12                                   # 外周の壁の外面
     px0, px1, pz1 = ex0 - 1.6, ex0 + ew + 1.6, zo + 2.0
-    ch = 2.75
+    ch = PORCH_CH
     orient(pm.quad([(px0, y, pz1), (px1, y, pz1), (px1, y, zo), (px0, y, zo)], (0, 1, 0), 'M_Stone'), (0, 1, 0))
-    orient(pm.quad([(px0 - 8, y - 0.01, pz1 + 9), (px1 + 8, y - 0.01, pz1 + 9), (px1 + 8, y - 0.01, pz1), (px0 - 8, y - 0.01, pz1)], (0, 1, 0), 'M_Paving'), (0, 1, 0))
-    pm.box((px0, y + ch, zo), (px1, y + ch + 0.3, pz1), 'M_ExtWall', mats={'-y': 'M_DarkCeil'}, keep=lambda k, c, n: k != '+y' and k != '-z')
+    pm.box((px0, y + ch, zo), (px1, y + ch + 0.15, pz1), 'M_ExtWall', mats={'-y': 'M_DarkCeil'}, keep=lambda k, c, n: k != '+y' and k != '-z')
     # 正面のガラスの線の左右の外壁(石)
     for xa, xb in ((px0, ex0), (ex0 + ew, px1)):
         orient(pm.quad([(xa, y, zo), (xb, y, zo), (xb, y + ch, zo), (xa, y + ch, zo)], (0, 0, 1), 'M_StoneWall'), (0, 0, 1))

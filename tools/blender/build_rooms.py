@@ -1130,6 +1130,11 @@ def build_massing(col):
                         segs = _cut(segs, bx, bx + bw)
                 if L == 4 and axis == 'z' and abs(plane - 5.8) < 0.01 and oz < 0:
                     segs = _cut(segs, -1.0, 14.8)      # 屋上A に面する北の外壁は屋上A の作りが描く
+            if L == 1 and axis == 'z' and oz > 0:
+                # P3c: 正面玄関(風除室の外側のガラスの線)は抜く(左右と上は庇の作り＝石の外壁が描く。敷地から玄関が見える)
+                ent = next((r for r in fl['rooms'] if r['id'] == 'ENTRANCE'), None)
+                if ent and abs(plane - (ent['rect'][1] + ent['rect'][3])) < 0.01:
+                    segs = _cut(segs, ent['rect'][0], ent['rect'][0] + ent['rect'][2])
             p = plane + (ox if axis == 'x' else oz) * 0.03
             for (a, b) in segs:
                 if b - a < 0.05:
