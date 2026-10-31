@@ -554,12 +554,13 @@ def build_door(dd, col):
     fr = MeshBuilder(f'DoorFrame_{rid}')
     FM = 'M_SteelFrameP' if dd['steel'] else 'M_Frame'
     lin = MeshBuilder(f'Lintel_{rid}')
-    zin = zone_at(px - fx * 0.2, pz - fz * 0.2)
+    # 屋上B(7F の屋根の上の空気)は扉の高さの判定に入れない(7F の居室の扉の垂れ壁が屋根を突き抜けた)
+    zin = zone_at(px - fx * 0.2, pz - fz * 0.2, sets=('floor',))
     top_in = (zin['y1'] - BASE_Y) if zin else CEIL_H
-    zout = zone_at(px + fx * 0.2, pz + fz * 0.2)
+    zout = zone_at(px + fx * 0.2, pz + fz * 0.2, sets=('floor',))
     top = max(top_in, (zout['y1'] - BASE_Y) if zout else CEIL_H)
     lin.box((gx0, y0 + DOOR_H + HEAD_H, gz0), (gx1, y0 + top, gz1), 'M_Wall',
-            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03) is not None)
+            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03, sets=('floor',)) is not None)
     # 垂れ壁の材質を面ごとの空気に合わせる
     lin_ob = lin.finish(col, {'n2_kind': 'lintel', 'n2_room': rid})
     if lin_ob:
@@ -705,7 +706,7 @@ def retint_by_zone(ob):
         c = mw @ poly.center
         n = (mw.to_3x3() @ poly.normal).normalized()
         gx, gy, gz = c.x + n.x * 0.03, c.z + n.z * 0.03, -(c.y + n.y * 0.03)
-        zn = zone_at(gx, gz, gy)
+        zn = zone_at(gx, gz, gy, sets=('floor',))
         if not zn:
             continue
         want = wall_mat(zn['kind'])

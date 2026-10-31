@@ -213,7 +213,9 @@ export class World {
           if (def.emissiveMap) { m.emissiveMap = this.texture(def.emissiveMap, true); m.emissive.setRGB(1, 1, 1); }
           if (def.opacity !== undefined) { m.transparent = true; m.opacity = Math.max(m.opacity < 1 ? m.opacity : def.opacity, 0.08); m.depthWrite = false; }
         }
-        m.lightMap = rec.lightMap;
+        // EV の三方枠とカゴの内装は細い面が多くライトマップが数テクセルしかなく、カゴの中から見るとギザギザになる(しかも
+        // ベイクはカゴの照明が消えた状態)→ ライトマップを使わず、カゴの照明(elevator.js の PointLight)＋環境光＋懐中電灯で見せる
+        m.lightMap = NO_LIGHTMAP.has(m.name) ? null : rec.lightMap;
         m.lightMapIntensity = man.lightmap.intensity * L.lightmapGain;
         m.envMapIntensity = 0;
         if (m.metalness > 0.5 || GLASS.has(m.name)) { m.envMap = this.envTex; m.envMapIntensity = m.metalness > 0.5 ? L.metalEnv : L.glassEnv; }
@@ -319,6 +321,8 @@ export class World {
     }
   }
 }
+
+const NO_LIGHTMAP = new Set(['M_EVFrame', 'M_CarBeige', 'M_CarStone', 'M_CarFloor', 'M_CarPanel', 'M_Mirror']);
 
 function disposeTree(root) {
   root.traverse((o) => {
