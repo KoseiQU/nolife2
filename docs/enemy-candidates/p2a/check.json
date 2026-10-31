@@ -1,7 +1,7 @@
 {
  "rigged": "idle_breathing_skin.fbx",
  "out": "07_rigged.glb",
- "mb": 16.4,
+ "mb": 16.58,
  "keys": [
   "Basis",
   "grin",
@@ -61,7 +61,7 @@
   {
    "check": "GLB サイズ(MB)",
    "ok": true,
-   "value": 16.4,
+   "value": 16.6,
    "limit": "≤40"
   },
   {
@@ -125,8 +125,8 @@
   {
    "check": "GLB 再読込: アクション数",
    "ok": true,
-   "value": 11,
-   "limit": 11
+   "value": 14,
+   "limit": 14
   },
   {
    "check": "GLB 再読込: 各アクションの長さ>0",
@@ -142,7 +142,10 @@
     "turn_left": 31.0,
     "turn_right": 31.0,
     "walk_brutal": 42.0,
-    "walk_careful": 138.0
+    "walk_careful": 138.0,
+    "walk_hurried": 26.0,
+    "walk_oldman": 38.0,
+    "walk_standard": 37.0
    },
    "limit": ">0"
   },
@@ -160,7 +163,10 @@
     "turn_left",
     "turn_right",
     "walk_brutal",
-    "walk_careful"
+    "walk_careful",
+    "walk_hurried",
+    "walk_oldman",
+    "walk_standard"
    ],
    "limit": "ファイル名(拡張子なし)"
   },

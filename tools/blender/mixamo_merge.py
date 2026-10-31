@@ -33,7 +33,7 @@ from n2common import parse_args, log  # noqa: E402
 
 ARGS = parse_args({'rigged': '', 'prod': 'build/enemy/07_prod_mesh.blend', 'out': 'build/enemy/07_rigged.glb',
                    'anims': '', 'prod_name': 'N2E_07_kanrinin', 'hammer': 'build/enemy/hammer.glb', 'keep_idle': False,
-                   'report': '', 'skin_tex': '4096', 'other_tex': '2048'})
+                   'report': '', 'skin_tex': '4096', 'other_tex': '2048', 'expect_actions': ''})
 P = lambda p: p if os.path.isabs(p) else os.path.join(ROOT, p)   # noqa: E731
 MAX_INF = 4
 HAND = 'mixamorig:RightHand'
@@ -356,7 +356,8 @@ def main():
     gacts = [a for a in bpy.data.actions if a not in a_before]
     rec('GLB 再読込: 三角形数', tris == prod_tris, tris, prod_tris)
     rec('GLB 再読込: シェイプキー grin・attack', all(x in gkeys for x in ('grin', 'attack')), gkeys, 'grin, attack')
-    rec('GLB 再読込: アクション数', len(gacts) == len(acts), len(gacts), len(acts))
+    exp = int(ARGS['expect_actions']) if ARGS['expect_actions'] else len(acts)
+    rec('GLB 再読込: アクション数', len(gacts) == exp == len(acts), len(gacts), exp)
     rec('GLB 再読込: 各アクションの長さ>0', all(a.frame_range[1] > a.frame_range[0] for a in gacts),
         {a.name.split('.')[0]: round(a.frame_range[1] - a.frame_range[0], 1) for a in gacts}, '>0')
     anames = sorted(a_.get('name', '') for a_ in glb_nodes(out).get('animations', []))   # GLB 内の名前(読込側の .001 付番を避ける)
