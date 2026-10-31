@@ -295,3 +295,62 @@ Mixamo 側のメッシュに **Surface Deform** モディファイアを付け�
 - 移植後、`attack`＝1 で顎先が 25mm 以上下がること、`grin`＝1 で口元が 8mm 以上動くことを確かめます。enemy_check.py の該当部分と同じ判定です。
 - 歯・舌・眉・まつ毛は 1 メッシュに結合済みなので、同じ手順で一緒に移ります。
 - GLB にするときは glTF の morph target として出ます（Blender の glTF 書き出しで Shape Keys を有効にする）。
+
+## Mixamo 用の軽量メッシュとリグ移植（P2 準備）
+**本当の原因**：Mixamo の拒否は骨の問題ではありませんでした。API の監視ログに `character_mapper: ERROR occured on generating verlod assets(veroldamo): Internal Server Error` とあり、プレビュー変換（Verold）が FBX の中身で落ちています。疑わしいのは、4096px テクスチャ×13 素材・21MB・Blender 5.2 の書式です。
+
+**方針**：Mixamo からはリグと重みだけをもらい、Blender で本番メッシュへ移します。
+
+### 作るもの
+`tools/blender/mixamo_prep.py` を実行すると、本番 FBX から次の4つができます。
+
+| ファイル | 中身 |
+|---|---|
+| `build/enemy/07_mixamo.obj`（5.9MB） | テクスチャ・素材・形状キーなし、三角形化、Y-up・m・A ポーズ・足元 z=0 |
+| `build/enemy/07_mixamo_lite.fbx`（2.3MB） | 同じ形、素材 1 個（無地）・テクスチャ埋め込みなし・形状キーなし（BlendShape/Texture/LimbNode とも 0 件） |
+| `build/enemy/07_prod_mesh.blend` | 本番の 1 メッシュ `N2E_07_kanrinin`（形状キー・13 素材・テクスチャ同梱）。移植先 |
+| `build/enemy/07_mixamo_prep.json` | 下の頂点数などの記録 |
+
+### 頂点数（対応は最近傍頂点で取る前提）
+| メッシュ | 頂点 | 三角形 | 素材 | 形状キー |
+|---|---|---|---|---|
+| 本番 | 46,295 | 57,879 | 13 | grin, attack |
+| OBJ | 位置（v）46,295／UV（vt）込みの組 53,548 | 57,879 | — | — |
+| lite FBX | 46,295 | 57,879 | 1 | — |
+
+OBJ は UV の継ぎ目で頂点が分かれるので、Mixamo 側の頂点数は 53,548 前後になる見込みです。
+
+### リグ移植スクリプト `tools/blender/mixamo_merge.py`
+**入力と出力**：入力は Mixamo のリグ済み FBX（cm・Y-up・メッシュ名が変わる）と本番 .blend、出力は `build/enemy/07_rigged.glb` です。
+
+**手順**
+1. 本番メッシュを読み込み、三角形化します（形状キーも一緒に分割されます）。
+2. リグ済み FBX を読み込み、レストポーズのワールド座標（m）で両メッシュの形を照合します。ずれていれば本番側を等倍・平行移動で合わせます。
+3. 本番の各頂点に、Mixamo 側の最近傍 4 頂点の重みを距離逆数で移します。形状キーを持つメッシュには Data Transfer モディファイアを適用できないので、Python で直接書いています。結果は Data Transfer の「頂点・最近傍」と同等です。
+4. 重みは 1 頂点 4 本までに正規化します。
+5. 本番メッシュをアーマチュアの子にして Armature モディファイアを付け、GLB を書き出します（スキン・形状キー・アニメ）。
+6. `--anims` で、追加のアニメ FBX（Mixamo の Without Skin）も積めます。
+
+**検証**
+- 本番の全頂点が骨に重み>0 であること。
+- `mixamorig:RightHand` があること。
+- GLB を読み直して、三角形数・形状キー 2 本・アニメ数が一致すること。
+
+**通しテスト（本物がまだ無いので自作のダミーで実施）**
+- `tools/blender/mixamo_dummy.py` で、lite FBX に Mixamo 規約の骨 65 本（`mixamorig:Hips` 以下、末端骨込み）と最寄りの骨の重みを付けました。オブジェクトは X 90°・スケール 0.01 の Mixamo 風の変換にし、メッシュ名を "Mesh" に変え、30 フレームのアニメ 1 本を付けています。
+- 結果は 8/8 通過です。形のずれ 0、重みなし 0/46,295、骨 65、三角形 57,879 一致、形状キー 2 本、アニメ 1 本。フレーム 1→15 で右腕の頂点が最大 0.61m 動くことも確認しました。
+- 注意：glTF の読み込みは骨の表示用に Icosphere を作るので、三角形数はスキン付きのメッシュだけで数えています。
+
+### 実行例
+```
+B=/Applications/Blender.app/Contents/MacOS/Blender
+$B -b --factory-startup -P tools/blender/mixamo_prep.py                       # 軽量版と本番 .blend を作る
+# → 07_mixamo_lite.fbx(だめなら 07_mixamo.obj)を Mixamo に上げ、自動リグ後に FBX(With Skin)をダウンロード
+$B -b --factory-startup -P tools/blender/mixamo_merge.py -- --rigged ~/Downloads/<mixamo>.fbx \
+   [--anims walk.fbx,look.fbx] --out build/enemy/07_rigged.glb
+```
+
+### 妥協点
+- 重みは最近傍頂点からの写しです。Mixamo 側で UV の継ぎ目が分かれても、位置は同じなので結果は変わりません。
+- 指・口まわりなどの細部の重みは Mixamo の自動リグの品質に依存します。顔は形状キー（grin / attack）で動かし、顎の骨はありません（Mixamo のリグに無いため）。
+- 本物の Mixamo FBX では、骨の向きや末端骨の有無が違う可能性があります。`automatic_bone_orientation=False` で読むこと、骨名は `mixamorig:` 前提であることの2点は、実物で確認が必要です。
