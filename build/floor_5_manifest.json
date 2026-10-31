@@ -5,16 +5,16 @@
   "file": "floor_5_lightmap.webp",
   "channel": 1,
   "encoding": "srgb",
-  "scale": 0.26345595717430115,
-  "intensity": 0.8276712996032516,
+  "scale": 0.2632475085556507,
+  "intensity": 0.8270164389542485,
   "size": 2048
  },
  "lightmap2": {
   "file": "floor_5_rooms_lightmap.webp",
   "channel": 1,
   "encoding": "srgb",
-  "scale": 0.03572640474885702,
-  "intensity": 0.11223781069818471,
+  "scale": 0.035696018021553755,
+  "intensity": 0.11214234797892214,
   "size": 2048,
   "materialPrefix": "MR_"
  },
@@ -22,840 +22,840 @@
   "size": 2048,
   "samples": 1024,
   "device": "GPU-METAL",
-  "bakeSeconds": 32.4,
+  "bakeSeconds": 33.3,
   "denoised": true,
   "encoding": "srgb",
-  "scale": 0.26345595717430115,
-  "lightMapIntensity": 0.8276712996032516,
+  "scale": 0.2632475085556507,
+  "lightMapIntensity": 0.8270164389542485,
   "lum": {
-   "p50": 0.008764056488871574,
-   "p99": 0.08047758787870407,
-   "p999": 0.8053284287452698,
-   "max": 31.103652954101562
+   "p50": 0.008768518455326557,
+   "p99": 0.08048376441001892,
+   "p999": 0.807471513748169,
+   "max": 31.063766479492188
   },
-  "coverage": 0.8475620746612549,
+  "coverage": 0.847437858581543,
   "rooms": {
    "size": 2048,
    "samples": 1024,
    "device": "GPU-METAL",
-   "bakeSeconds": 11.8,
+   "bakeSeconds": 12.1,
    "denoised": true,
    "encoding": "srgb",
-   "scale": 0.03572640474885702,
-   "lightMapIntensity": 0.11223781069818471,
+   "scale": 0.035696018021553755,
+   "lightMapIntensity": 0.11214234797892214,
    "lum": {
-    "p50": 0.0018023597076535225,
-    "p99": 0.028242111206054688,
-    "p999": 0.028753360733389854,
-    "max": 0.03755898028612137
+    "p50": 0.0015584395732730627,
+    "p99": 0.028192689642310143,
+    "p999": 0.028751961886882782,
+    "max": 0.04177648574113846
    },
-   "coverage": 0.774970293045044
+   "coverage": 0.7766942977905273
   }
  },
  "meshes": {
   "Wall_000": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_001": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_002": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_003": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_004": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_005": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_006": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_007": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_008": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_009": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_010": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_011": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_012": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_013": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_014": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_015": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_016": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_017": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_018": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_019": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_020": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_021": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_022": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_023": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_024": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_025": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_026": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_027": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_028": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_029": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_030": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_031": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_032": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_033": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_034": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_035": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_036": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_037": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_038": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_039": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_040": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_041": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_042": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_043": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_044": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_047": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_049": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_050": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_051": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_052": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_054": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Wall_055": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "wall"
   },
   "Floor": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "floor"
   },
   "Ceiling": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "ceiling"
   },
   "Lintel_501": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_501": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_501": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_502": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_502": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_502": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_503": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_503": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_503": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_504": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_504": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_504": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_508": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_508": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_508": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_507": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_507": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_507": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_506": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_506": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_506": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_505": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_505": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_505": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_509": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_509": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_509": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_510": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_510": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_510": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_511": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_511": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_511": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_512": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_512": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_512": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_513": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_513": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_513": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_514": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_514": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_514": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_516": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_516": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_516": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lintel_515": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_515": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_515": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "EVAlcoveLintel_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "EVFrame_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evframe"
   },
   "EVSill_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evsill"
   },
   "EVDoor_L_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evdoor"
   },
   "EVDoor_R_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evdoor"
   },
   "EVCallPanel_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evpanel"
   },
   "EVCallDisplay_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evdisplay"
   },
   "EVCallPlate_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evplate"
   },
   "EVCar_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evcar"
   },
   "EVCarDetail_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evcar_detail"
   },
   "EVCarLight_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "EVCarPanel_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evcarpanel"
   },
   "EVCarDisplay_EV5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "evdisplay"
   },
   "Lintel_MST5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lintel"
   },
   "DoorFrame_MST5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "doorframe"
   },
   "DoorLeaf_MST5": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "door"
   },
   "Lamp_0_housing": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lamp"
   },
   "Lamp_0_cover": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "Lamp_1_housing": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lamp"
   },
   "Lamp_1_cover": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "Lamp_2_housing": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lamp"
   },
   "Lamp_2_cover": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "Lamp_3_housing": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lamp"
   },
   "Lamp_3_cover": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "HallBeams": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "beam"
   },
   "Downlight_trim": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "downlight"
   },
   "Downlight_lens": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "ExitSign_body": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "exitsign"
   },
   "ExitSign_face": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "exitsign_face"
   },
   "Window_0_frame": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "window"
   },
   "Window_0_glass": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "windowglass"
   },
   "Window_1_frame": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "window"
   },
   "Window_1_glass": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "windowglass"
   },
   "Bracket_0_body": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "bracket"
   },
   "Bracket_0_cover": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "lampcover"
   },
   "ExtStair_steel": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "stair_steel"
   },
   "ExtStair_deck": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "stair_deck"
   },
   "ExtStair_rail": {
    "lightmap": "floor_5_lightmap.webp",
-   "intensity": 0.8276712996032516,
+   "intensity": 0.8270164389542485,
    "kind": "rail"
   },
   "J2_roomwall": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "roomwall"
   },
   "J2_closet": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closet"
   },
   "ClosetDoor_L_501": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_L_501": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_R_501": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_R_501": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "J2_furn": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "furn"
   },
   "J2_decor": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "decor"
   },
   "ClosetDoor_L_506": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_L_506": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_R_506": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_R_506": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_L_511": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_L_511": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_R_511": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_R_511": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_L_516": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_L_516": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoor_R_516": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "ClosetDoorIn_R_516": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "closetdoor"
   },
   "J2_winframe": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "winframe"
   },
   "J0_winsash": {
@@ -870,7 +870,7 @@
   },
   "J2_wincurtain": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "wincurtain"
   },
   "WinSash_506": {
@@ -890,27 +890,27 @@
   },
   "Bal_floor": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "balcony"
   },
   "Bal_rail": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "balrail"
   },
   "Bal_part": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "partition"
   },
   "Bal_facade": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "facade"
   },
   "Bal_ac": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "balac"
   },
   "Bal_bars": {
@@ -920,7 +920,7 @@
   },
   "OwnRoof": {
    "lightmap": "floor_5_rooms_lightmap.webp",
-   "intensity": 0.11223781069818471,
+   "intensity": 0.11214234797892214,
    "kind": "roof"
   },
   "Massing": {
