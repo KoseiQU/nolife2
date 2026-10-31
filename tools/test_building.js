@@ -461,7 +461,16 @@ export async function run(N) {
       if (!(inside && fp)) walkOk = false;
     }
     // d) 1F の風除室 → 外側の自動ドア → 敷地 → 戻る
+    // P3c-2: 最初は外側の自動ドアは施錠(反応しない)。近づいても開かず風除室に留まることを見てから、解錠して出る
     await N.teleport(1, 17.6, 26.6, Math.PI, 0); await settle('1,2');
+    const lockedAtStart = !!N.doorApi.get('ENTRANCE_OUT').locked;
+    key('KeyW', true); let openedLocked = 0;
+    for (let i = 0; i < 120; i++) { N.pump(DT, 1, false); openedLocked = Math.max(openedLocked, N.doorApi.get('ENTRANCE_OUT').open01); }
+    key('KeyW', false); N.pump(DT, 2, false);
+    const stayed = pos();
+    const lockOk = lockedAtStart && openedLocked === 0 && stayed.level === 1 && stayed.z < 29.0;
+    N.doorApi.setLocked('ENTRANCE_OUT', false);
+    await N.teleport(1, 17.6, 26.6, Math.PI, 0); N.pump(DT, 2, false);
     key('KeyW', true); let opened = 0;
     for (let i = 0; i < 240; i++) { N.pump(DT, 1, false); opened = Math.max(opened, N.doorApi.get('ENTRANCE_OUT').open01); }
     key('KeyW', false); N.pump(DT, 2, false);
@@ -469,9 +478,10 @@ export async function run(N) {
     N.setView(N.player.pos.x, N.player.pos.z, 0, 0);
     key('KeyW', true); N.pump(DT, 260, false); key('KeyW', false); N.pump(DT, 2, false);
     const back = pos();
-    const doorOk = opened > 0.85 && out1.level === 'G' && out1.z > 29.0 && back.level === 1 && back.z < 28.0;
+    const doorOk = lockOk && opened > 0.85 && out1.level === 'G' && out1.z > 29.0 && back.level === 1 && back.z < 28.0;
+    N.doorApi.setLocked('ENTRANCE_OUT', true);
     return { pass: fpsOk && visOk && walkOk && doorOk, loadMs, frameMs: { before, after, rule: 'after ≤ max(16.7, before×1.5)' }, visible: vis, walked,
-      door: { maxOpen01: +opened.toFixed(2), out: out1, back } };
+      door: { lockedAtStart, maxOpen01WhileLocked: +openedLocked.toFixed(2), stayedInside: stayed, maxOpen01: +opened.toFixed(2), out: out1, back } };
   });
 
   await N.teleport(4, 6.9, 7.6, Math.PI);

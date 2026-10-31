@@ -8,6 +8,7 @@ export const HUD_TEXT = {
     unlock: { key: 'L', text: '解錠' },
     lockedBadge: '🔒 施錠中',
     lockedOther: '鍵がかかっている',          // 開かない扉で E を押した時(1 秒)
+    autoLocked: '自動ドアが反応しない',        // P3c-2: 最初は動かない正面玄関の外側の自動ドアで E を押した時(1 秒)
   },
   scope: {
     peep: { key: 'E 長押し', text: '覗く' },

@@ -36,7 +36,8 @@ const PARAMS = new URLSearchParams(location.search);
 // P3b-3: 扉は通常プレイと同じ(内装のある部屋だけ開く。空室・物語の部屋・地下の鉄扉は開かない)。?tour&floor=N(1〜7・RB・B1)で開始階を指定
 const TOUR = PARAMS.has('tour');
 // P3b: 物語の進行で解放するフラグ(P5 で条件を決める)。roofA = 410 のバルコニーから屋上A へ乗り越えられる(P3b-3: 401 からは不可)。?tour と ?roofA では最初から真
-const FLAGS = { roofA: TOUR || PARAMS.has('roofA') };
+// P3c-2: entranceOut = 正面玄関の外側の自動ドアが動く(2026-11-01 ユーザー指示: 最初は開かない)。?tour と ?entranceOut では最初から真
+const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -214,6 +215,7 @@ await Promise.all(LEVELS.map(async (lv) => { manifests[lv] = await getJSON(`./bu
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK, tour: TOUR });
+{ const d = world.doorById.get('ENTRANCE_OUT'); if (d) d.locked = !FLAGS.entranceOut; }   // P3c-2: 最初は外側の自動ドアは反応しない(解放は P5。デバッグ: doorApi.setLocked('ENTRANCE_OUT', false))
 // P3c: 外観・外環境(建物の後に読む。?noext で読まない)
 const exterior = new Exterior({ scene, renderer, camera, world, look: LOOK, envTex });
 let rooms = null;   // P3b: 入れる部屋の仕掛け(下で作る)
@@ -242,9 +244,12 @@ function useNearestDoor() {
     if ((dx * fwd.x + dz * fwd.z) / Math.max(dist, 1e-3) < 0.35) continue; // 見ている方の扉
     best = d; bestD = dist;
   }
-  lastUseLocked = false;
+  lastUseLocked = false; lastUseAutoLocked = false;
   if (!best) return null;
-  if (best.kind === 'auto') return best.roomId;                     // 自動ドアは近づけば開く
+  if (best.kind === 'auto') {                                       // 自動ドアは近づけば開く
+    if (best.locked && best.open01 === 0) lastUseAutoLocked = true;   // P3c-2: 施錠中の自動ドアで E → 「反応しない」(1 秒)
+    return best.roomId;
+  }
   if (best.operable && !(best.locked && best.target === 0)) {
     best.target = best.target > 0 ? 0 : best.openAngle;
     best.speedMul = 1;
@@ -257,7 +262,7 @@ function useNearestDoor() {
   }
   return best.roomId;
 }
-let lastUseLocked = false;
+let lastUseLocked = false, lastUseAutoLocked = false;
 // E を押した(短押しが確定した)時: EV の呼びボタン/カゴの行き先ボタン、それ以外は扉
 function useAndReport() {
   const t = hud.target;
@@ -276,6 +281,7 @@ function useAndReport() {
   }
   const r = useNearestDoor();
   hud.onUse({ locked: lastUseLocked });
+  if (lastUseAutoLocked) hud.flash(HUD_TEXT.door.autoLocked);
   return r;
 }
 function nearestOperableDoor(maxD = 1.6) {
