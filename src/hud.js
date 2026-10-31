@@ -72,9 +72,9 @@ export class Hud {
     if (locked && !this.started) { this.started = true; this.showControls(HUD.controlsSec); }
     this.locked = locked;
   }
-  // E を押した時: 開かない扉なら「鍵がかかっている」、EV ボタンなら「反応がない」を出す。対象が EV なら true
+  // E を押した時: 開かない扉なら「鍵がかかっている」。EV(呼びボタン・行き先ボタン)なら true(表示は main が出す。P3a で EV が動くようになった)
   onUse(result) {
-    if (this.target && this.target.kind === 'ev') { this.flash(TX.ev.noResponse); return true; }
+    if (this.target && (this.target.kind === 'ev' || this.target.kind === 'evbutton')) return true;
     if (result && result.locked) this.flash(TX.door.lockedOther);
     return false;
   }
@@ -137,14 +137,15 @@ export class Hud {
     if (this.canPeep()) { items.push(TX.scope.peep); kind = 'scope'; }
     if (door && door.operable) {
       const p = this.player.pos;
-      const inside = p.x > 7.86 && p.z > 5.8 && p.z < 8.7;   // 410 の室内(P0)。P3 で部屋データ参照へ
+      const inside = this.inRoom410 ? this.inRoom410() : (p.x > 7.86 && p.z > 5.8 && p.z < 8.7);   // 410 の室内
       const open = door.target > 0 || door.angle > 0.05;
       if (open) items.push(TX.door.close);
       else if (door.locked) { if (inside) items.push(TX.door.unlock); badge = TX.door.lockedBadge; }
       else { items.push(TX.door.open); if (inside) items.push(TX.door.lock); }
       kind = kind || 'door';
     }
-    if (!kind && this.evPanel && look(this.evPanel.x, this.evPanel.z, HUD.evReach) >= 0) { items.push(TX.ev.call); kind = 'ev'; }
+    if (!kind && this.extraTarget) { const t = this.extraTarget(); if (t) return t; }   // P3a: カゴの行き先ボタン・階段
+    if (!kind && this.evPanel && Math.abs(this.evPanel.y - cam.position.y) < 1.6 && look(this.evPanel.x, this.evPanel.z, HUD.evReach) >= 0) { items.push(TX.ev.call); kind = 'ev'; }
     if (!kind) return null;
     if (!items.length && !badge) return null;
     return { kind, door, items, badge };

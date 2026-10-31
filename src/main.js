@@ -1,5 +1,6 @@
-// main.js — P0 縦切り: Blender でベイクした 4F 廊下(build/p0.glb + ライトマップ)を歩く。
-// 見た目は GLB、当たりは building.json(walls.js)+ src/p0_region.json の塞ぎ。
+// main.js — P3a 全館の外殻: 1F〜7F(＋屋上B)を階ごとのベイク済み GLB(build/floor_N.glb + ライトマップ)で歩く。
+// 見た目は GLB(居る階 ±1 だけ読み込み: world.js)、当たりは building.json(walls.js)を全階ぶん常駐。
+// 階の移動: EV(elevator.js)と外階段・北階段(stairs.js)。開始は 4F の 410 の前(P0 と同じ)。
 // 光: ベイク済みライトマップ(常夜灯・非常口・窓のGI)+ リアルタイムは懐中電灯(SpotLight+影)だけ。
 // ポスト: GTAO(弱) → bloom(ごく弱・閾値高) → OutputPass(ACES+sRGB) → 粒子+ビネット。
 
@@ -15,8 +16,10 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Player } from './player.js';
-import { buildCollisions } from './p0_region.js';
 import { GEOM } from './walls.js';
+import { World, levelY, glbLevel, FACING_N, LEVELS } from './world.js';
+import { Stairs } from './stairs.js';
+import { Elevator, EV } from './elevator.js';
 import { Enemy } from './enemy.js';
 import { EnemyAI } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
@@ -47,7 +50,8 @@ export const LOOK = {
   maxRenderPixels: 1920 * 1080,   // Retina でもこの画素数を上限に描く(60fps 目標)
   // 発光面の見た目だけの倍率(ベイク側の光量は Blender の値のまま)。窓は面で見ると白飛びするので抑える
   emissiveScale: { M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0, M_CarCeiling: 0.0,  // カゴ照明=待機中は消灯
-    M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6 },   // 近くで見る発光面は白飛びしない程度に
+    M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6,   // 近くで見る発光面は白飛びしない程度に
+    M_Backdrop: 0.3, M_BracketCover: 0.5 },                         // P3a: 正面玄関の外の暗い街路・屋外の壁付け灯
   // 金属とガラスだけに弱い環境反射(ライトマップは拡散だけなので、無いと SUS が真っ黒に見える)
   metalEnv: 0.08,
   glassEnv: 0.06,
@@ -145,107 +149,29 @@ window.addEventListener('resize', resize);
 
 // ---------------------------------------------------------------- load
 const [building, region] = await Promise.all([getJSON('./data/building.json'), getJSON('./src/p0_region.json')]);
-const manifest = await getJSON('./build/p0_manifest.json');
-const { collisions } = buildCollisions(building, region);
-const floorY = (region.level - 1) * GEOM.FLOOR_H;
-
-const gltf = await new GLTFLoader().loadAsync('./build/' + manifest.glb);
-const lightMap = await new THREE.TextureLoader().loadAsync('./build/' + manifest.lightmap.file);
-lightMap.flipY = false;                       // glTF の UV 規約(左上原点)に合わせる
-lightMap.channel = manifest.lightmap.channel; // = 1 → TEXCOORD_1(GLTFLoader は uv1 に載せる)
-lightMap.colorSpace = manifest.lightmap.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
-lightMap.generateMipmaps = true;
-lightMap.minFilter = THREE.LinearMipmapLinearFilter;
-lightMap.magFilter = THREE.LinearFilter;
-
-const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const manifests = {};
+await Promise.all(LEVELS.map(async (lv) => { manifests[lv] = await getJSON(`./build/floor_${lv}_manifest.json`); }));
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay']);
-const seenMats = new Set();
-const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton']);
-gltf.scene.traverse((o) => {
-  if (!o.isMesh) return;
-  const kind = (o.userData.n2_kind || o.parent?.userData.n2_kind || '');
-  o.castShadow = !NO_SHADOW.has(kind);
-  o.receiveShadow = true;
-  const mats = Array.isArray(o.material) ? o.material : [o.material];
-  for (const m of mats) {
-    if (seenMats.has(m)) continue;
-    seenMats.add(m);
-    m.lightMap = lightMap;
-    m.lightMapIntensity = manifest.lightmap.intensity * LOOK.lightmapGain;
-    for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap']) {
-      if (m[k]) { m[k].anisotropy = maxAniso; m[k].needsUpdate = true; }
-    }
-    m.envMapIntensity = 0;
-    if (m.metalness > 0.5 || GLASS.has(m.name)) {
-      m.envMap = envTex;
-      m.envMapIntensity = m.metalness > 0.5 ? LOOK.metalEnv : LOOK.glassEnv;
-    }
-    if (LOOK.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= LOOK.emissiveScale[m.name];
-    m.needsUpdate = true;
-  }
-});
-scene.add(gltf.scene);
-// P2e: EV 呼びボタンの位置(静的結合で節点が消える前に控える)
-const evPanelPos = (() => { const n = gltf.scene.getObjectByName('EVCallPanel_EV4'); if (!n) return null; n.updateMatrixWorld(true); return new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3()); })();
-mergeStatic(gltf.scene);
-
-// 静的メッシュ(扉板以外)を材質ごとに1つへ結合する。115 プリミティブ × (本描画+影+GTAO法線) で
-// 1フレーム 400 ドローコール超になっていたため。扉板はヒンジ回転するので個別のまま残す。
-function mergeStatic(root) {
-  root.updateMatrixWorld(true);
-  const MOVABLE = new Set(['door', 'evdoor']);   // 扉板・EV扉(左右)は後で動かすので結合しない
-  const isDoor = (o) => { for (let p = o; p; p = p.parent) if (p.userData && MOVABLE.has(p.userData.n2_kind)) return true; return false; };
-  const groups = new Map();
-  const victims = [];
-  root.traverse((o) => {
-    if (!o.isMesh || isDoor(o)) return;
-    const key = o.material.uuid + (o.castShadow ? ':s' : ':n');
-    if (!groups.has(key)) groups.set(key, { material: o.material, castShadow: o.castShadow, geoms: [] });
-    const g = o.geometry.clone();
-    g.applyMatrix4(o.matrixWorld);
-    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'uv1'].includes(name)) g.deleteAttribute(name);
-    groups.get(key).geoms.push(g);
-    victims.push(o);
-  });
-  for (const o of victims) o.removeFromParent();
-  for (const { material, castShadow, geoms } of groups.values()) {
-    const merged = mergeGeometries(geoms.map((g) => (g.index ? g : g)), false);
-    if (!merged) { console.warn('merge failed', material.name); continue; }
-    const mesh = new THREE.Mesh(merged, material);
-    mesh.name = 'merged_' + material.name;
-    mesh.castShadow = castShadow;
-    mesh.receiveShadow = true;
-    root.add(mesh);
-  }
-}
+const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK });
+let playerLevel = region.level;          // 階のキー(1..7 / 'RB')。開始は 4F
+const floorY = levelY(region.level);     // 4F(410・覗き穴・チェックポイントの階)
+world.setVisible([glbLevel(playerLevel)]);
+await world.focus(playerLevel);
+const collisions = world.collisions(4);  // 4F の当たり(P0 互換の参照。プレイヤーの今の階は world.collisions(playerLevel))
+const manifest = manifests[4];
+const seenMats = { forEach: (fn) => { for (const rec of world.floors.values()) for (const m of rec.mats) fn(m); } };
 
 // ---------------------------------------------------------------- doors
-const doors = [];
-gltf.scene.traverse((o) => {
-  if (o.userData.n2_kind !== 'door') return;
-  const roomId = String(o.userData.n2_room);
-  doors.push({
-    roomId, node: o,
-    operable: !!o.userData.n2_operable,
-    sign: o.userData.n2_open_sign || 1,
-    openAngle: o.userData.n2_open_angle || 0,
-    angle: 0, target: 0,
-    locked: false,          // P2b: 内側から施錠(L)。管理人は鍵で開ける
-    speedMul: 1,            // 管理人が押し開けるときは速い
-    collision: collisions.find((c) => c.kind === 'door' && c.roomId === roomId) || null,
-  });
-});
-const DOOR_SPEED = 2.4; // rad/s(前作3.4は速すぎた)
+// 扉の状態は world が全階ぶん持つ(GLB の扉板は読み込まれた時に結び付く)。ここはプレイヤーの階の扉だけを相手にする
+const doors = world.doors;
+const doorsHere = () => doors.filter((d) => d.level === playerLevel && d.collision);
 function useNearestDoor() {
   const p = player.object.position;
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
   let best = null, bestD = 1.9;
-  for (const d of doors) {
+  for (const d of doorsHere()) {
     const c = d.collision;
-    if (!c) continue;
     const cx = (c.minX + c.maxX) / 2, cz = (c.minZ + c.maxZ) / 2;
     const dx = cx - p.x, dz = cz - p.z;
     const dist = Math.hypot(dx, dz);
@@ -255,17 +181,28 @@ function useNearestDoor() {
   }
   lastUseLocked = false;
   if (!best) return null;
+  if (best.kind === 'auto') return best.roomId;                     // 自動ドアは近づけば開く
   if (best.operable && !(best.locked && best.target === 0)) {
     best.target = best.target > 0 ? 0 : best.openAngle;
     best.speedMul = 1;
-    if (ai) ai.noise(best.node.position.x, best.node.position.z, 9.0);   // 扉の開閉音(聴覚 9m)
-  } else { best.rattle = 0.25; lastUseLocked = true; }   // 施錠: ノブだけ鳴る。ごく小さく揺らす
+    if (ai) ai.noise((best.collision.minX + best.collision.maxX) / 2, (best.collision.minZ + best.collision.maxZ) / 2, 9.0);   // 扉の開閉音(聴覚 9m)
+  } else {
+    best.rattle = 0.25; lastUseLocked = true;   // 施錠: ノブだけ鳴る。ごく小さく揺らす
+    if (best.node) best.node.rotation.y = best.sign * 0.004;
+  }
   return best.roomId;
 }
 let lastUseLocked = false;
-// E を押した(短押しが確定した)時: 扉を操作し、画面ガイドへ結果を渡す(開かない扉=「鍵がかかっている」、EV=「反応がない」)
+// E を押した(短押しが確定した)時: EV の呼びボタン/カゴの行き先ボタン、それ以外は扉
 function useAndReport() {
-  if (hud.target && hud.target.kind === 'ev') { hud.onUse(null); return null; }
+  const t = hud.target;
+  if (t && t.kind === 'ev') {
+    const r = elevator.call(playerLevel);
+    hud.onUse(null);
+    hud.flash(r === 'open' ? HUD_TEXT.ev.opened : HUD_TEXT.ev.called);
+    return null;
+  }
+  if (t && t.kind === 'evbutton') { elevator.select(t.floor); hud.flash(HUD_TEXT.ev.selected(t.floor)); return null; }
   const r = useNearestDoor();
   hud.onUse({ locked: lastUseLocked });
   return r;
@@ -273,67 +210,59 @@ function useAndReport() {
 function nearestOperableDoor(maxD = 1.6) {
   const p = player.object.position;
   let best = null, bd = maxD;
-  for (const d of doors) {
-    if (!d.operable || !d.collision) continue;
+  for (const d of doorsHere()) {
+    if (!d.operable || d.kind === 'auto') continue;
     const c = d.collision;
     const dist = Math.hypot((c.minX + c.maxX) / 2 - p.x, (c.minZ + c.maxZ) / 2 - p.z);
     if (dist < bd) { bd = dist; best = d; }
   }
   return best;
 }
-// 扉 API(AI・デバッグ用)
+// 扉 API(AI・デバッグ用)。roomId は全館で一意
 const doorApi = {
-  get: (id) => doors.find((d) => d.roomId === String(id)) || null,
+  get: (id) => world.doorById.get(String(id)) || null,
   isOpen: (id) => { const d = doorApi.get(id); return !!(d && d.collision && d.collision.disabled); },
-  open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable) { d.target = d.openAngle; d.speedMul = speed; } },
-  close: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable) { d.target = 0; d.speedMul = speed; } },
+  open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = d.openAngle; d.speedMul = speed; } },
+  close: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = 0; d.speedMul = speed; } },
   setLocked: (id, v) => { const d = doorApi.get(id); if (d) d.locked = !!v; },
 };
 function updateDoors(dt) {
-  for (const d of doors) {
-    if (d.operable) {
-      const delta = d.target - d.angle;
-      if (Math.abs(delta) > 1e-4) {
-        // 開け始めは重く、途中で滑らかに(ドアクローザー感)
-        const k = 0.35 + 0.65 * Math.min(1, Math.abs(d.angle) / 0.4);
-        d.angle += Math.sign(delta) * Math.min(Math.abs(delta), DOOR_SPEED * k * (d.speedMul || 1) * dt);
-      }
-      d.node.rotation.y = d.sign * d.angle;
-      if (d.collision) d.collision.disabled = d.angle > 0.25;
-    } else if (d.rattle > 0) {
-      d.rattle -= dt;
-      d.node.rotation.y = d.sign * Math.sin(d.rattle * 90) * 0.004 * (d.rattle / 0.25);
-    }
-  }
+  world.updateDoors(dt, [
+    { level: playerLevel, x: player.pos.x, z: player.pos.z },
+    ...(ai && !ai.transit ? [{ level: ai.level, x: enemy.pos.x, z: enemy.pos.z }] : []),
+  ]);
+  for (const d of doors) if (!d.operable && d.rattle <= 0 && d.node) d.node.rotation.y = 0;
 }
 
 // ---------------------------------------------------------------- player
-const player = new Player(camera, renderer.domElement, { collisions, floorY });
+const player = new Player(camera, renderer.domElement, { collisions: world.collisions(playerLevel), floorY: levelY(playerLevel) });
 player.onUse = onUseKey;
 player.setPose(region.spawn.x, region.spawn.z, region.spawn.yaw, -0.03);
 
 // ---------------------------------------------------------------- enemy (P2b)
-// 常夜灯(manifest.lamps)・非常口サイン・窓の位置に「敵だけに効く」弱い光を置く(enemy.js のシェーダ注入)
-const mstDoor = doors.find((d) => d.roomId === 'MST4');
-const enemy = new Enemy(scene, {
-  floorY, collisions,
-  lamps: manifest.lamps || [],
-  exitLamps: mstDoor ? [[mstDoor.node.position.x + 0.1, floorY + 2.15, mstDoor.collision ? (mstDoor.collision.minZ + mstDoor.collision.maxZ) / 2 : 21.2]] : [],
-  windowLamps: region.window ? [[region.window.x, floorY + region.window.sill + region.window.h / 2, region.window.z + 0.15]] : [],
-});
+// 常夜灯(manifest.lamps)・非常口サイン・窓の位置に「敵だけに効く」弱い光を置く(enemy.js のシェーダ注入)。階ごと
+function lampDefsFor(lv) {
+  const man = manifests[glbLevel(lv)];
+  const y = levelY(lv);
+  if (lv === 'RB') return { lamps: [], exitLamps: [], windowLamps: (man.brackets || []).slice(-1) };
+  return {
+    lamps: man.lamps || [],
+    exitLamps: [[6.06 + 0.1, y + 2.15, 21.2], ...(man.exits || [])],     // 外階段の鉄扉の上の非常口サイン＋その他のサイン
+    windowLamps: [...(man.windows || []), ...(man.downlights || []).map(([x, z]) => [x, y + 2.3, z])],
+  };
+}
+const enemy = new Enemy(scene, { floorY, collisions, ...lampDefsFor(4) });
 await enemy.load();
-// 扉の情報(AI の立ち位置): 廊下側の法線とノブの向き(manifest の蝶番位置から)
-const FACING_N = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
+// 扉の情報(AI の立ち位置): 廊下側の法線とノブの向き(扉板はヒンジ=pos−幅/2 側から伸びるので、ノブは + 側)
 const doorInfo = [];
-for (const d of doors) {
-  const room = building.floors.find((f) => f.level === region.level).rooms.find((r) => r.id === d.roomId);
-  if (!room || !room.door) continue;
-  const m = (manifest.doors || []).find((md) => md.id === d.roomId);
-  const [px, pz] = room.door.pos;
-  const n = FACING_N[room.door.facing];
-  let knob = [-n[1], n[0]];
-  if (m && m.hinge) { const hx = m.hinge[0], hz = m.hinge[2]; const s2 = Math.sign((px - hx) * knob[0] + (pz - hz) * knob[1]) || 1; knob = [knob[0] * s2, knob[1] * s2]; }
-  doorInfo.push({ roomId: d.roomId, pos: [px, pz], normal: n, knob });
+for (const f of building.floors) {
+  if (f.level > 7) continue;
+  for (const r of f.rooms) {
+    if (!r.door) continue;
+    const n = FACING_N[r.door.facing];
+    const knob = (r.door.facing === 'N' || r.door.facing === 'S') ? [1, 0] : [0, 1];
+    doorInfo.push({ roomId: r.id, level: f.level, pos: [...r.door.pos], normal: n, knob });
+  }
 }
 const enemyAudio = new EnemyAudio(camera, enemy);
 const resumeAudio = () => enemyAudio.resume();
@@ -341,7 +270,8 @@ window.addEventListener('pointerdown', resumeAudio);
 window.addEventListener('keydown', resumeAudio);
 const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
 const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管理人(EV ホール、北を向く)
-const ai = new EnemyAI({ enemy, audio: enemyAudio, player, collisions, doors: doorApi, doorInfo, floorY,
+const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getPlayerLevel: () => playerLevel, doors: doorApi, doorInfo,
+  onLevel: (lv) => enemy.setLevel(levelY(lv), world.collisions(lv), lampDefsFor(lv)),
   onKill: () => { movie.hit(); startDeath(); },
   onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; movie.start(); },
   // P2d: スコープ演出の入出力(覗いているか／扉が開く瞬間に覗き穴視点を閉じる／レンズ位置)
@@ -356,7 +286,7 @@ if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
 
 // ---------------------------------------------------------------- peephole (P2b)
-const door410 = doors.find((d) => d.roomId === '410');
+const door410 = world.doorById.get('410');
 const lens = (() => {
   const c = door410.collision;
   const z = (c.minZ + c.maxZ) / 2;
@@ -369,6 +299,11 @@ const peephole = new Peephole({ camera, player, floorY, lens });
 composer.insertPass(peephole.pass, composer.passes.indexOf(grainPass));
 let doorScope = null;
 buildDoorScopeInside();
+// 4F を解放して読み直したら、室内側のドアスコープを新しい扉板へ付け直す
+world.onFloorReady = (lv, rec) => {
+  if (lv === 4 && door410.node && (!doorScope || doorScope.parent !== door410.node)) buildDoorScopeInside();
+  if (lv === glbLevel(playerLevel)) hud.evPanel = rec.panel;
+};
 
 // P2c: ドアスコープを室内側から見えるように(§3.4.1)。扉板の内面・目の高さに真鍮のリングとレンズ。
 // 扉板(door410.node)の子にするので扉と一緒に回る。レンズには廊下側の光の点(小さな発光)と環境反射
@@ -406,7 +341,7 @@ function buildDoorScopeInside() {
 let pendingE = null;   // E の長押し判定 {t, held}
 function canPeep() {
   const p = player.object.position;
-  if (door410.angle > 0.03) return false;
+  if (playerLevel !== 4 || door410.angle > 0.03) return false;
   if (!(p.x > 7.86 && p.z > 5.8 && p.z < 8.7)) return false;   // 410 の室内
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
   const dx = lens.x - p.x, dz = lens.z - p.z, dist = Math.hypot(dx, dz);
@@ -419,6 +354,9 @@ function onUseKey() {
 player.onKey = (code) => {
   if (code === 'KeyH') hud.showControls();
   if (death) return;
+  // カゴの中: 数字キーで行き先(1〜7)
+  const dm = /^Digit([1-7])$/.exec(code);
+  if (dm && elevator.inCar(player.pos.x, player.pos.z, playerLevel)) { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
   if (code === 'KeyL') {
     const d = nearestOperableDoor();
     if (d && d.angle < 0.02) {
@@ -483,6 +421,7 @@ function updateDeath(dt) {
     movie.end();
     player.object.rotation.z = 0;
     player.crouch = false;
+    if (playerLevel !== 4) setPlayerLevel(4);
     player.setPose(CHECKPOINT.x, CHECKPOINT.z, CHECKPOINT.yaw, 0);
     player.frozen = false;
     ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
@@ -494,13 +433,52 @@ let deathCount = 0;
 renderer.domElement.addEventListener('click', () => { if (!player.isLocked()) player.lock(); });
 // P2e: 画面ガイド
 const hud = new Hud({
-  camera, player, doors, lens, evPanel: evPanelPos, canPeep,
+  camera, player, doors: doorsHere(), lens, evPanel: world.floors.get(4).panel, canPeep, inRoom410: () => playerLevel === 4 && player.pos.x > 7.86 && player.pos.z > 5.8 && player.pos.z < 8.7,
+  extraTarget: () => extraTarget(),
   peepKey: () => (peephole.active ? (pendingE && pendingE.held ? 'E' : player.keys.has('KeyP') ? 'P' : 'E') : null),
   isMovie: () => movie.active, isDead: () => !!death,
 });
 player.controls.addEventListener('lock', () => { document.body.classList.add('locked'); hud.setPointer(true); });
 player.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); hud.setPointer(false); });
 resize();
+
+// ---------------------------------------------------------------- 階の移動(P3a)
+// 階を移る: 当たり・床の高さ・読み込み(±1)・画面ガイドの対象を差し替える。dy を渡すと足元の位置を保ったまま上下へ
+function setPlayerLevel(key, { dy = null } = {}) {
+  const prev = playerLevel;
+  playerLevel = key;
+  player.setWorld({ collisions: world.collisions(key), floorY: levelY(key) });
+  if (dy !== null) player.placeAt(player.pos.x, levelY(key), player.pos.z);
+  world.focus(key);
+  hud.doors = doorsHere();
+  const rec = world.floors.get(glbLevel(key));
+  hud.evPanel = rec && rec.panel ? rec.panel : null;
+  levelLog.push({ from: prev, to: key, t: +simTime.toFixed(2) });
+  updateVisibility();
+}
+const levelLog = [];
+const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel,
+  setLevel: (key, o) => setPlayerLevel(key, o) });
+elevator.onRideStart = (to) => world.focus(to);     // 行き先(±1)を先に読み始める(到着は読み終わってから)
+elevator.attach(scene);
+const stairs = new Stairs({ building, player, camera, getLevel: () => playerLevel,
+  onStart: (from, to) => { world.focus(to); updateVisibility(); },
+  onArrive: (to) => { setPlayerLevel(to); } });
+// 見せる階: ふだんは今の階だけ。外階段・北階段の区画にいる時と上り下りの最中は上下の階も(吹き抜けで見えるので)
+function updateVisibility() {
+  const c = glbLevel(playerLevel);
+  const open = stairs.busy || !!stairs.inStairArea(player.pos.x, player.pos.z);
+  world.setVisible(open ? [c - 1, c, c + 1] : [c]);
+}
+// 画面ガイドの追加対象: カゴの行き先ボタン/階段の口
+function extraTarget() {
+  const b = elevator.buttonAt(camera, playerLevel);
+  if (b) return { kind: 'evbutton', floor: b.floor, items: [HUD_TEXT.ev.button(b.floor)] };
+  if (elevator.facingPanel(camera, playerLevel)) return { kind: 'evpanel', items: [HUD_TEXT.ev.panel] };
+  const m = stairs.hint;
+  if (m && !stairs.busy) return { kind: 'stair', items: [m.toKey === 'RB' ? HUD_TEXT.stair.roof : m.dir === 'up' ? HUD_TEXT.stair.up : HUD_TEXT.stair.down] };
+  return null;
+}
 
 // ---------------------------------------------------------------- loop
 const frameTimes = []; // [timestamp, frameMs, cpuMs]
@@ -509,6 +487,7 @@ let simTime = 0;
 function step(dt) {
   simTime += dt;
   player.update(dt);
+  stairs.update(dt);
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
@@ -516,6 +495,9 @@ function step(dt) {
   enemy.update(dt, camera);
   movie.update(dt);
   updateDoors(dt);
+  elevator.update(dt);
+  enemy.root.visible = ai.level === playerLevel && !ai.transit;
+  updateVisibility();
   enemyAudio.update(dt);
   updateDeath(dt);
   hud.update(dt);
@@ -562,7 +544,13 @@ function stats() {
   };
 }
 window.__n2 = {
-  THREE, scene, camera, renderer, player, composer, doors, collisions, manifest, LOOK,
+  THREE, scene, camera, renderer, player, composer, doors, manifest, manifests, LOOK, building, world, elevator, stairs,
+  get collisions() { return world.collisions(playerLevel); },   // プレイヤーの今の階の当たり(P0 のテストは 4F)
+  get level() { return playerLevel; },
+  levelLog,
+  setLevel(key) { setPlayerLevel(key); return world.focus(key); },
+  // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
+  teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
@@ -599,7 +587,8 @@ window.__n2 = {
   },
   setRenderSize(w, h) { renderSizeOverride = w ? [w, h] : null; resize(); },
   setExposure(v) { renderer.toneMappingExposure = v; },
-  setLightmapGain(g) { for (const m of seenMats) m.lightMapIntensity = manifest.lightmap.intensity * g; },
+  setLightmapGain(g) { seenMats.forEach((m) => { m.lightMapIntensity = manifest.lightmap.intensity * g; }); },
 };
 window.__N2 = window.__n2;
 if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) => m.run(window.__N2)).catch(showErr);
+if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then((m) => m.run(window.__N2)).catch(showErr);

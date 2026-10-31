@@ -16,7 +16,17 @@ export const HUD_TEXT = {
   },
   ev: {
     call: { key: 'E', text: '呼ぶ' },
-    noResponse: '反応がない',                 // P0 では EV は動かない(1 秒)
+    noResponse: '反応がない',                 // P0 では EV は動かない(1 秒)。P3a 以降は未使用
+    called: 'エレベーターを呼んだ',            // P3a: 呼びボタン(カゴが別の階)
+    opened: '扉が開く',                         // P3a: カゴがこの階にいた
+    button: (n) => ({ key: 'E', text: `${n}階へ` }),   // カゴの行き先ボタン(視線の先)
+    panel: { key: '1〜7', text: '行き先' },
+    selected: (n) => `${n}階`,
+  },
+  stair: {                                      // P3a: 外階段・北階段の段の口
+    up: { key: 'W', text: '上の階へ' },
+    down: { key: 'W', text: '下の階へ' },
+    roof: { key: 'W', text: '屋上へ' },
   },
   controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　L 施錠　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },

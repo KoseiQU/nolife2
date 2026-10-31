@@ -137,17 +137,33 @@ export class Enemy {
     });
 
     // ---- 敵専用ライト
-    this._lampWorld = [];
-    const L = ENEMY.lamp;
-    for (const [x, z] of this._lampDefs.lamps) this._lampWorld.push({ p: new THREE.Vector3(x, this.floorY + L.y, z), c: new THREE.Color(L.color).multiplyScalar(L.intensity), r: L.range });
-    for (const [x, y, z] of this._lampDefs.exitLamps) this._lampWorld.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.exitLamp.color).multiplyScalar(ENEMY.exitLamp.intensity), r: ENEMY.exitLamp.range });
-    for (const [x, y, z] of this._lampDefs.windowLamps) this._lampWorld.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.windowLamp.color).multiplyScalar(ENEMY.windowLamp.intensity), r: ENEMY.windowLamp.range });
-    this._lampWorld.length = Math.min(this._lampWorld.length, MAX_LAMPS - 2);   // 後ろの 2 枠は照り返し・顔の補助光
+    this._buildLampWorld();
 
     this.place(6.9, 19.5, Math.PI);
     this.play('look_idle', { fade: 0 });
     this.ready = true;
     return this;
+  }
+
+  // 敵専用ライトの候補(階の常夜灯・非常口・窓)。毎フレーム近い順に MAX_LAMPS-2 個だけ使う(後ろの 2 枠は照り返し・顔の補助光)
+  _buildLampWorld() {
+    this._lampAll = [];
+    const L = ENEMY.lamp;
+    for (const [x, z] of this._lampDefs.lamps) this._lampAll.push({ p: new THREE.Vector3(x, this.floorY + L.y, z), c: new THREE.Color(L.color).multiplyScalar(L.intensity), r: L.range });
+    for (const [x, y, z] of this._lampDefs.exitLamps) this._lampAll.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.exitLamp.color).multiplyScalar(ENEMY.exitLamp.intensity), r: ENEMY.exitLamp.range });
+    for (const [x, y, z] of this._lampDefs.windowLamps) this._lampAll.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.windowLamp.color).multiplyScalar(ENEMY.windowLamp.intensity), r: ENEMY.windowLamp.range });
+    this._lampWorld = this._lampAll.slice(0, MAX_LAMPS - 2);
+    this._lampSortT = 0;
+  }
+
+  // P3a: 階を移った(床の高さ・当たり・敵専用ライトの候補を差し替える)
+  setLevel(floorY, collisions, lampDefs) {
+    this.floorY = floorY;
+    this.collisions = collisions;
+    if (lampDefs) this._lampDefs = lampDefs;
+    if (this.ready || this._lampAll) this._buildLampWorld();
+    this.root.position.y = floorY;
+    this._prevPos.copy(this.root.position);
   }
 
   _buildFlashlight() {
@@ -352,6 +368,11 @@ export class Enemy {
   _updateLightUniforms(camera) {
     const u = this.uniforms;
     const view = camera.matrixWorldInverse;
+    if (this._lampAll.length > MAX_LAMPS - 2 && (this._lampSortT = (this._lampSortT || 0) - 1) <= 0) {
+      this._lampSortT = 20;
+      const rp = this.root.position;
+      this._lampWorld = this._lampAll.slice().sort((a, b) => a.p.distanceToSquared(rp) - b.p.distanceToSquared(rp)).slice(0, MAX_LAMPS - 2);
+    }
     let i = 0;
     for (const l of this._lampWorld) {
       u.n2LampPos.value[i].copy(l.p).applyMatrix4(view);

@@ -103,6 +103,15 @@ export class Player {
     this._applyCamera(0);
   }
 
+  // P3a: 足元を3D位置で置く(階段・EV の移動中。床の高さを通らない)
+  placeAt(x, y, z, bob = 0) {
+    this.pos.set(x, y, z);
+    this._applyCamera(bob);
+  }
+
+  // P3a: 階を移ったときに当たりと床の高さを差し替える
+  setWorld(world) { this.world = world; }
+
   _applyCamera(bob) {
     const eye = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
     const o = this.controls.object;

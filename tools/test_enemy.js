@@ -285,7 +285,8 @@ export async function run(N) {
       && r.insideLocked.includes('解錠') && r.insideLocked.includes('施錠中')
       && r.peep.hint === '' && r.peep.release.includes('やめる')
       && r.unlockedAgain.includes('施錠') && r.otherDoorToast === '鍵がかかっている'
-      && r.ev.includes('呼ぶ') && r.evToast === '反応がない' && r.flashToast.includes('懐中電灯') && r.controls;
+      // P3a: EV が動くようになったので、呼ぶと「エレベーターを呼んだ」(カゴがこの階なら「扉が開く」)。P2e の期待値は「反応がない」だった
+      && r.ev.includes('呼ぶ') && ['エレベーターを呼んだ', '扉が開く'].includes(r.evToast) && r.flashToast.includes('懐中電灯') && r.controls;
     return { pass, ...r, peep: { hint: r.peep.hint, release: r.peep.release } };
   });
 
