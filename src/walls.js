@@ -48,12 +48,15 @@ function vWall(boxes, lo, hi, x, gaps, ext = 0) {
   }
 }
 
-// 部屋の指定面のギャップ(ドア開口 + 追加開口)
+// 部屋の指定面のギャップ(ドア開口 + 追加開口 + P3b: 入れる部屋の掃き出し窓)
 function sideGaps(room, side) {
   const gaps = [];
   const horiz = side === 'N' || side === 'S';
   if (room.door && room.door.facing === side) {
     gaps.push({ center: horiz ? room.door.pos[0] : room.door.pos[1], width: doorWidth(room) });
+  }
+  if (room.window && room.window.operable && room.window.facing === side) {
+    gaps.push({ center: horiz ? room.window.pos[0] : room.window.pos[1], width: room.window.width });
   }
   for (const o of room.openings || []) {
     if (o.side === side) {
@@ -166,7 +169,7 @@ function fillWallBoxes(floor, boxes) {
 function doorBlockerBoxes(floor, boxes) {
   for (const room of floor.rooms) {
     if (room.kind === 'elevator') continue;
-    if (!room.door || !(room.door.locked || room.door.steel || room.door.common)) continue;
+    if (!room.door || !(room.door.locked || room.door.steel || room.door.common || room.door.enterable)) continue;
     const [px, pz] = room.door.pos;
     const horiz = room.door.facing === 'N' || room.door.facing === 'S';
     const dw = doorWidth(room);
@@ -177,6 +180,26 @@ function doorBlockerBoxes(floor, boxes) {
       kind: 'door',
       roomId: room.id,
     });
+  }
+}
+
+// P3b: 入れる部屋の掃き出し窓(引き違い)。開く側の障子 = kind 'window'(開いている間は world が無効化)、
+// はめ殺し側 = kind 'wall'(part 'winfix')。屋上A へ乗り越える隔て板 = kind 'gate'(常に当たり。乗り越えは main の演出)
+function windowBoxes(floor, boxes) {
+  for (const room of floor.rooms) {
+    const w = room.window;
+    if (!w || !w.operable) continue;
+    const horiz = w.axis === 'x';
+    const [px, pz] = w.pos;
+    const mk = (a, b, kind, part) => boxes.push(horiz
+      ? { cx: (a + b) / 2, cz: pz, w: b - a, d: T, kind, part, roomId: room.id }
+      : { cx: px, cz: (a + b) / 2, w: T, d: b - a, kind, part, roomId: room.id });
+    mk(w.open[0], w.open[1], 'window', 'winopen');
+    mk(w.fix[0], w.fix[1], 'wall', 'winfix');
+  }
+  for (const g of floor.gates || []) {
+    const [x, z, w, d] = g.rect;
+    boxes.push({ cx: x + w / 2, cz: z + d / 2, w, d, kind: 'gate', roomId: g.id });
   }
 }
 
@@ -222,5 +245,6 @@ export function floorWallBoxes(floor) {
   perimeterBoxes(floor, boxes);
   fillWallBoxes(floor, boxes);
   doorBlockerBoxes(floor, boxes);
+  windowBoxes(floor, boxes);
   return boxes;
 }

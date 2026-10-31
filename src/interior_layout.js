@@ -1,367 +1,334 @@
-// interior_layout.js — 居室内装テンプレートの「配置ロジック」(THREE非依存の純関数)。
-// props.js(3D生成)と build_assert(Node検証)の双方から同じ座標計算を共有するために
-// メッシュ生成から切り離してある。ここを直せば実行時とビルド検証が同時に追随する。
+// interior_layout.js — P3b: 入れる部屋の内装の配置(THREE 非依存の純関数。data/build_building.mjs が呼んで building.json に書く)。
+//  見た目(Blender: tools/blender/build_rooms.py)と当たり・仕掛け(src/world.js・room_props.js・enemy_ai.js)が同じ数値を読む。
 //
-// レイアウト(玄関=廊下側 u=0、外壁側 u=uLen):
-//   u0付近: シューズケース → 水回りブロック(トイレ/バス/洗面) → 家電列(洗濯機・冷蔵庫・
-//   電子レンジ台) → クローゼット → 洋室(デスク+チェア / 外壁側にベッド / 壁上部にエアコン)
-// 部屋の向き(door.facing)で左右反転。玄関=廊下側・ベッド=外壁側は不変。
-//
-// 玄関→リビング一本道(2026-07-06 FB①・DESIGN §5):
-//   通路は「幅方向(v)の片側1レーン」を玄関(u=0)から洋室(livingU0)まで確保する。
-//   全家具の足元AABBはこの通路矩形(u,v)と交差してはならない=residentialLayout内でアサート。
+//  居室(1K)は ref/photos/room_plan_1K.png(DESIGN §2.3)に忠実:
+//    玄関土間→シューズケース(反対側) / 片側(A): 洗濯機・洗面台・冷蔵庫＋電子レンジ・折戸クローゼット・デスク＋チェア・柱
+//    反対側(B): トイレ(扉)・バス(扉) / 奥: 洋室にベッド(B 側の壁沿い・外壁寄り)・エアコン(外壁の上部)
+//    外壁: 掃き出し窓(引き違い。開く側=A 寄りの半分)＋カーテン → バルコニー(奥行 1.0m)
+//  局所座標: u = 玄関の壁(扉の面)から外壁へ(0..6.0)、v = 部屋の幅(0..2.9、世界の x か z の増える向き)。
+//  A 側 = v の小さい側。扉の面(facing)で左右反転する: W/S 向きの部屋は図面と同じ向き、E/N 向きは鏡像。
+//  玄関→洋室の通路1本(前作のアサートを移植): 扉の中心(v=1.45)から幅 0.95 を玄関から洋室の入口(u=3.5)まで、
+//  そこから窓の開く側(幅 0.8)まで、足元の家具が一切入らないことを生成時に検査する(違反は throw)。
 
 export const FLOOR_H = 2.9;
-export const CORRIDOR_V = 0.95;      // 通路レーンの幅(≥0.9m 要件を満たす)
-export const CORRIDOR_MARGIN = 0.05; // 家具は通路レーンから最低これだけ離す
-// P16②: 壁厚(walls.js GEOM.WALL_T=0.12。循環回避のためTHREE非依存のこのファイルには
-// 値だけをハードコピーする)。壁ボックスは room.rect の境界(v=0 / v=vLen)を中心に
-// ±WALL_T/2 で張られるため、家具を壁際に寄せる際はこの半厚みぶんは必ず離さないと
-// 家具が壁の中へ数cmめり込む(=同じ深度でメッシュが重なりzファイティング=粗いノイズ状
-// ピクセルブロックの明滅を起こす。FB②で報告された「冷蔵庫の面が乱れる」の真因)。
-const WALL_T = 0.12;
-// P16②: 扉面(木目)を外殻(パネル)の前面からこれだけ手前へ離す。旧実装は前面差が
-// 数mm(水回り5mm・クローゼット0mm=完全一致)しかなく、視距離1〜2mではGPUの深度バッファ
-// 精度で区別できずzファイティングを起こしていた(同上の症状の別発生源)。
-const FACE_STANDOFF = 0.03; // 3cm。視距離1〜2mで安全にz分離できる余裕を確保
+export const CEIL_H = 2.4;
+export const WALL_T = 0.12;
+export const PASSAGE_W = 0.95;
+export const LIVING_U0 = 3.5;        // 洋室の入口(これより奥が洋室)
+const WIN = { v0: 1.02, v1: 2.62, split: 1.82, h: 2.0 };   // 掃き出し窓(v の範囲、開く側 = v0..split)
 
-// 1室分の内装レイアウトを算出して返す(純関数)。
-// 戻り値: { roomId, level, boxes:[{matKey,w,h,d,cx,cy,cz}], collisions:[AABB],
-//           bedSpot:{x,z,level,facing}, deskSpot:{x,z,y,level} }
-// 通路交差が起きた場合はここで throw する(実行時起動 or build_assert で回帰検知)。
-export function residentialLayout(room, baseY) {
+// ---------------------------------------------------------------- 局所(u,v) → 世界(x,z)
+export function roomFrame(room) {
   const [rx, rz, rw, rd] = room.rect;
-  const facing = (room.door && room.door.facing) || 'E';
-  const level = Math.round(baseY / FLOOR_H) + 1;
-  const alongX = (facing === 'E' || facing === 'W'); // ドア軸(u)がx方向か
-  // u=玄関→外壁 軸, v=部屋の幅 軸。door側(廊下側)を u=0 とする。
-  const uLen = alongX ? rw : rd;   // 玄関〜外壁の距離
-  const vLen = alongX ? rd : rw;   // 部屋の幅
-  const uOrigin = alongX ? rx : rz;
-  const vOrigin = alongX ? rz : rx;
-  // E=ドアが東(+x)=廊下は+x側 → 玄関 u=uLen側。W=玄関 u=0側。同様に S/N。
-  const doorHigh = (facing === 'E' || facing === 'S'); // 玄関が高座標(u=uLen)側
-  const U = (u) => uOrigin + (doorHigh ? (uLen - u) : u);
-  const V = (v) => vOrigin + v;
-  const vMid = vLen / 2;
+  const facing = room.door.facing;                  // 扉の外向き(廊下側)
+  const alongX = facing === 'E' || facing === 'W';  // u が x 方向
+  const uLen = alongX ? rw : rd, vLen = alongX ? rd : rw;
+  const doorHigh = facing === 'E' || facing === 'S';
+  const uO = alongX ? rx : rz, vO = alongX ? rz : rx;
+  const wu = (u) => uO + (doorHigh ? uLen - u : u);
+  const wv = (v) => vO + v;
+  const pt = (u, v) => (alongX ? [wu(u), wv(v)] : [wv(v), wu(u)]);
+  const rect = (u0, u1, v0, v1) => {
+    const a = pt(u0, v0), b = pt(u1, v1);
+    return [r4(Math.min(a[0], b[0])), r4(Math.min(a[1], b[1])), r4(Math.max(a[0], b[0])), r4(Math.max(a[1], b[1]))];
+  };
+  const dirU = doorHigh ? -1 : 1;
+  // 局所の向き('+u'…)→ 世界の向き N/S/E/W
+  const face = (d) => {
+    const s = d[0] === '+' ? 1 : -1;
+    if (d[1] === 'u') { const g = s * dirU; return alongX ? (g > 0 ? 'E' : 'W') : (g > 0 ? 'S' : 'N'); }
+    return alongX ? (s > 0 ? 'S' : 'N') : (s > 0 ? 'E' : 'W');
+  };
+  return { room, uLen, vLen, alongX, doorHigh, pt, rect, face, wu, wv, outward: face('+u') };
+}
+const r4 = (v) => Math.round(v * 1e4) / 1e4;
+export const FACING_YAW = { E: -Math.PI / 2, W: Math.PI / 2, S: Math.PI, N: 0 };   // カメラがその向きを見る yaw
+export const FACING_VEC = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] };
 
-  const boxes = [];
-  const collisions = [];
-  let bedSpot = null, deskSpot = null;
+// ---------------------------------------------------------------- 部屋ごとのばらつき(DESIGN 3b-1「同じに見えないように」)
+// type: tidy(片付いている) / lived(普通の生活) / messy(散らかった) / vacant(空室=家具だけ)
+// curtain: 色(null=カーテンなし) / curtainState: open(両脇に寄せる)・half(開く側だけ開けて残りは閉)・closed(隙間だけ)
+// laundry: rail(カーテンレールに洗濯物)・rack(室内の物干しは通路を塞ぐので置かない→窓際の壁にハンガー)・balcony(物干し竿)
+// desk: 机の上 / floor: 床の物 / poster: 壁の架空のポスター(図柄のみ・文字なし)
+export const UNIT_VARIANTS = {
+  103: { type: 'lived', curtain: 'beige', curtainState: 'half', bedding: 'blue', rug: 'gray', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: null, fall: ['vase', 'books'] },
+  104: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box'], poster: null, fall: ['cans'] },
+  109: { type: 'messy', curtain: 'olive', curtainState: 'closed', bedding: 'charcoal', rug: 'rust', laundry: 'balcony', desk: ['monitor', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box', 'books'], poster: 'p3', fall: ['cans', 'mug'] },
+  201: { type: 'tidy', curtain: 'white', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p1', fall: ['vase', 'books'] },
+  210: { type: 'messy', curtain: 'navy', curtainState: 'half', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['monitor', 'cans', 'books', 'snack'], floor: ['clothes', 'clothes2', 'bag', 'trash'], poster: 'p5', fall: ['cans', 'books'] },
+  216: { type: 'lived', curtain: 'wine', curtainState: 'half', bedding: 'terracotta', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['basket'], poster: 'p2', fall: ['vase', 'mug'] },
+  222: { type: 'vacant', curtain: 'oldgray', curtainState: 'closed', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
+  305: { type: 'lived', curtain: 'lightblue', curtainState: 'open', bedding: 'sage', rug: 'green', laundry: 'rail', desk: ['laptop', 'books', 'cup'], floor: ['bag'], poster: 'p4', fall: ['books', 'cans'] },
+  313: { type: 'tidy', curtain: 'gray', curtainState: 'half', bedding: 'beige', rug: 'beige', laundry: null, desk: ['monitor', 'lamp', 'plant'], floor: [], poster: null, fall: ['vase', 'mug'] },
+  319: { type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'blue', rug: 'rust', laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'box', 'books', 'trash'], poster: 'p6', fall: ['cans', 'books'] },
+  321: { type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: null, laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['basket', 'bag'], poster: 'p2', fall: ['mug', 'vase'] },
+  401: { type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'books', 'cup'], floor: ['bag'], poster: 'p3', fall: ['books', 'cans'] },
+  404: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box'], poster: null, fall: ['cans'] },
+  410: { type: 'lived', curtain: 'navy', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'lamp', 'cup', 'papers'], floor: ['bag'], poster: 'p1', fall: ['vase', 'books'] },
+  413: { type: 'messy', curtain: 'wine', curtainState: 'closed', bedding: 'charcoal', rug: 'rust', laundry: 'rail', desk: ['monitor', 'cans', 'snack', 'books'], floor: ['clothes', 'clothes2', 'trash', 'box'], poster: 'p5', fall: ['cans', 'mug'] },
+  418: { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: 'green', laundry: null, desk: ['laptop', 'plant', 'lamp'], floor: [], poster: 'p4', fall: ['vase', 'books'] },
+  501: { type: 'messy', curtain: 'gray', curtainState: 'half', bedding: 'terracotta', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'papers', 'snack'], floor: ['clothes', 'books', 'bag'], poster: 'p6', fall: ['cans', 'books'] },
+  506: { type: 'tidy', curtain: 'lightblue', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['monitor', 'lamp', 'plant'], floor: [], poster: null, fall: ['vase', 'mug'] },
+  511: { type: 'vacant', curtain: 'oldgray', curtainState: 'half', bedding: null, rug: null, laundry: null, desk: [], floor: ['box'], poster: null, fall: ['bottle'] },
+  516: { type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'cup', 'books'], floor: ['basket'], poster: 'p2', fall: ['mug', 'books'] },
+  602: { type: 'tidy', curtain: 'white', curtainState: 'open', bedding: 'sage', rug: 'green', laundry: null, desk: ['laptop', 'lamp'], floor: [], poster: 'p1', fall: ['vase', 'books'] },
+  603: { type: 'lived', curtain: 'brown', curtainState: 'half', bedding: 'beige', rug: 'rust', laundry: 'rail', desk: ['monitor', 'cup', 'papers'], floor: ['bag'], poster: 'p3', fall: ['cans', 'mug'] },
+  607: { type: 'messy', curtain: 'navy', curtainState: 'closed', bedding: 'blue', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'books', 'snack'], floor: ['clothes', 'trash', 'box'], poster: 'p6', fall: ['cans', 'books'] },
+  610: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['cans'] },
+  701: { type: 'lived', curtain: 'wine', curtainState: 'half', bedding: 'charcoal', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['bag'], poster: 'p4', fall: ['vase', 'mug'] },
+  703: { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['monitor', 'plant', 'lamp'], floor: [], poster: 'p5', fall: ['books', 'vase'] },
+  705: { type: 'messy', curtain: 'olive', curtainState: 'half', bedding: 'terracotta', rug: 'rust', laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'clothes2', 'box', 'trash'], poster: 'p2', fall: ['cans', 'books'] },
+};
+// 色(build_rooms.py のパレットのキー。値はガンマ補正前の sRGB 16 進)
+export const PALETTE = {
+  beige: '#c7b597', navy: '#2c3850', gray: '#6c7075', olive: '#5b6847', wine: '#6a2d34', lightblue: '#8aaec6', white: '#e6e2da',
+  brown: '#8f6845', teal: '#38574f', oldgray: '#8d8a80', blue: '#6b7d97', sage: '#a4ae9b', terracotta: '#ad6656', charcoal: '#3a3e48',
+  lavender: '#887aa0', rust: '#80473a', green: '#405848',
+};
 
-  // --- 玄関→リビング一本道(通路レーン)。玄関ドアは間口(v)の中央に付く(building.json)ので、
-  //     通路は「ドアのv位置を中心に幅CORRIDOR_V」で確保する。玄関(u=0)から洋室(livingU0)まで。 ---
-  const doorV = vLen / 2;                  // ドアは間口中央(=door.pos が rect 中心)
-  const corrHalf = CORRIDOR_V / 2;
-  const corrV0 = doorV - corrHalf, corrV1 = doorV + corrHalf; // 通路レーンのv範囲
-  const livingU0 = uLen - 2.2;             // これより奥(外壁側)が洋室ゾーン=通路の終端
-  const corridorRect = { u0: 0, u1: livingU0, v0: corrV0, v1: corrV1 };
-  // 通路の両脇に家具を寄せる壁際レーン(v方向)。低v側 / 高v側の中心。
-  const loLaneMax = corrV0 - CORRIDOR_MARGIN;   // 低v側の家具はここより下(壁 v=0 まで)
-  const hiLaneMin = corrV1 + CORRIDOR_MARGIN;   // 高v側の家具はここより上(壁 v=vLen まで)
-  const roomFurnAABBs = []; // [{u0,u1,v0,v1,label}] (u,v)空間の家具AABB(通路アサート用)
-
-  const addBox = (matKey, w, h, d, cx, cy, cz) => boxes.push({ matKey, w, h, d, cx, cy, cz });
-  const addAABB = (cx, cz, w, d, y0, h) =>
-    collisions.push({ minX: cx - w / 2, maxX: cx + w / 2, minZ: cz - d / 2, maxZ: cz + d / 2, y0, y1: y0 + h });
-
-  // (u,v)矩形→ワールド。solid=trueで衝突AABB+通路検証AABBを登録。
-  const put = (matKey, uc, vc, h, uw, vw, hc, solid = false, label = '') => {
-    const wx = alongX ? uw : vw, wz = alongX ? vw : uw;
-    const cx = alongX ? U(uc) : V(vc);
-    const cz = alongX ? V(vc) : U(uc);
-    addBox(matKey, wx, h, wz, cx, baseY + hc, cz);
-    if (solid) {
-      addAABB(cx, cz, alongX ? uw : vw, alongX ? vw : uw, baseY, h);
-      roomFurnAABBs.push({ u0: uc - uw / 2, u1: uc + uw / 2, v0: vc - vw / 2, v1: vc + vw / 2, label });
+// ---------------------------------------------------------------- 居室(1K)
+// 返り値: { items[], decor[], solids[], closet, window, fallables[], points{ entry, room, living }, passage{...} }
+//  items: 据え付けの家具(Blender が kind ごとに作る)。b=[x0,z0,x1,z1](世界)、y=[y0,y1](床から)、f=正面の向き(N/S/E/W)
+//  solids: 当たり [x0,z0,x1,z1,y0,y1,tall](tall=視線を遮る高さの物)
+export function unitInterior(room) {
+  const F = roomFrame(room);
+  const V = UNIT_VARIANTS[room.id] || { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: null, laundry: null, desk: [], floor: [], poster: null, fall: ['vase'] };
+  const items = [], decor = [], solids = [], foot = [];
+  const put = (k, u0, u1, v0, v1, y0, y1, f, solid, extra = {}) => {
+    const it = { k, b: F.rect(u0, u1, v0, v1), y: [y0, y1], f: F.face(f), ...extra };
+    items.push(it);
+    if (solid) { solids.push([...it.b, y0, y1, solid === 2 ? 1 : 0]); foot.push({ k, u0, u1, v0, v1 }); }
+    return it;
+  };
+  const deco = (k, u0, u1, v0, v1, y0, y1, f, extra = {}) => { const d = { k, b: F.rect(u0, u1, v0, v1), y: [y0, y1], f: F.face(f), ...extra }; decor.push(d); return d; };
+  const floorDeco = (k, u0, u1, v0, v1, y1, f, extra = {}) => { foot.push({ k, u0, u1, v0, v1, decor: true }); return deco(k, u0, u1, v0, v1, 0, y1, f, extra); };
+  const vac = V.type === 'vacant';
+  // 床・土間・框(見た目だけ)
+  items.push({ k: 'genkan', b: F.rect(0.06, 0.86, 0.06, 2.84), y: [0, 0.005], f: F.face('+u') });
+  // --- A 側(v の小さい側) ---
+  put('washer', 0.92, 1.56, 0.06, 0.70, 0, 0.95, '+v', 1);
+  put('vanity', 1.62, 2.36, 0.06, 0.58, 0, 0.85, '+v', 1);
+  put('fridge', 2.42, 2.98, 0.06, 0.66, 0, 1.45, '+v', 1);
+  const closet = put('closet', 3.06, 4.02, 0.06, 0.68, 0, CEIL_H, '+v', 2);
+  put('desk', 4.14, 5.16, 0.06, 0.62, 0, 0.72, '+v', 1, { empty: vac });
+  put('chair', 4.62, 5.06, 0.64, 1.00, 0, 0.88, '-v', 1);
+  put('pillar', 5.40, 5.94, 0.06, 0.48, 0, CEIL_H, '+v', 2);
+  put('ac', 5.70, 5.94, 0.62, 1.42, 2.0, 2.3, '-u', 0);
+  // --- B 側 ---
+  put('shoecase', 0.10, 0.86, 2.44, 2.84, 0, 0.95, '-v', 1);
+  put('toilet', 0.94, 1.90, 1.98, 2.84, 0, CEIL_H, '-v', 2);
+  put('bath', 1.94, 3.46, 1.98, 2.84, 0, CEIL_H, '-v', 2);
+  put('bed', 3.62, 5.62, 1.88, 2.84, 0, 0.55, '+u', 1, { bedding: V.bedding, made: V.type === 'tidy' });
+  // --- 天井・壁の付属(見た目だけ) ---
+  items.push({ k: 'ceilinglight', b: F.rect(4.3, 4.9, 1.15, 1.75), y: [CEIL_H - 0.09, CEIL_H], f: 'D' });
+  items.push({ k: 'switch', b: F.rect(0.9, 0.98, 0.06, 0.075), y: [1.15, 1.27], f: F.face('+v') });   // 玄関の照明スイッチ(洗濯機の上の壁)
+  items.push({ k: 'intercom', b: F.rect(0.36, 0.5, 0.06, 0.08), y: [1.3, 1.5], f: F.face('+v') });
+  items.push({ k: 'breaker', b: F.rect(0.94, 1.26, 2.82, 2.84), y: [1.75, 2.1], f: F.face('-v') });  // トイレの壁の上(分電盤)
+  // --- 掃き出し窓・カーテン ---
+  const wa = F.pt(6.0, WIN.v0), wb = F.pt(6.0, WIN.v1), ws = F.pt(6.0, WIN.split);
+  const along = F.alongX ? 1 : 0;   // 窓の壁に沿う世界の軸(0=x, 1=z)
+  const window = {
+    pos: [r4((wa[0] + wb[0]) / 2), r4((wa[1] + wb[1]) / 2)], facing: F.outward, width: r4(WIN.v1 - WIN.v0), h: WIN.h,
+    axis: along === 1 ? 'z' : 'x',
+    open: [r4(wa[along]), r4(ws[along])].sort((a, b) => a - b), fix: [r4(ws[along] - 0.04), r4(wb[along])].sort((a, b) => a - b),
+    line: r4(F.alongX ? F.wu(6.0) : F.wu(6.0)),
+  };
+  if (V.curtain) {
+    deco('curtain', 5.80, 5.86, 0.62, 2.80, 0.05, 2.22, '-u', { c: V.curtain, state: V.curtainState, open: [WIN.v0, WIN.split] });
+  }
+  deco('curtainrail', 5.84, 5.88, 0.6, 2.82, 2.22, 2.25, '-u');
+  if (V.laundry === 'rail') deco('hangers', 5.70, 5.80, 1.95, 2.55, 1.35, 2.2, '-u', { c: V.bedding || 'gray' });
+  // --- 机の上・床・壁 ---
+  const dy = 0.72;
+  for (const it of V.desk) {
+    if (it === 'laptop') deco('laptop', 4.66, 5.0, 0.16, 0.42, dy, dy + 0.22, '+v');
+    if (it === 'monitor') deco('monitor', 4.6, 5.1, 0.1, 0.3, dy, dy + 0.42, '+v');
+    if (it === 'lamp') deco('lamp', 5.0, 5.12, 0.1, 0.22, dy, dy + 0.42, '+v');
+    if (it === 'cup') deco('cup', 4.5, 4.58, 0.4, 0.48, dy, dy + 0.1, '+v');
+    if (it === 'papers') deco('papers', 4.3, 4.6, 0.12, 0.34, dy, dy + 0.02, '+v');
+    if (it === 'plant') deco('plant', 4.18, 4.3, 0.1, 0.22, dy, dy + 0.26, '+v');
+    if (it === 'books') deco('books', 4.18, 4.4, 0.08, 0.26, dy, dy + 0.12, '+v');
+    if (it === 'cans') deco('cans', 4.95, 5.12, 0.36, 0.5, dy, dy + 0.12, '+v');
+    if (it === 'snack') deco('snack', 4.62, 4.84, 0.4, 0.56, dy, dy + 0.03, '+v');
+  }
+  if (!vac) deco('shelf', 4.18, 5.1, 0.06, 0.28, 1.36, 1.62, '+v', { books: V.type === 'messy' ? 7 : 5 });
+  for (const it of V.floor) {
+    // 床の物は通路(玄関→洋室→窓)に入れない(アサート対象)。机の下・ベッドの上・玄関の脇・ベッドと柱の間
+    if (it === 'bag') floorDeco('bag', 4.2, 4.55, 0.1, 0.38, 0.4, '+v');                    // 机の下
+    if (it === 'box') floorDeco('box', 4.9, 5.16, 0.08, 0.5, 0.36, '+v');                   // 机の下(右)
+    if (it === 'box2') deco('box', 3.8, 4.4, 2.0, 2.5, 0.55, 1.0, '+v');                    // ベッドの上(空室の荷物)
+    if (it === 'basket') floorDeco('basket', 5.20, 5.62, 0.52, 0.98, 0.32, '+v');           // 柱の前
+    if (it === 'trash') floorDeco('trash', 0.14, 0.5, 0.1, 0.46, 0.55, '+v');               // 玄関の A 側(洗濯機の手前)
+    if (it === 'clothes') deco('clothes', 4.0, 4.7, 2.0, 2.6, 0.5, 0.66, '+v', { c: V.bedding === 'charcoal' ? 'beige' : 'charcoal' });   // ベッドの上
+    if (it === 'clothes2') floorDeco('clothes', 5.62, 5.92, 1.9, 2.5, 0.12, '+v', { c: 'navy' });   // ベッドの足元と窓の間
+    if (it === 'books') floorDeco('books', 5.18, 5.38, 0.08, 0.3, 0.3, '+v');               // 机と柱の間の床
+  }
+  if (V.rug) deco('rug', 3.62, 5.3, 1.0, 1.86, 0, 0.008, '+u', { c: V.rug });
+  if (V.poster) deco('poster', 4.1, 4.7, 2.83, 2.84, 1.2, 1.95, '-v', { p: V.poster });
+  deco('clock', 4.5, 4.78, 0.06, 0.08, 1.85, 2.13, '+v');
+  if (!vac) deco('shoes', 0.2, 0.75, 1.15, 1.75, 0, 0.1, '+u');
+  if (V.type === 'messy') deco('umbrella', 0.14, 0.22, 2.3, 2.4, 0, 0.85, '-v');
+  // --- 落ちる物(DESIGN §3.4.1 物音の障害物): 通路の脇に1つ・机の端に1つ。慎重に歩けば避けられる位置 ---
+  const fallables = [];
+  const addFall = (type, u, v, y, support) => {
+    const [x, z] = F.pt(u, v);
+    fallables.push({ id: `${room.id}_${type}_${fallables.length}`, room: room.id, type, x: r4(x), y, z: r4(z), support });
+  };
+  for (const t of V.fall || []) {
+    if (t === 'vase') addFall('vase', 0.42, 2.48, 0.95, 'shoecase');          // 玄関のシューズケースの上・通路側の縁
+    else if (t === 'cans') addFall('cans', 2.08, 0.82, 0, 'floor');           // 洗面台の前の床(通路の左端に寄ると当たる)
+    else if (t === 'bottle') addFall('bottle', 2.7, 0.84, 0, 'floor');        // 冷蔵庫の前の床
+    else if (t === 'books') addFall('books', 4.24, 0.55, 0.72, 'desk');       // 机の端(通路側の角)
+    else if (t === 'mug') addFall('mug', 4.26, 0.56, 0.72, 'desk');
+  }
+  // --- 隠れ場所(クローゼット)・管理人の立ち位置 ---
+  const [cx0, cz0, cx1, cz1] = closet.b;
+  const fv = FACING_VEC[closet.f];
+  const ccx = (cx0 + cx1) / 2, ccz = (cz0 + cz1) / 2;
+  const doorPlane = F.pt(3.54, 0.68);
+  const hide = {
+    room: room.id, b: closet.b, f: closet.f,
+    eye: [r4(doorPlane[0] - fv[0] * 0.16), r4(doorPlane[1] - fv[1] * 0.16)],    // 扉の隙間の 16cm 奥
+    feet: [r4(ccx), r4(ccz)],
+    out: F.pt(3.54, 1.25).map(r4),                                             // 出た時に立つ場所(通路)
+    stand: F.pt(3.54, 1.42).map(r4),                                           // 管理人が立ち止まる所(扉の 0.74m 前)
+    yaw: FACING_YAW[closet.f],
+  };
+  const points = { entry: F.pt(1.3, 1.45).map(r4), room: F.pt(2.7, 1.45).map(r4), living: F.pt(4.4, 1.45).map(r4), window: F.pt(5.6, 1.42).map(r4) };
+  // === 生成時アサート: 通路(玄関→洋室入口、洋室→窓の開く側)に足元の物が無い ===
+  const passage = [
+    { u0: 0, u1: LIVING_U0, v0: 1.45 - PASSAGE_W / 2, v1: 1.45 + PASSAGE_W / 2 },
+    { u0: LIVING_U0, u1: 5.94, v0: WIN.v0 + 0.02, v1: WIN.split + 0.02 },
+  ];
+  for (const a of foot) for (const p of passage) {
+    if (a.u0 < p.u1 && a.u1 > p.u0 && a.v0 < p.v1 && a.v1 > p.v0) {
+      throw new Error(`[unitInterior] ${room.id}: 「${a.k}」が通路(u ${p.u0}..${p.u1}, v ${p.v0.toFixed(3)}..${p.v1.toFixed(3)})に入っている (u ${a.u0}..${a.u1}, v ${a.v0}..${a.v1})`);
     }
+  }
+  // 落ちる物も通路の中には置かない(通路の外の縁)
+  for (const fl of fallables) for (const p of passage) {
+    const [u, v] = local(F, fl.x, fl.z);
+    if (u > p.u0 && u < p.u1 && v > p.v0 && v < p.v1) throw new Error(`[unitInterior] ${room.id}: 落ちる物 ${fl.type} が通路の中`);
+  }
+  return {
+    kind: 'unit', variant: { ...V }, items, decor, solids, fallables, hide, window, points,
+    passage: passage.map((p) => ({ ...p, rect: F.rect(p.u0, p.u1, p.v0, p.v1) })),
   };
-  // P16②: putWallFlush — 壁にぴったり寄せる「外殻」用。footprint/AABB(通路交差アサート・
-  // 衝突判定)は従来どおり full thickness(vcFull,thkFull)で登録し、見た目メッシュだけを
-  // visualFn(thkFull) が返す { vc, thk } に差し替えて描画する(壁へのめり込み=zファイティング
-  // を防ぐが、通路の安全マージンには一切影響しない)。
-  const putWallFlush = (matKey, uc, vcFull, h, uw, thkFull, hc, visualFn, solid = false, label = '') => {
-    const { vc: vcVis, thk: thkVis } = visualFn(thkFull);
-    const wx = alongX ? uw : thkVis, wz = alongX ? thkVis : uw;
-    const cx = alongX ? U(uc) : V(vcVis);
-    const cz = alongX ? V(vcVis) : U(uc);
-    addBox(matKey, wx, h, wz, cx, baseY + hc, cz);
-    if (solid) {
-      const cxFull = alongX ? U(uc) : V(vcFull), czFull = alongX ? V(vcFull) : U(uc);
-      addAABB(cxFull, czFull, alongX ? uw : thkFull, alongX ? thkFull : uw, baseY, h);
-      roomFurnAABBs.push({ u0: uc - uw / 2, u1: uc + uw / 2, v0: vcFull - thkFull / 2, v1: vcFull + thkFull / 2, label });
-    }
-  };
-  // 壁際レーンの家具中心v。厚みthkの家具を、指定側(hi/lo)の壁にぴったり寄せる。
-  // (このvc自体は従来どおり=通路交差アサートが使うfootprint/AABBは一切変更しない。)
-  const hiVc = (thk) => vLen - thk / 2 - 0.02;    // 高v側の壁際(vLen 壁)
-  const loVc = (thk) => thk / 2 + 0.02;           // 低v側の壁際(v=0 壁)
-  const hiThkMax = vLen - hiLaneMin;              // 高v側レーンに収まる最大厚み
-  const loThkMax = loLaneMax;                     // 低v側レーンに収まる最大厚み
-  // P16②: 壁際に置く「外殻」の見た目メッシュだけを壁からWALL_T/2まで後退させるヘルパー。
-  // 通路側の縁(footprint/AABBが使う辺)は一切動かさない=通路交差アサートに影響しない。
-  // 壁ボックスは room.rect 境界(v=0/v=vLen)を中心に±WALL_T/2で張られるため、旧実装の
-  // 0.02mマージンでは壁の中へ数cmめり込み、そこでzファイティング(粗いノイズ状ピクセルの
-  // 明滅)が起きていた(FB②「冷蔵庫の面が乱れる」の真因)。戻り値は見た目描画専用の
-  // { vc, thk } — solid判定・footprint登録には元のthk/vcをそのまま使うこと。
-  const wallGap = Math.max(0, WALL_T / 2 - 0.02); // 旧マージン(0.02)との不足分
-  const hiVisual = (thk) => {
-    const t = Math.max(0.05, thk - wallGap);
-    return { vc: vLen - t / 2 - 0.02 - wallGap, thk: t };
-  };
-  const loVisual = (thk) => {
-    const t = Math.max(0.05, thk - wallGap);
-    return { vc: t / 2 + 0.02 + wallGap, thk: t };
-  };
-
-  // --- 玄関: シューズケース(低v側の壁際・玄関直後) ---
-  {
-    const thk = Math.min(0.4, loThkMax);
-    putWallFlush('wood', 0.32, loVc(thk), 0.9, 0.4, thk, 0.45, loVisual, true, 'shoe');
-  }
-
-  // --- 水回りブロック(玄関の先・高v側の壁沿いに一列)。バス/トイレ/洗面を u方向に連ねる。 ---
-  {
-    const thk = Math.min(0.9, hiThkMax); // 高v側レーン厚(通路を侵さない)
-    const vc = hiVc(thk);
-    const wetU0 = 0.62, wetU1 = 2.35, wetW = wetU1 - wetU0, wetUc = (wetU0 + wetU1) / 2;
-    // 個室群の外殻: 壁側はWALL_T/2まで後退(zファイト防止)・通路側の縁とfootprint/AABBは不変。
-    putWallFlush('panel', wetUc, vc, 2.1, wetW, thk, 1.05, hiVisual, true, 'wet');
-    put('panel', wetU0 + wetW / 3, vc, 2.0, 0.04, thk * 0.94, 1.0);       // 間仕切り(3室を暗示)
-    put('panel', wetU0 + wetW * 2 / 3, vc, 2.0, 0.04, thk * 0.94, 1.0);
-    // 通路側の木ドア面: 外殻の前面(vc - thk/2)からしっかり手前へ離す(旧実装は前面差が
-    // 5mm しかなく、視距離1〜2mではzファイティング=粗いノイズブロックの原因になっていた)。
-    put('wood', wetUc, vc - thk / 2 - FACE_STANDOFF / 2, 1.9, wetW * 0.9, 0.05, 0.95);
-  }
-
-  // --- 家電列(洗濯機→冷蔵庫→レンジ台)。玄関の反対=低v側の壁沿いに一列。 ---
-  // P16②: 各家電はsolid=falseの視覚専用ボックス(衝突/通路判定はaddAABB+roomFurnAABBsが
-  // 別途担う)。loVisual()で壁側だけ後退させ、通路側の並び位置(apV基準の見た目)は
-  // ほぼそのまま保つ(壁にめり込んで起きていたzファイティング=FB②の真因を解消)。
-  {
-    const thk = Math.min(0.6, loThkMax), apV = loVc(thk);
-    const washV = loVisual(thk * 0.9), fridgeV = loVisual(thk), rangeV = loVisual(thk * 0.85), mwV = loVisual(thk * 0.7);
-    put('panel', 1.0, washV.vc, 0.85, 0.55, washV.thk, 0.42);   // 洗濯機
-    put('metal', 1.7, fridgeV.vc, 1.7, 0.6, fridgeV.thk, 0.85); // 冷蔵庫
-    put('wood', 2.35, rangeV.vc, 0.8, 0.5, rangeV.thk, 0.4);    // レンジ台
-    put('panel', 2.35, mwV.vc, 0.28, 0.42, mwV.thk, 0.92);      // 電子レンジ
-    addAABB(alongX ? U(1.7) : V(apV), alongX ? V(apV) : U(1.7), alongX ? 2.1 : thk, alongX ? thk : 2.1, baseY, 1.7);
-    roomFurnAABBs.push({ u0: 0.7, u1: 2.65, v0: apV - thk / 2, v1: apV + thk / 2, label: 'appliances' });
-  }
-
-  // --- クローゼット(水回りの奥・高v側の壁沿い) ---
-  {
-    const thk = Math.min(0.55, hiThkMax), clV = hiVc(thk), clU = 3.15;
-    putWallFlush('panel', clU, clV, 2.0, 1.1, thk, 1.0, hiVisual, true, 'closet');
-    // 扉面(木目)。外殻前面(clV - thk/2)からFACE_STANDOFFぶん手前に浮かせる(z-fight対策)。
-    put('wood', clU, clV - thk / 2 - FACE_STANDOFF / 2, 1.9, 1.0, 0.04, 0.95);
-  }
-
-  // --- 洋室: デスク+チェア(洋室ゾーン・低v側の壁沿い) ---
-  const deskThk = 0.5, deskVc = loVc(deskThk), deskUc = livingU0 + 0.55;
-  put('wood', deskUc, deskVc, 0.04, 0.9, deskThk, 0.72);      // 天板
-  put('wood', deskUc, deskVc, 0.72, 0.86, 0.04, 0.36);        // 脚代わりの側板
-  put('fabric', deskUc, deskVc + deskThk / 2 + 0.28, 0.5, 0.42, 0.42, 0.25); // チェア座面(洋室ゾーン)
-  put('fabric', deskUc, deskVc + 0.06, 0.5, 0.42, 0.04, 0.55);// チェア背
-  deskSpot = {
-    x: alongX ? U(deskUc) : V(deskVc),
-    z: alongX ? V(deskVc) : U(deskUc),
-    y: baseY + 0.74, level,
-  };
-
-  // --- ベッド(洋室ゾーン・外壁側・幅中央寄り)。ベッド下は隠れ用に空ける ---
-  const bedUc = uLen - 1.05, bedVc = vMid;
-  put('dark', bedUc, bedVc, 0.28, 1.9, 1.0, 0.14);   // フレーム(低く=下に潜れる)
-  put('dark', bedUc, bedVc, 0.35, 0.06, 1.0, 0.34);  // ヘッドボード寄りの脚枠(外壁側)
-  put('fabric', bedUc, bedVc, 0.16, 1.85, 0.95, 0.5);// マットレス(高さ0.42〜0.58)
-  put('panel', bedUc + 0.75, bedVc, 0.32, 0.35, 0.5, 0.62); // 枕
-  {
-    const cx = alongX ? U(bedUc) : V(bedVc);
-    const cz = alongX ? V(bedVc) : U(bedUc);
-    const bw = alongX ? 1.9 : 1.0, bd = alongX ? 1.0 : 1.9;
-    // ベッド下は空けるため、AABBはマットレスの高さ帯だけ(下に潜れる)
-    collisions.push({ minX: cx - bw / 2, maxX: cx + bw / 2, minZ: cz - bd / 2, maxZ: cz + bd / 2, y0: baseY + 0.42, y1: baseY + 0.62 });
-    bedSpot = { x: cx, z: cz, level, facing };
-    roomFurnAABBs.push({ u0: bedUc - 0.95, u1: bedUc + 0.95, v0: bedVc - 0.5, v1: bedVc + 0.5, label: 'bed' });
-  }
-
-  // --- エアコン(外壁側・壁上部。足元に無いので通路検証対象外) ---
-  put('ac', uLen - 0.25, vMid, 0.32, 0.18, 0.9, 2.2);
-
-  // === 生成時アサート: 全家具AABBが玄関→リビング通路(ドア中央から幅CORRIDOR_V)と交差しないこと ===
-  for (const a of roomFurnAABBs) {
-    const overlap = a.u0 < corridorRect.u1 && a.u1 > corridorRect.u0 &&
-                    a.v0 < corridorRect.v1 && a.v1 > corridorRect.v0;
-    if (overlap) {
-      throw new Error(
-        `[residentialLayout] 居室${room.id}: 家具「${a.label}」が玄関→リビング通路` +
-        `(u:0..${corridorRect.u1.toFixed(2)}, v:${corrV0.toFixed(2)}..${corrV1.toFixed(2)}) に侵入 ` +
-        `(家具 u:${a.u0.toFixed(2)}..${a.u1.toFixed(2)}, v:${a.v0.toFixed(2)}..${a.v1.toFixed(2)})`,
-      );
-    }
-  }
-
-  return { roomId: room.id, level, boxes, collisions, bedSpot, deskSpot };
 }
 
-// =========================================================================
-// 友達の部屋(105/212/221/312/409)の私物プロップ配置(P18・追補2)。
-// residentialLayout と同じ(u,v)座標系を再計算し、洋室ゾーンの壁際・既存家具の
-// 上/横に「生活感の濃い私物」を1〜2点置く。THREE非依存の純関数=props.js(描画)と
-// build_assert(通路交差の回帰検証)の双方が同じ座標を共有する。
-//
-// 戻り値: { roomId, level, boxes:[{matKey,w,h,d,cx,cy,cz, kind?}], hit? }
-//   boxes は residentialLayout と同形式(props側でそのままMesh化)。105/409のみ hit
-//   ({x,y,z,w,h,d,id,prompt})を返し「調べる」対象になる(events.js FRIEND-PROP-*)。
-//   通路交差(corridorRect)・ベッド下隠れスポットへの侵入が起きた場合はここで throw する。
-//
-// matKey は INT_MAT(props.js)に無い私物色を props 側で解決するため、'clutter*' 等の
-// 独自キーも許容する(props.js の PROP_MAT で受ける)。
-export function friendRoomProps(room, baseY) {
+// 世界(x,z) → 局所(u,v)
+export function local(F, x, z) {
+  const a = F.alongX ? x : z, b = F.alongX ? z : x;
+  const [rx, rz, rw, rd] = F.room.rect;
+  const uO = F.alongX ? rx : rz, vO = F.alongX ? rz : rx;
+  const u = F.doorHigh ? F.uLen - (a - uO) : a - uO;
+  return [u, b - vO];
+}
+
+// ---------------------------------------------------------------- バルコニー(全居室)
+// rect=[x,z,w,d]、facing=外向き、ends: 壁に沿う向きの低い側/高い側の端(partition=隔て板、gate=屋上Aへ乗り越える台つき)
+export function balconyOf(room, level, gates = {}) {
+  const F = roomFrame(room);
   const [rx, rz, rw, rd] = room.rect;
-  const facing = (room.door && room.door.facing) || 'E';
-  const level = Math.round(baseY / FLOOR_H) + 1;
-  const alongX = (facing === 'E' || facing === 'W');
-  const uLen = alongX ? rw : rd;
-  const vLen = alongX ? rd : rw;
-  const uOrigin = alongX ? rx : rz;
-  const vOrigin = alongX ? rz : rx;
-  const doorHigh = (facing === 'E' || facing === 'S');
-  const U = (u) => uOrigin + (doorHigh ? (uLen - u) : u);
-  const V = (v) => vOrigin + v;
-  const vMid = vLen / 2;
-
-  // residentialLayout と同一の通路レーン・洋室ゾーン定義(座標を必ず一致させる)。
-  const doorV = vLen / 2;
-  const corrHalf = CORRIDOR_V / 2;
-  const corrV0 = doorV - corrHalf, corrV1 = doorV + corrHalf;
-  const livingU0 = uLen - 2.2;                 // 洋室ゾーン開始u
-  const corridorRect = { u0: 0, u1: livingU0, v0: corrV0, v1: corrV1 };
-  // ベッド下隠れスポット(residentialLayoutと同値): bedUc=uLen-1.05, 幅1.9/奥1.0。
-  const bedUc = uLen - 1.05;
-  const bedRect = { u0: bedUc - 0.95, u1: bedUc + 0.95, v0: vMid - 0.5, v1: vMid + 0.5 };
-  // 洋室の低v側デスク帯(residentialLayout): deskUc=livingU0+0.55, deskThk=0.5, deskVc=loVc。
-  const loVc = (thk) => thk / 2 + 0.02;
-
-  const boxes = [];
-  const propAABBs = []; // [{u0,u1,v0,v1,label}] 足元AABB(通路/ベッド交差検証用)
-  let hit = null;       // 105/409の「調べる」当たり判定(events.js FRIEND-PROP-* が拾う)
-
-  const add = (matKey, uc, vc, h, uw, vw, hc, kind) => {
-    const wx = alongX ? uw : vw, wz = alongX ? vw : uw;
-    const cx = alongX ? U(uc) : V(vc);
-    const cz = alongX ? V(vc) : U(uc);
-    boxes.push({ matKey, w: wx, h, d: wz, cx, cy: baseY + hc, cz, kind });
+  const D = 1.0;
+  let rect;
+  switch (F.outward) {
+    case 'E': rect = [rx + rw, rz, D, rd]; break;
+    case 'W': rect = [rx - D, rz, D, rd]; break;
+    case 'S': rect = [rx, rz + rd, rw, D]; break;
+    default: rect = [rx, rz - D, rw, D];
+  }
+  // 室外機(高い側の端・外壁際。入れる部屋では当たり)。401 は北端の踊み台が室外機を兼ねる(屋上A の台)
+  const axis = (F.outward === 'E' || F.outward === 'W') ? 'z' : 'x';
+  const [bx, bz, bw, bd] = rect;
+  const hi = axis === 'z' ? bz + bd : bx + bw;
+  let ac = null;
+  if (!(gates.lo === 'gate' && room.id === '401')) {
+    const fsgn = (F.outward === 'E' || F.outward === 'S') ? 1 : -1;
+    const facade = axis === 'z' ? (fsgn > 0 ? bx : bx + bw) : (fsgn > 0 ? bz : bz + bd);
+    const a = [facade + fsgn * 0.06, facade + fsgn * 0.36].sort((p, q) => p - q);
+    ac = axis === 'z' ? [a[0], hi - 0.95, a[1], hi - 0.15] : [hi - 0.95, a[0], hi - 0.15, a[1]];
+    ac = ac.map(r4);
+  }
+  return {
+    rect: rect.map(r4), facing: F.outward, axis,
+    rail: level <= 3 ? 'glass' : 'grid', ends: { lo: gates.lo || 'partition', hi: gates.hi || 'partition' }, ac,
   };
-  // 足元を占有する私物(床置き)のAABBを登録=通路/ベッド下交差検証の対象にする。
-  const claim = (uc, vc, uw, vw, label) =>
-    propAABBs.push({ u0: uc - uw / 2, u1: uc + uw / 2, v0: vc - vw / 2, v1: vc + vw / 2, label });
-  // 「調べる」当たり判定を(u,v)からワールド座標で登録。
-  const setHit = (uc, vc, hc, uw, vw, hh, hitId) => {
-    const cx = alongX ? U(uc) : V(vc);
-    const cz = alongX ? V(vc) : U(uc);
-    hit = { x: cx, y: baseY + hc, z: cz, w: alongX ? uw : vw, h: hh, d: alongX ? vw : uw, id: hitId, prompt: '調べる' };
+}
+
+// ---------------------------------------------------------------- 1F の共用室(食堂・シアター・管理室)
+// 座標は世界(1F の床からの高さ)。食堂・シアターの床・壁・天井は外殻(P3a)のまま、家具だけ足す。管理室は内装ごと作る。
+export function commonInterior(room) {
+  const items = [], decor = [], solids = [], fallables = [];
+  const R = (v) => r4(v);
+  const put = (k, x0, z0, x1, z1, y0, y1, f, solid, extra = {}) => {
+    const it = { k, b: [R(x0), R(z0), R(x1), R(z1)], y: [y0, y1], f, ...extra };
+    items.push(it);
+    if (solid) solids.push([...it.b, y0, y1, solid === 2 ? 1 : 0]);
+    return it;
   };
-
-  const id = room.id;
-  const hiWall = (thk) => vLen - thk / 2 - 0.03;   // 高v側の壁際中心
-  const loWall = (thk) => thk / 2 + 0.03;          // 低v側の壁際中心
-
-  if (id === '105') {
-    // ゲーム機: 小型TV+コンソール。低v側の壁際(デスク帯より玄関寄り、洋室ゾーンの手前端)。
-    // デスクは deskUc=livingU0+0.55(低v壁際)なので、TVはそこより奥(外壁側)の低v壁際に置く。
-    const uTV = livingU0 + 1.5;
-    const tvThk = 0.32, tvVc = loWall(tvThk);
-    add('cabinet', uTV, tvVc, 0.4, 0.7, tvThk, 0.2, 'tvstand');        // TV台
-    add('screen', uTV, tvVc + 0.02, 0.42, 0.62, 0.05, 0.62, 'tv');      // TV画面(自照は色で表現)
-    add('darkprop', uTV + 0.28, tvVc, 0.06, 0.24, 0.18, 0.44, 'console'); // コンソール本体
-    // コード(細い暗い板)を台の足元に這わせる
-    add('darkprop', uTV - 0.1, tvVc + 0.14, 0.01, 0.5, 0.02, 0.01, 'cord');
-    claim(uTV, tvVc, 0.7, tvThk, 'gameconsole');
-    setHit(uTV, tvVc, 0.5, 0.7, 0.6, 0.7, 'friend_prop_105');
-  } else if (id === '212') {
-    // ポスターの壁: 高v側の壁面に色付き矩形パネルを縦横に数枚(足元AABB不要=壁上)。
-    const pu = [livingU0 + 0.5, livingU0 + 1.1, livingU0 + 0.8, livingU0 + 1.5];
-    const ph = [1.35, 1.35, 1.85, 1.8];
-    const cols = ['poster0', 'poster1', 'poster2', 'poster0'];
-    const pThk = 0.02, pVc = vLen - pThk / 2 - 0.01;
-    for (let i = 0; i < pu.length; i++) {
-      add(cols[i], pu[i], pVc, 0.5 + (i % 2) * 0.12, 0.4 + (i % 2) * 0.08, pThk, ph[i], 'poster');
-    }
-    // ポスターは壁面(足元占有なし)なので通路/ベッド交差検証は不要。
-  } else if (id === '221') {
-    // マンガの山: 洋室ゾーンの低v壁際・外壁寄りに床置きスタックを2〜3山。
-    const stacks = [
-      { u: livingU0 + 0.9, hStack: 0.5, n: 6 },
-      { u: livingU0 + 1.35, hStack: 0.34, n: 4 },
-      { u: livingU0 + 1.15, hStack: 0.72, n: 9 },
-    ];
-    const stkThk = 0.2;
-    for (let si = 0; si < stacks.length; si++) {
-      const s = stacks[si];
-      const vc = loWall(stkThk) + si * 0.02;
-      for (let b = 0; b < s.n; b++) {
-        const jitterV = (b % 2 ? 0.015 : -0.01);
-        add(b % 3 === 0 ? 'book0' : b % 3 === 1 ? 'book1' : 'book2',
-          s.u + (b % 2 ? 0.01 : -0.01), vc + jitterV, 0.035, 0.16, stkThk, 0.05 + b * 0.055, 'manga');
+  const deco = (k, x0, z0, x1, z1, y0, y1, f, extra = {}) => { const d = { k, b: [R(x0), R(z0), R(x1), R(z1)], y: [y0, y1], f, ...extra }; decor.push(d); return d; };
+  const addFall = (type, x, y, z, support) => fallables.push({ id: `${room.id}_${type}_${fallables.length}`, room: room.id, type, x: R(x), y, z: R(z), support });
+  let hide = null, points = null, passage = [];
+  if (room.id === 'DINING') {
+    // 4人掛けのテーブル 12 卓(中央の通路 x 6.0〜7.8 を空ける)・配膳カウンター(厨房の壁)・給茶機・下膳棚・掲示板・テレビ
+    for (const x0 of [1.1, 3.5, 9.1, 11.5]) {
+      for (const zc of [6.2, 8.15, 10.1]) {
+        put('dtable', x0, zc - 0.375, x0 + 1.2, zc + 0.375, 0, 0.70, 'N', 1);
+        for (const dx of [0.3, 0.9]) {
+          put('dchair', x0 + dx - 0.21, zc - 0.83, x0 + dx + 0.21, zc - 0.41, 0, 0.82, 'S', 1);
+          put('dchair', x0 + dx - 0.21, zc + 0.41, x0 + dx + 0.21, zc + 0.83, 0, 0.82, 'N', 1);
+        }
       }
-      claim(s.u, vc, 0.2, stkThk, 'manga' + si);
     }
-  } else if (id === '312') {
-    // 干しっぱなしの洗濯物: 室内物干し竿+ぶら下がった布板。洋室ゾーン中央寄りだが
-    // ベッド(vMid)を避け、低v側に寄せて竿を渡す。竿の足元は細いのでAABBは小さく。
-    const uRack = livingU0 + 1.3;
-    const rackThk = 0.5, rackVc = loWall(rackThk + 0.1);
-    // 物干しスタンドの脚2本(低い)
-    add('metalprop', uRack - 0.5, rackVc, 0.9, 0.04, 0.04, 0.45, 'rackleg');
-    add('metalprop', uRack + 0.5, rackVc, 0.9, 0.04, 0.04, 0.45, 'rackleg');
-    add('metalprop', uRack, rackVc, 0.04, 1.04, 0.04, 0.9, 'rackbar');  // 横棒
-    // ぶら下がる布(板)4枚
-    const clothU = [uRack - 0.36, uRack - 0.1, uRack + 0.16, uRack + 0.4];
-    const clothCol = ['cloth0', 'cloth1', 'cloth0', 'cloth2'];
-    for (let i = 0; i < clothU.length; i++) {
-      add(clothCol[i], clothU[i], rackVc, 0.5, 0.02, 0.24, 0.62, 'cloth');
-    }
-    claim(uRack, rackVc, 1.1, rackThk, 'dryrack');
-  } else if (id === '409') {
-    // 散らかった机まわり: デスク上に空き缶・スナック袋・積まれた紙。デスク座標を再現。
-    const deskUc = livingU0 + 0.55, deskThk = 0.5, deskVc = loVc(deskThk);
-    const topY = 0.74; // デスク天板上面(residentialLayout: 天板hc=0.72,厚0.04 → 上面0.74)
-    // 空き缶3本(倒れ/立ち)
-    add('metalprop', deskUc - 0.28, deskVc - 0.05, 0.12, 0.05, 0.05, topY + 0.06, 'can');
-    add('metalprop', deskUc - 0.12, deskVc + 0.08, 0.05, 0.12, 0.05, topY + 0.025, 'can'); // 倒れた缶
-    add('metalprop', deskUc + 0.34, deskVc + 0.02, 0.12, 0.05, 0.05, topY + 0.06, 'can');
-    // スナック袋(しわの寄った薄い板)
-    add('snack', deskUc + 0.1, deskVc + 0.1, 0.03, 0.2, 0.14, topY + 0.02, 'snackbag');
-    // 積まれた紙
-    add('paperprop', deskUc - 0.05, deskVc - 0.12, 0.06, 0.22, 0.3, topY + 0.03, 'papers');
-    // デスク自体は residentialLayout が既に置いており足元占有済み=通路検証済み。
-    // 私物はすべて天板上(足元AABB不要)。念のためデスク帯に交差しないことは自明。
-    setHit(deskUc, deskVc, topY + 0.15, 0.9, 0.5, 0.5, 'friend_prop_409');
-  }
-
-  // === 生成時アサート: 私物の足元AABBが (a)玄関→リビング通路 (b)ベッド下隠れスポット と
-  //     交差しないこと(通路0.9m確保・隠れスポット確保の両方をここで保証) ===
-  for (const a of propAABBs) {
-    const hitsCorridor = a.u0 < corridorRect.u1 && a.u1 > corridorRect.u0 &&
-                         a.v0 < corridorRect.v1 && a.v1 > corridorRect.v0;
-    if (hitsCorridor) {
-      throw new Error(
-        `[friendRoomProps] 居室${id}: 私物「${a.label}」が玄関→リビング通路` +
-        `(u:0..${corridorRect.u1.toFixed(2)}, v:${corrV0.toFixed(2)}..${corrV1.toFixed(2)}) に侵入 ` +
-        `(私物 u:${a.u0.toFixed(2)}..${a.u1.toFixed(2)}, v:${a.v0.toFixed(2)}..${a.v1.toFixed(2)})`,
-      );
-    }
-    const hitsBed = a.u0 < bedRect.u1 && a.u1 > bedRect.u0 &&
-                    a.v0 < bedRect.v1 && a.v1 > bedRect.v0;
-    if (hitsBed) {
-      throw new Error(
-        `[friendRoomProps] 居室${id}: 私物「${a.label}」がベッド下隠れスポット` +
-        `(u:${bedRect.u0.toFixed(2)}..${bedRect.u1.toFixed(2)}, v:${bedRect.v0.toFixed(2)}..${bedRect.v1.toFixed(2)}) を塞ぐ ` +
-        `(私物 u:${a.u0.toFixed(2)}..${a.u1.toFixed(2)}, v:${a.v0.toFixed(2)}..${a.v1.toFixed(2)})`,
-      );
+    put('counter', 0.4, 4.41, 5.6, 4.95, 0, 0.9, 'S', 1);
+    deco('shutter', 1.0, 4.41, 5.0, 4.43, 1.05, 2.0, 'S');           // 配膳口(閉じたシャッター)
+    deco('trays', 4.6, 4.5, 5.4, 4.86, 0.9, 1.05, 'S');
+    put('dispenser', 8.0, 4.41, 8.45, 4.86, 0, 1.35, 'S', 1);
+    put('trayrack', 13.29, 6.9, 13.74, 7.7, 0, 1.5, 'W', 1);
+    put('bin', 13.3, 8.0, 13.7, 8.4, 0, 0.75, 'W', 1);
+    put('bin', 13.3, 8.45, 13.7, 8.85, 0, 0.75, 'W', 1);
+    deco('board', 1.0, 11.52, 3.2, 11.54, 1.15, 2.0, 'N', { p: 'notice' });
+    deco('tv', 13.66, 9.0, 13.74, 10.15, 1.55, 2.2, 'W');
+    deco('clock', 6.75, 11.52, 7.05, 11.54, 2.06, 2.34, 'N');
+    deco('vaseflower', 4.5, 8.05, 4.66, 8.25, 0.70, 0.98, 'N');   // (飾り。落ちる花瓶は別)
+    addFall('vase', 4.62, 0.70, 6.2, 'table');                     // 通路側の卓の端(テーブルの端を通る時に触れると落ちる)
+    addFall('cup', 9.16, 0.70, 10.1, 'table');
+    points = { entry: [6.9, 11.0], room: [6.9, 8.0], living: [6.9, 6.0] };
+  } else if (room.id === 'THEATER') {
+    // スクリーン(既存・南の壁)に向いた 3 人掛けソファ 2 列・スピーカー・天井のプロジェクター
+    put('sofa', 10.6, 24.05, 12.8, 24.9, 0, 0.82, 'S', 1);
+    put('sofa', 10.6, 25.45, 12.8, 26.3, 0, 0.82, 'S', 1);
+    put('speaker', 8.2, 27.6, 8.6, 28.0, 0, 1.0, 'N', 1);
+    put('speaker', 13.2, 27.6, 13.6, 28.0, 0, 1.0, 'N', 1);
+    deco('projector', 10.95, 23.1, 11.45, 23.5, 2.2, 2.4, 'S');
+    put('lowtable', 11.0, 26.75, 12.4, 27.2, 0, 0.38, 'N', 1);
+    addFall('cans', 10.42, 0, 25.0, 'floor');                      // ソファの端の床(通路の東の縁)
+    points = { entry: [9.0, 22.8], room: [9.0, 25.0], living: [9.2, 26.8] };
+  } else if (room.id === 'OFFICE') {
+    // 管理室: 受付の小窓(西の壁)の下に机・椅子・監視モニター、東の壁に棚・キーボックス、南東に縦長ロッカー(隠れ場所)
+    put('odesk', 19.66, 25.7, 20.31, 27.6, 0, 0.72, 'E', 1);
+    put('ochair', 20.42, 26.45, 20.88, 26.95, 0, 0.95, 'W', 1);
+    deco('monitors', 19.7, 25.85, 19.98, 26.35, 0.72, 1.2, 'E');
+    deco('phone', 20.0, 27.2, 20.22, 27.42, 0.72, 0.8, 'E');
+    deco('binders', 19.7, 27.0, 19.96, 27.55, 0.72, 1.0, 'E');
+    put('oshelf', 21.5, 22.6, 21.94, 24.2, 0, 1.8, 'W', 2);
+    deco('keybox', 21.88, 24.55, 21.94, 25.15, 1.2, 1.8, 'W');
+    put('safe', 19.7, 27.62, 20.15, 28.0, 0, 0.55, 'E', 1);
+    const lk = put('locker', 21.4, 26.9, 21.94, 27.5, 0, 1.85, 'W', 2);
+    deco('calendar', 21.92, 25.6, 21.94, 26.1, 1.3, 1.9, 'W');
+    deco('clock', 20.65, 22.18, 20.95, 22.2, 2.06, 2.34, 'S');
+    deco('extinguisher', 21.7, 22.25, 21.9, 22.45, 0, 0.55, 'W');
+    addFall('mug', 20.24, 0.72, 25.85, 'desk');
+    addFall('binders', 21.46, 1.8, 23.0, 'shelf');
+    hide = { room: room.id, b: lk.b, f: 'W', eye: [21.52, 27.2], feet: [21.67, 27.2], out: [20.95, 27.2], stand: [20.66, 27.2], yaw: FACING_YAW.W, locker: true };
+    points = { entry: [20.8, 22.8], room: [20.9, 24.8], living: [20.9, 26.0] };
+    passage = [{ rect: [20.4, 22.16, 21.4, 25.6] }];
+    // 当たりが通路(扉→机の前)を塞がない
+    for (const s of solids) {
+      const p = passage[0].rect;
+      if (s[0] < p[2] && s[2] > p[0] && s[1] < p[3] && s[3] > p[1]) throw new Error(`[commonInterior] OFFICE: 当たり ${JSON.stringify(s)} が通路に入っている`);
     }
   }
-
-  return { roomId: id, level, boxes, hit };
+  return { kind: 'common', items, decor, solids, fallables, hide, points, passage };
 }

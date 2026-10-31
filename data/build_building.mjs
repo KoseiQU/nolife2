@@ -23,6 +23,7 @@ import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { floorWallBoxes } from '../src/walls.js';
+import { unitInterior, commonInterior, balconyOf } from '../src/interior_layout.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -150,6 +151,37 @@ const INVENTORY = {
     south: ['701', '702', '703', '704', '705'], // 図面確定
     east: [],
   },
+};
+
+// =========================================================================
+// P3b: 入れる部屋(DESIGN §2「約30室」・§2.3)。選定は docs/p3b/NOTES.md の表。各階 3〜5 室(角部屋・東ブロック・南棟・7F を含め
+// 向きと階が偏らないように)。410(自室)と 401(屋上A から回れる)は必須。1F は食堂・シアター・管理室も(内装つき)。
+// 残りは施錠扉のまま(開かないが実在感のある扉)。全居室にバルコニー(入れない部屋のバルコニーは外から見える形だけ)。
+// =========================================================================
+export const ENTERABLE = {
+  1: ['103', '104', '109', 'OFFICE'],
+  2: ['201', '210', '216', '222'],
+  3: ['305', '313', '319', '321'],
+  4: ['401', '404', '410', '413', '418'],
+  5: ['501', '506', '511', '516'],
+  6: ['602', '603', '607', '610'],
+  7: ['701', '703', '705'],
+};
+// 屋上A(DESIGN §2.3): 3F 棟の屋根(4F 床レベル)。401/410 の北側＋3F の西列のバルコニーの上(図面 4F の薄い外形)。
+// 410 のバルコニー北端の隔て板の下の台・401 のバルコニー北端の室外機を踏み台に乗り越える(解放フラグ roofA。P5 で条件を決める)
+const ROOF_A = {
+  rects: [[-1.0, 0, 8.8, 5.8], [7.8, 2.9, 7.0, 2.9]],    // 西(401 の北・縦廊下の北・3F 西列のバルコニーの上)と東(410 の北)
+  gates: [
+    { id: 'gate410', room: '410', rect: [13.8, 5.74, 1.0, 0.12], side: 'balcony', step: [13.95, 6.0, 14.75, 6.42], over: { from: [14.3, 6.78], to: [14.3, 5.3] } },
+    { id: 'gate401', room: '401', rect: [-1.0, 5.74, 1.0, 0.12], side: 'balcony', step: [-0.92, 6.0, -0.12, 6.36], over: { from: [-0.5, 6.75], to: [-0.5, 5.3] } },
+  ],
+  // 屋上の室外機(4F の北の外壁際。台座込み)と通気管。当たり(高さ h)と見た目(build_rooms.build_roof_a)が同じ数値を使う
+  obstacles: [
+    { id: 'ra_ac0', rect: [1.16, 5.34, 0.9, 0.4], h: 0.62 },
+    { id: 'ra_ac1', rect: [2.36, 5.34, 0.9, 0.4], h: 0.62 },
+    { id: 'ra_ac2', rect: [9.36, 5.34, 0.9, 0.4], h: 0.62 },
+    { id: 'ra_vent', rect: [4.38, 1.18, 0.19, 0.19], h: 0.95 },
+  ],
 };
 
 // =========================================================================
@@ -394,11 +426,13 @@ const NST_GEOM = stairGeomX(NST_RECT);
 const BST_GEOM = stairGeomX(BST_RECT);
 
 // 階の隠れ場所(管理人の潜伏 LURK)。4F は P0 の 4 か所(src/enemy_ai.js の HIDE_SPOTS と同一)を先頭に保つ
-function hideSpotsFor(level, zTop, scEnd) {
+// P3b: 410 は内装が入ったので「奥の角」は玄関の先の廊下(トイレの扉の前・暗がり)に。各階 1 つ、入れる空室の奥にも潜む
+const ROOM_LURK = { 1: '104', 2: '222', 3: '305', 5: '511', 6: '610', 7: '703' };
+function hideSpotsFor(level, zTop, scEnd, rooms = []) {
   const spots = [];
   if (level === 4) {
-    spots.push({ id: 'r410_back', area: 'R', x: 8.98, z: 8.38, faceTo: [7.8, 7.25] });
-    spots.push({ id: 'r410_door_shadow', area: 'R', x: 8.16, z: 6.2, faceTo: [8.7, 7.6] });
+    spots.push({ id: 'r410_back', area: 'R', room: '410', x: 9.4, z: 7.5, faceTo: [7.8, 7.25] });
+    spots.push({ id: 'r410_door_shadow', area: 'R', room: '410', x: 8.16, z: 6.2, faceTo: [8.7, 7.6] });
     spots.push({ id: 'corridor_north', area: 'C', x: 6.32, z: 6.2, faceTo: [6.9, 9.5] });
     spots.push({ id: 'ev_blind', area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] });
   } else {
@@ -406,9 +440,15 @@ function hideSpotsFor(level, zTop, scEnd) {
     spots.push({ id: `L${level}_ev_blind`, area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] });
   }
   spots.push({ id: `L${level}_corr_east`, area: 'C', x: scEnd - 0.4, z: 20.72, faceTo: [scEnd - 4.0, 21.2] });
+  const lr = rooms.find((r) => r.id === ROOM_LURK[level]);
+  if (lr && lr.interior) {
+    const [x, z] = lr.interior.points.living;
+    const [ex, ez] = lr.interior.points.entry;
+    spots.push({ id: `L${level}_room_${lr.id}`, area: 'R', room: lr.id, x, z, faceTo: [ex, ez] });
+  }
   if (level === 1) {
-    spots.push({ id: 'L1_dining_corner', area: 'C', x: 0.5, z: 4.85, faceTo: [6.9, 11.0] });
-    spots.push({ id: 'L1_theater_back', area: 'C', x: 13.5, z: 27.6, faceTo: [9.0, 22.6] });
+    spots.push({ id: 'L1_dining_corner', area: 'C', x: 5.85, z: 5.3, faceTo: [6.9, 11.0] });   // P3b: 配膳カウンターの端(通路の角)
+    spots.push({ id: 'L1_theater_back', area: 'C', x: 9.4, z: 27.4, faceTo: [9.0, 22.6] });     // P3b: スクリーンの脇(通路の奥)
   }
   return spots.map((h) => ({ ...h, level }));
 }
@@ -492,12 +532,15 @@ function shellFor(level, inv, scEnd, rooms) {
     A('lobby', [C1F.lobby[0], SOUTH_ROOM_Z0, C1F.lobby[1] - C1F.lobby[0], C1F.windbreakZ - SOUTH_ROOM_Z0], 'lobby');
     A('windbreak', [C1F.lobby[0], C1F.windbreakZ, C1F.lobby[1] - C1F.lobby[0], SOUTH_ROOM_Z1 - C1F.windbreakZ], 'lobby');
   }
-  const caps = [];
-  if (level === 4) {
-    // P0 と同じ: 410 は玄関から 1.5m までを作り、その先は闇の板(居室の内装は P3b)
-    A('room410_entry', [EAST_COL_X0, 5.8, 1.5, ROOM_W], 'room410');
-    caps.push({ id: 'cap_room410', x: 9.3, z0: 5.8, z1: 8.7, normal: 'W' });
+  const caps = [];   // P3b: 410 の闇の板は撤去(居室の内装を作った)
+  // P3b: 入れる部屋・バルコニー・屋上A の空気(Blender の build_rooms.py が内装・外装を作る。外殻の壁の生成とは別の組)
+  const roomAir = [];
+  for (const r of rooms) {
+    if (!(r.door && r.door.enterable)) continue;
+    if (r.kind === 'unit' || r.id === 'OFFICE') roomAir.push({ id: r.id, rect: r.rect.map((v) => +v.toFixed(4)), kind: 'unit' });
+    if (r.balcony) roomAir.push({ id: 'bal_' + r.id, rect: [...r.balcony.rect], kind: 'balcony', outdoor: true });
   }
+  if (level === 4) ROOF_A.rects.forEach((rr, i) => roomAir.push({ id: 'roofA_' + i, rect: [...rr], kind: 'roofA', outdoor: true }));
   // 窓(夜空の発光面)。pos=壁面上の中心、facing=室内側への法線
   const windows = [];
   if (zTop !== null && level !== 1) windows.push({ pos: [VCORR_CX, zTop], facing: 'S', w: 0.75, h: 0.9, sill: 1.15 });
@@ -529,10 +572,10 @@ function shellFor(level, inv, scEnd, rooms) {
     exits.push({ room: 'THEATER', pos: [C1F.theater[0] + 1.2, SOUTH_ROOM_Z0], facing: 'S', inside: true });
   }
   // ゲーム内で開閉できる扉(それ以外の扉は施錠のまま開かない)
-  const operable = rooms.filter((r) => r.door && (r.door.steel || r.door.common || r.id === '410')).map((r) => r.id);
+  const operable = rooms.filter((r) => r.door && (r.door.steel || r.door.common || r.door.enterable)).map((r) => r.id);
   return {
-    zTop, air, caps, windows, lights, exits, operable,
-    hideSpots: hideSpotsFor(level, zTop, scEnd),
+    zTop, air, caps, windows, lights, exits, operable, roomAir,
+    hideSpots: hideSpotsFor(level, zTop, scEnd, rooms),
     hall: [WEST_CORR_X0, SOUTH_CORR_Z0, CORR_W, CORR_W],
   };
 }
@@ -549,6 +592,24 @@ function buildFloor(level) {
   rooms.push(...eastRooms(inv.east));
   if (level === 1) rooms.push(...commonAreas1F());
   rooms.push(...coreRooms(level));
+  // P3b: バルコニー(全居室)・入れる部屋(扉を開閉可能に・内装・掃き出し窓)
+  const enter = new Set(ENTERABLE[level] || []);
+  for (const r of rooms) {
+    if (r.kind === 'unit') {
+      const gate = ROOF_A.gates.find((g) => g.room === r.id && level === 4);
+      r.balcony = balconyOf(r, level, gate ? { lo: 'gate' } : {});
+    }
+    if (r.id === 'DINING' || r.id === 'THEATER') { r.interior = commonInterior(r); continue; }   // 共用扉のまま、家具だけ
+    if (!enter.has(r.id)) continue;
+    r.door.locked = false;
+    r.door.enterable = true;
+    if (r.kind === 'unit') {
+      r.interior = unitInterior(r);
+      r.window = { ...r.interior.window, operable: true };
+    } else {
+      r.interior = commonInterior(r);
+    }
+  }
 
   const southN = inv.south.length;
   const eastN = inv.east.length;
@@ -586,6 +647,46 @@ function buildFloor(level) {
 
   // フィラー壁: 無し(EVは縦廊下軸上に配置し隙間が出ない)。
   const fillWalls = [];
+  // P3b: 入れる部屋のバルコニーは歩ける(外周の壁=手すり・隔て板の当たり)。4F は屋上A も(縦廊下の北端は窓の壁で塞ぐ)
+  const gates = [];
+  for (const r of rooms) if (r.balcony && r.door && r.door.enterable) footprint.push([...r.balcony.rect]);
+  if (level === 4) {
+    for (const rr of ROOF_A.rects) footprint.push([...rr]);
+    fillWalls.push([WEST_CORR_X0, 5.8, WEST_CORR_X1, 5.8]);
+    for (const g of ROOF_A.gates) gates.push({ ...g, rect: [...g.rect] });
+  }
+  // バルコニーが建物の他の床(廊下など)に接する辺は、外周の壁が「覆われた」扱いで消えるので、隔て板の位置に壁を足す
+  // (例: 104・603 のバルコニーの南端と横廊下)。壁の芯はバルコニー側へ半厚(廊下側の面が外周の壁の面と揃う)
+  for (const r of rooms) {
+    if (!(r.balcony && r.door && r.door.enterable)) continue;
+    const [bx, bz, bw, bd] = r.balcony.rect;
+    const facadeSide = { E: 'W', W: 'E', S: 'N', N: 'S' }[r.balcony.facing];
+    const edges = [['N', bx, bz, bx + bw, bz, 0, -1], ['S', bx, bz + bd, bx + bw, bz + bd, 0, 1], ['W', bx, bz, bx, bz + bd, -1, 0], ['E', bx + bw, bz, bx + bw, bz + bd, 1, 0]];
+    for (const [side, ax, az, ex, ez, ox, oz] of edges) {
+      if (side === facadeSide) continue;
+      const horiz = az === ez;
+      const L = horiz ? ex - ax : ez - az;
+      const n = Math.max(1, Math.round(L / 0.1));
+      let run = null;
+      const flush = () => {
+        if (!run) return;
+        const [a, b] = run; run = null;
+        if (b - a < 0.15) return;
+        const gHit = gates.some((g) => { const [gx, gz, gw, gd] = g.rect; return horiz ? (Math.abs(gz + gd / 2 - az) < 0.1 && a < gx + gw && b > gx) : (Math.abs(gx + gw / 2 - ax) < 0.1 && a < gz + gd && b > gz); });
+        if (gHit) return;
+        const T2 = 0.06;
+        if (horiz) fillWalls.push([+a.toFixed(4), +(az - oz * T2).toFixed(4), +b.toFixed(4), +(az - oz * T2).toFixed(4)]);
+        else fillWalls.push([+(ax - ox * T2).toFixed(4), +a.toFixed(4), +(ax - ox * T2).toFixed(4), +b.toFixed(4)]);
+      };
+      for (let i = 0; i < n; i++) {
+        const t0 = (horiz ? ax : az) + (L * i) / n, t1 = (horiz ? ax : az) + (L * (i + 1)) / n, m = (t0 + t1) / 2;
+        const px = horiz ? m : ax + ox * 0.03, pz = horiz ? az + oz * 0.03 : m;
+        const hit = footprint.some((q) => q !== r.balcony.rect && !(q[0] === bx && q[1] === bz && q[2] === bw && q[3] === bd) && px > q[0] && px < q[0] + q[2] && pz > q[1] && pz < q[1] + q[3]);
+        if (hit) run = run ? [run[0], t1] : [t0, t1]; else flush();
+      }
+      flush();
+    }
+  }
 
   // 1F: 玄関開口(南向き)。P12: 風除室の外側自動ガラス引き戸(glass:true)。
   // walls.js の perimeterBoxes は floor.perimOpenings(この配列)を見て外周の
@@ -618,6 +719,8 @@ function buildFloor(level) {
     rooms,
     footprint,
     fillWalls,
+    ...(gates.length ? { gates } : {}),
+    ...(level === 4 ? { roofA: { rects: ROOF_A.rects.map((r) => [...r]), obstacles: ROOF_A.obstacles.map((o) => ({ ...o, rect: [...o.rect] })), y: +(3 * FLOOR_H).toFixed(4), parapetH: 0.85, railH: 1.1 } } : {}),
     ...(perimOpenings.length ? { perimOpenings } : {}),
     props,
     shell: shellFor(level, inv, scEnd, rooms),
