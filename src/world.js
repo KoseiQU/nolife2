@@ -67,6 +67,28 @@ export function buildLevelCollisions(building, key) {
     for (const p of floor.props || []) {
       if (p.kind === 'mailboxes') push(box(p.pos[0], p.pos[2], p.pos[0] + 0.06 + p.size[0], p.pos[2] + p.size[2], 'solid', 'MAILBOXES'));
     }
+    // P3b: 入れる部屋の家具(低い物 'furn' は視線を遮らない・背の高い物 'furnT' は遮る)。屋上A の乗り越えの台
+    for (const r of floor.rooms) {
+      if (!r.interior) continue;
+      for (const [x0, z0, x1, z1, fy0, fy1, tall] of r.interior.solids) {
+        const b = box(x0, z0, x1, z1, tall ? 'furnT' : 'furn', r.id);
+        b.fy = [fy0, fy1];
+        cols.push(Object.assign(b, { y0: y0 + fy0, y1: y0 + fy1 }));
+      }
+    }
+    for (const r of floor.rooms) {   // 入れる部屋のバルコニーの室外機
+      if (!(r.door && r.door.enterable && r.balcony && r.balcony.ac)) continue;
+      const [x0, z0, x1, z1] = r.balcony.ac;
+      cols.push(Object.assign(box(x0, z0, x1, z1, 'furn', r.id), { y0, y1: y0 + 0.6 }));
+    }
+    for (const o of (floor.roofA && floor.roofA.obstacles) || []) {
+      const [x, z, w, d] = o.rect;
+      cols.push(Object.assign(box(x, z, x + w, z + d, 'furn', o.id), { y0, y1: y0 + o.h }));
+    }
+    for (const g of floor.gates || []) {
+      const [sx0, sz0, sx1, sz1] = g.step;
+      cols.push(Object.assign(box(sx0, sz0, sx1, sz1, 'furn', g.id), { y0, y1: y0 + 0.6 }));
+    }
   }
   // 階段の段の手前で止める当たり(踊り場の床の高さでは階段側へ進めない。上り下りは stairs.js)
   for (const st of building.stairs) {
@@ -143,17 +165,22 @@ export class World {
     const man = this.manifests[level];
     const rec = { state: 'loading', level, group: null, lightMap: null, mats: new Set(), geoms: [] };
     rec.promise = (async () => {
-      const [gltf, lightMap] = await Promise.all([
+      const [gltf, lightMap, lightMap2] = await Promise.all([
         new GLTFLoader().loadAsync('./build/' + man.glb),
         new THREE.TextureLoader().loadAsync('./build/' + man.lightmap.file),
+        man.lightmap2 ? new THREE.TextureLoader().loadAsync('./build/' + man.lightmap2.file) : Promise.resolve(null),
       ]);
-      if (rec.cancelled) { disposeTree(gltf.scene); lightMap.dispose(); return rec; }
-      lightMap.flipY = false;
-      lightMap.channel = man.lightmap.channel;
-      lightMap.colorSpace = man.lightmap.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
-      lightMap.generateMipmaps = true;
-      lightMap.minFilter = THREE.LinearMipmapLinearFilter;
+      if (rec.cancelled) { disposeTree(gltf.scene); lightMap.dispose(); if (lightMap2) lightMap2.dispose(); return rec; }
+      for (const [lm, def] of [[lightMap, man.lightmap], [lightMap2, man.lightmap2]]) {
+        if (!lm) continue;
+        lm.flipY = false;
+        lm.channel = def.channel;
+        lm.colorSpace = def.encoding === 'srgb' ? THREE.SRGBColorSpace : THREE.LinearSRGBColorSpace;
+        lm.generateMipmaps = true;
+        lm.minFilter = THREE.LinearMipmapLinearFilter;
+      }
       rec.lightMap = lightMap;
+      rec.lightMap2 = lightMap2;   // P3b: 部屋の組(MR_* の材質)
       this._prepare(gltf.scene, man, rec);
       rec.group = gltf.scene;
       rec.group.name = 'Floor_' + level;
@@ -181,11 +208,13 @@ export class World {
     if (rec.state !== 'ready') { rec.cancelled = true; return; }
     for (const d of this.doors) if (d.level === level) { d.node = null; d.leaves = []; }
     if (this.onFloorUnload) this.onFloorUnload(level, rec);
+    if (this.onUnbind) this.onUnbind(level);
     rec.group.removeFromParent();
     for (const g of rec.geoms) g.dispose();
     rec.group.traverse((o) => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
     for (const m of rec.mats) m.dispose();
     rec.lightMap.dispose();
+    if (rec.lightMap2) rec.lightMap2.dispose();
     if (rec.probeEnv) rec.probeEnv.dispose();
   }
 
@@ -220,8 +249,9 @@ export class World {
   // ------------------------------------------------------------ 材質・結合
   _prepare(root, man, rec) {
     const L = this.look;
-    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_EVCarDisplay', 'M_GlassClear']);
-    const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton', 'glass', 'glassedge', 'decal', 'rail', 'backdrop']);
+    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_EVCarDisplay', 'M_GlassClear', 'MX_WinGlass', 'MR_Mirror']);
+    const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton', 'glass', 'glassedge', 'decal', 'rail', 'backdrop',
+      'massing', 'bars', 'winout', 'secmon', 'roof', 'balcony']);
     // P3a-2: 風除室の透明ガラスは物理材質(透過・屈折・薄い青緑の吸収・低い粗さ＋指紋/汚れの粗さマップ)に置き換える
     const phys = new Map();
     root.traverse((o) => {
@@ -268,10 +298,15 @@ export class World {
         }
         // EV の三方枠とカゴの内装は細い面が多くライトマップが数テクセルしかなく、カゴの中から見るとギザギザになる(しかも
         // ベイクはカゴの照明が消えた状態)→ ライトマップを使わず、カゴの照明(elevator.js の PointLight)＋環境光＋懐中電灯で見せる
-        m.lightMap = NO_LIGHTMAP.has(m.name) ? null : rec.lightMap;
-        m.lightMapIntensity = man.lightmap.intensity * L.lightmapGain;
+        // P3b: MR_* = 部屋の組(2枚目のライトマップ)、MX_* = ライトマップなし(ガラス・動く障子・細い格子・遠景の塊)
+        if (m.name.startsWith('MX_')) m.lightMap = null;
+        else if (m.name.startsWith('MR_') && rec.lightMap2) m.lightMap = rec.lightMap2;
+        else m.lightMap = NO_LIGHTMAP.has(m.name) ? null : rec.lightMap;
+        m.lightMapIntensity = (m.lightMap === rec.lightMap2 && rec.lightMap2 ? man.lightmap2.intensity : man.lightmap.intensity) * L.lightmapGain;
         m.envMapIntensity = 0;
         if (m.metalness > 0.5 || GLASS.has(m.name)) { m.envMap = this.envTex; m.envMapIntensity = m.metalness > 0.5 ? L.metalEnv : L.glassEnv; }
+        if (m.name === 'MR_Mirror') m.envMapIntensity = L.mirrorEnv ?? 0.012;   // 夜の暗い部屋の鏡(共通の環境は明るすぎる)
+        if (m.name === 'MX_Bars') { m.alphaTest = 0.5; m.side = THREE.DoubleSide; m.transparent = false; }   // P3b: バルコニーの格子(透過テクスチャ)
         m.userData.n2Emissive = m.emissiveIntensity;   // 倍率を掛ける前(EV のカゴの照明を点ける時に使う)
         if (L.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= L.emissiveScale[m.name];
         m.needsUpdate = true;
@@ -326,7 +361,8 @@ export class World {
     const isMovable = (o) => {
       for (let p = o; p; p = p.parent) {
         const u = p.userData || {};
-        if (u.n2_kind === 'evdoor') return true;
+        if (u.n2_kind === 'evdoor' || u.n2_kind === 'closetdoor' || u.n2_kind === 'lockerdoor') return true;
+        if (u.n2_kind === 'winsash' && u.n2_operable) return true;
         if ((u.n2_kind === 'door' || u.n2_kind === 'autodoor') && (u.n2_operable || this._tourDoor(u))) return true;
       }
       return false;
@@ -361,6 +397,7 @@ export class World {
   // GLB の扉板・自動ドア・EV 扉を状態に結び付ける
   _bind(level, rec) {
     rec.evLeaves = [];
+    rec.binds = [];   // P3b: 掃き出し窓の障子・クローゼットの折戸・ロッカーの扉(rooms.js が状態に結び付ける)
     rec.group.traverse((o) => {
       const u = o.userData;
       if (u.n2_kind === 'door' && (u.n2_operable || this._tourDoor(u))) {
@@ -371,8 +408,13 @@ export class World {
         if (d) d.leaves.push({ node: o, base: o.position.clone(), dir: new THREE.Vector3().fromArray(u.n2_slide), dist: u.n2_slide_dist });
       } else if (u.n2_kind === 'evdoor') {
         rec.evLeaves.push({ node: o, base: o.position.clone(), dir: new THREE.Vector3().fromArray(u.n2_slide), dist: u.n2_slide_dist });
+      } else if (u.n2_kind === 'winsash' && u.n2_operable) {
+        rec.binds.push({ kind: 'window', room: String(u.n2_room), node: o, base: o.position.clone(), dir: new THREE.Vector3().fromArray(u.n2_slide), dist: u.n2_slide_dist });
+      } else if (u.n2_kind === 'closetdoor' || u.n2_kind === 'lockerdoor') {
+        rec.binds.push({ kind: u.n2_kind, room: String(u.n2_room), node: o, part: u.n2_part || 'leaf', side: u.n2_side || '' });
       }
     });
+    if (this.onBind) this.onBind(level, rec.binds);
     for (const d of this.doors) if (d.level === level && d.kind === 'auto') this._applyAuto(d);
   }
 

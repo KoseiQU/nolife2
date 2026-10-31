@@ -34,6 +34,8 @@ export class EnemyAudio {
       rattle: synthRattle(this.ctx),
       scream: synthScream(this.ctx),
       hit: synthHit(this.ctx),
+      breath: synthBreath(this.ctx),      // P3b 演出②: 目の前で立ち止まった時の息遣い(enemy_breath_close_01)
+      handle: synthHandle(this.ctx),      // P3b 演出②: クローゼット/ロッカーの取っ手に触れる音(enemy_handle_touch_01)
     };
     this.hum = this._makeSource(enemy.bones.head, true);
     this.hum.setBuffer(this.buffers.hum);
@@ -247,6 +249,35 @@ function synthHit(ctx) {
       lp += ((r() - 0.5) - lp) * 0.5;
       const crack = lp * Math.exp(-t * 60) * 1.6;
       d[i] = Math.tanh((thump * 1.4 + crack) * 1.5) * 0.9;
+    }
+  });
+}
+
+// P3b: 息遣い(鼻と口から、ゆっくり吸って吐く×2。低く湿った雑音)
+function synthBreath(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 4.2, sr, (d, sr2, n) => {
+    const r = rng(61);
+    let lp = 0, lp2 = 0;
+    const cyc = [[0.0, 0.9, 0.55], [1.0, 1.1, 0.8], [2.2, 0.9, 0.5], [3.2, 0.9, 0.75]];   // [開始, 長さ, 強さ](吸う・吐く)
+    for (let i = 0; i < n; i++) {
+      const t = i / sr2;
+      let a = 0;
+      for (const [s0, len, amp] of cyc) if (t >= s0 && t < s0 + len) { const u = (t - s0) / len; a = Math.sin(Math.PI * u) ** 1.5 * amp; }
+      lp += ((r() - 0.5) - lp) * 0.18; lp2 += (lp - lp2) * 0.3;
+      d[i] = (lp2 * 1.6 + (lp - lp2) * 0.6) * a;
+    }
+  });
+}
+
+// P3b: 取っ手に触れる(爪が当たる小さな金属音と、わずかに引く擦れ)
+function synthHandle(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 0.5, sr, (d, sr2, n) => {
+    const r = rng(71);
+    for (const [s0, f, a] of [[0.0, 3100, 0.5], [0.07, 2400, 0.35], [0.2, 1800, 0.25]]) {
+      const i0 = Math.round(s0 * sr2);
+      for (let i = i0; i < n; i++) { const t = (i - i0) / sr2; d[i] += a * Math.exp(-t * 60) * (Math.sin(2 * Math.PI * f * t) * 0.7 + (r() - 0.5) * 0.4); }
     }
   });
 }

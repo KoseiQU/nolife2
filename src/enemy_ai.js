@@ -14,6 +14,10 @@
 //  扉の前で止まってもノブを鳴らして去る。知っていてプレイヤーがスコープを覗いていれば SCOPE 演出(通り過ぎ→消える→
 //  約 2 秒の静寂→戻ってスコープを覗き込む→鍵→扉を開けて襲う)。
 
+//  P3b: 「部屋」を 410 だけから入れる部屋すべてへ一般化(_rid=その点のある部屋の id。バルコニーは部屋の内)。鍵で入る扉は居室と管理室、
+//  食堂・シアターは共用扉(押して開ける)。物音の障害物(rooms.js の落ちる物)は同じ階なら knownRoomId=その部屋(noiseRoom)。
+//  演出②(LOCKER): 知っている部屋のクローゼット/ロッカーに隠れた → ゆっくり近づき目の前で立ち止まって焦らす(息遣い・取っ手)→開けて襲う。
+//  知らなければ見回りで部屋を一通り見て出て行く(SWEEP)。
 //  P3a: 全7階。移動グラフ(ai_graph.js)と当たり(world.js)を全階ぶん常駐し、管理人は自分の階(this.level)で動く。
 //  プレイヤーと別の階にいる間は見えない・聞こえない(物音は同じ階だけ)。経路が階をまたぐと EV/階段で移る
 //  (_transfer: 待つ→姿を消す→移動時間→次の階の同じ点に現れる)。410・覗き穴・スコープ演出は 4F だけの話。
@@ -68,7 +72,7 @@ export const AI = {
 // 隠れ場所(P0 区間)。P3 で建物データ(building.json)へ移す前提で、座標と向く先だけの素朴な配列にしておく。
 // area: 'R' = 410 室内(扉を鍵で開けて入り、中から閉める) / 'C' = 廊下・EV ホール
 export const HIDE_SPOTS = [
-  { id: 'r410_back', area: 'R', x: 8.98, z: 8.38, faceTo: [7.8, 7.25] },          // 410 の奥の角(入ってきた者を正面から見る)
+  { id: 'r410_back', area: 'R', x: 9.4, z: 7.5, faceTo: [7.8, 7.25] },            // 410 の玄関の先(トイレの扉の前の暗がり。P3b で内装が入った)
   { id: 'r410_door_shadow', area: 'R', x: 8.16, z: 6.2, faceTo: [8.7, 7.6] },     // 扉の陰(開いた扉板の裏に隠れる)
   { id: 'corridor_north', area: 'C', x: 6.32, z: 6.2, faceTo: [6.9, 9.5] },       // 廊下北端の角(窓の下の暗がり)
   { id: 'ev_blind', area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] },          // EV ホール東の死角
@@ -87,6 +91,13 @@ export const SCOPE = {
 };
 
 const P0_ORDER = ['405', '406', 'EV', '404', '407', '410', '403', '408', '402', '409', '401', '410', 'N0'];   // 410(プレイヤーの部屋)は一巡に2回
+// P3b: 演出②(ロッカー/クローゼットに隠れた時)
+export const LOCKER = {
+  approachFrom: 1.4,       // 立ち止まる点のこれだけ手前から、ゆっくり
+  slowSpeed: 0.42,
+  tease: [2.0, 4.0],       // 目の前で立ち止まって焦らす(秒)
+  openAfter: 0.35,         // 扉を開けてから襲いかかるまで
+};
 const XFER = { evWait: 2.0, evBase: 2.4, evPerFloor: 1.5, stairPerFloor: 4.0 };
 void P0_NODES;
 
@@ -117,6 +128,22 @@ export class EnemyAI {
     this._rand = mulberry(1234);
     this.knownRoomId = null;     // P2d: プレイヤーがいると知っている部屋
     this._playerArea = 'C';
+    this._playerRoom = null;
+    // P3b: 部屋(入れる部屋＋食堂・シアター)。rid → { id, level, rect, bal(バルコニー), key(鍵で入る扉か), points }
+    this.rooms = new Map();
+    this.roomsByLevel = new Map();
+    for (const f of this.building.floors) {
+      if (f.level > 7) continue;
+      for (const r of f.rooms) {
+        if (!r.door || !(r.door.enterable || r.id === 'DINING' || r.id === 'THEATER')) continue;
+        const pts = r.interior && r.interior.points;
+        const rec = { id: r.id, level: f.level, rect: r.rect, bal: r.balcony && r.door.enterable ? r.balcony.rect : null,
+          key: !!r.door.enterable, points: pts || null, hide: r.interior && r.interior.hide };
+        this.rooms.set(r.id, rec);
+        if (!this.roomsByLevel.has(f.level)) this.roomsByLevel.set(f.level, []);
+        this.roomsByLevel.get(f.level).push(rec);
+      }
+    }
     this._enterWatch = 0;
     this.selfBox = { minX: 0, maxX: 0, minZ: 0, maxZ: 0, y0: -1e9, y1: 1e9, kind: 'enemy', roomId: null, disabled: false };
     this.collisions.push(this.selfBox);
@@ -166,6 +193,8 @@ export class EnemyAI {
     const gen = {
       LURK: () => this._lurk(opts),
       SCOPE: () => this._scope(),
+      LOCKER: () => this._locker(),
+      SWEEP: () => this._sweep(opts),
       PATROL: () => this._patrol(),
       ALERT: () => this._alert(opts),
       CHASE: () => this._chase(),
@@ -195,7 +224,8 @@ export class EnemyAI {
     this.knownRoomId = null;
     this.lurkFound = null;
     this._enterWatch = 0;
-    this._playerArea = this._area(this.player.pos.x, this.player.pos.z);
+    this._playerRoom = this._rid(this.player.pos.x, this.player.pos.z, this._plv());
+    this._playerArea = this._playerRoom ? 'R' : 'C';
     this.enemy.lean = 0;
     this.enemy.faceFill = 0;
     this.setState('PATROL', { force: true, log: true });
@@ -209,6 +239,11 @@ export class EnemyAI {
     this.stateTime += dt;
     this._trackPlayer(dt);
     this._updateRoomKnowledge(dt);
+    // P3b 演出②: 知っている部屋のクローゼット/ロッカーに隠れた
+    const hid = this.player.hidden;
+    if (hid && this.knownRoomId === hid.room && !['LOCKER', 'ATTACK', 'DEAD', 'SCRIPTED', 'SCOPE'].includes(this.state) && !this.uninterruptible) {
+      this.setState('LOCKER');
+    }
     // 知られている部屋でスコープを覗いている → 覗き返しの演出へ
     if (this.knownRoomId === '410' && this._playerArea === 'R' && this.isPeeking && this.isPeeking()
       && !['SCOPE', 'ATTACK', 'DEAD', 'SCRIPTED'].includes(this.state) && !this.uninterruptible
@@ -268,8 +303,10 @@ export class EnemyAI {
     if (this._rayTimer <= 0) {
       this._rayTimer = AI.vision.rayEvery;
       this.occluded = this._blocked(p);
-      this.canSee = !this.occluded && this._inVision(p, dist);
-      this.inProximity = !this.occluded && dist <= AI.proximity;
+      // P3b: クローゼット/ロッカーに隠れている間は見えない(扉が開けられるまで)
+      const hidden = !!this.player.hidden;
+      this.canSee = !hidden && !this.occluded && this._inVision(p, dist);
+      this.inProximity = !hidden && !this.occluded && dist <= AI.proximity;
     }
     // 聴覚
     let hearR = 0;
@@ -295,7 +332,7 @@ export class EnemyAI {
       this._heardAt = null;
       this.lastKnown = { x: at.x, z: at.z, lv: this._plv() };
       this.lastHeardTime = this.time;
-      if (this._playerArea === 'R' && this.knownRoomId !== '410') this._learnRoom('heard');
+      if (this._playerArea === 'R' && this.knownRoomId !== this._playerRoom) this._learnRoom('heard');
       if (this.state === 'PATROL' && !this.pending) { this.log('heard', { dist: +dist.toFixed(2) }); this.setState('ALERT', { react: true }); }
     }
   }
@@ -303,24 +340,27 @@ export class EnemyAI {
   // ------------------------------------------------------------ 「部屋を知っている」(P2d)
   _updateRoomKnowledge(dt) {
     const p = this.player.pos;
-    const area = this._area(p.x, p.z, this._plv());
-    if (this._playerArea === 'C' && area === 'R') this._enterWatch = 1.5;   // 扉を通過した瞬間から 1.5 秒が「入るところ」
+    const rid = this._rid(p.x, p.z, this._plv());
+    const area = rid ? 'R' : 'C';
+    if (rid && rid !== this._playerRoom) this._enterWatch = 1.5;   // 扉を通過した瞬間から 1.5 秒が「入るところ」
     this._playerArea = area;
+    this._playerRoom = rid;
     if (area !== 'R') {
       if (this.knownRoomId) this.log('room_forgot');
       this.knownRoomId = null; this._enterWatch = 0;
       return;
     }
-    if (this.knownRoomId === '410' || this.state === 'DEAD' || this.state === 'SCRIPTED') return;
+    if (this.knownRoomId === rid || this.state === 'DEAD' || this.state === 'SCRIPTED') return;
     const e = this.enemy.pos;
     let why = null;
     if (this._enterWatch > 0) {
       this._enterWatch -= dt;
       if (this._seesPoint(p, 15)) why = 'witness';
     }
-    if (!why && this.player.flashlightOn && this.level === 4 && this._area(e.x, e.z) === 'C') {
-      const d = Math.hypot(e.x - DOOR410.x, e.z - DOOR410.z);
-      if (d <= (this.doors.isOpen('410') ? 10 : 6)) why = 'light';
+    const door = this.doors.get(rid);
+    if (!why && this.player.flashlightOn && this.level === this._plv() && !this._rid(e.x, e.z) && door) {
+      const d = Math.hypot(e.x - door.pos[0], e.z - door.pos[1]);
+      if (d <= (this.doors.isOpen(rid) ? 10 : 6)) why = 'light';
     }
     if (why) this._learnRoom(why);
   }
@@ -334,23 +374,57 @@ export class EnemyAI {
     return !this._blocked(p);
   }
 
-  _learnRoom(why) {
-    this.knownRoomId = '410';
-    this.log('room_known', { why });
+  _learnRoom(why, rid = this._playerRoom) {
+    if (!rid) return;
+    this.knownRoomId = rid;
+    this.log('room_known', { why, room: rid });
     // 探しに行く(追跡中・潜伏からの接近中・演出中はそのまま)
-    if ((this.state === 'PATROL' || this.state === 'ALERT' || (this.state === 'LURK' && !this.lurkFound)) && !this.uninterruptible) {
-      this.lastKnown = { ...ROOM_POINT, lv: 4 };
-      this.setState('ALERT', { react: false });
+    if ((this.state === 'PATROL' || this.state === 'ALERT' || this.state === 'SWEEP' || (this.state === 'LURK' && !this.lurkFound)) && !this.uninterruptible) {
+      this.lastKnown = { ...this._roomPoint(rid), lv: this.rooms.get(rid).level };
+      this.setState('ALERT', { react: why === 'noise' });
     }
   }
+
+  // P3b: 部屋で物音(落ちる物)。管理人が同じ階なら、その部屋にいると知る(DESIGN §3.4.1 ③)
+  noiseRoom(rid, x, z, lv) {
+    this.log('room_noise', { room: rid, lv, same: lv === this.level });
+    if (lv !== this.level || this.transit || ['ATTACK', 'DEAD', 'SCRIPTED', 'SCOPE', 'LOCKER'].includes(this.state)) return false;
+    if (!this.rooms.has(rid)) return false;
+    this._learnRoom('noise', rid);
+    return true;
+  }
+
+  // その部屋で向かう点(410 は P2 と同じ)
+  _roomPoint(rid) {
+    if (rid === '410') return { ...ROOM_POINT };
+    const r = this.rooms.get(rid);
+    const p = r && r.points ? r.points.room : null;
+    if (p) return { x: p[0], z: p[1] };
+    const [x, z, w, d] = r.rect;
+    return { x: x + w / 2, z: z + d / 2 };
+  }
+
+  // P3b: 点 (x,z) のある部屋(入れる部屋＋食堂・シアター。入れる部屋のバルコニーはその部屋)。無ければ null
+  _rid(x, z, lv = this.level) {
+    const list = this.roomsByLevel.get(lv);
+    if (!list) return null;
+    for (const r of list) {
+      const [rx, rz, rw, rd] = r.rect;
+      if (x > rx + 0.06 && x < rx + rw - 0.06 && z > rz + 0.06 && z < rz + rd - 0.06) return r.id;
+      if (r.bal) { const [bx, bz, bw, bd] = r.bal; if (x > bx && x < bx + bw && z > bz && z < bz + bd) return r.id; }
+    }
+    return null;
+  }
+  _keyDoor(rid) { const r = this.rooms.get(rid); return !!(r && r.key); }
 
   // 潜伏中の発見条件: 近い(遮蔽なし)/同じ部屋/懐中電灯を向けられた
   _lurkTrigger(p, dist) {
     if (this.lurkFound) return;
     const L = AI.lurk;
     let why = null;
+    if (this.player.hidden) return;
     if (!this.occluded && dist <= L.near) why = 'near';
-    else if (this._area(p.x, p.z, this._plv()) === 'R' && this._area(this.enemy.pos.x, this.enemy.pos.z) === 'R') why = 'room';
+    else if (!this.player.hidden && this._rid(p.x, p.z, this._plv()) && this._rid(p.x, p.z, this._plv()) === this._rid(this.enemy.pos.x, this.enemy.pos.z)) why = 'room';
     else if (this.player.flashlightOn && !this.occluded && dist <= L.lightRange && this._inPlayerLight()) why = 'light';
     if (why) {
       this.lurkFound = why;
@@ -387,21 +461,25 @@ export class EnemyAI {
   _blocked(p) {
     if (this._plv() !== this.level) return true;
     const e = this.enemy.pos;
-    return segmentHitT(e.x, e.z, p.x, p.z, this.collisions, (c) => c.kind === 'enemy') < 1;
+    // P3b: 低い家具(furn)は視線を遮らない。背の高い家具(furnT)は遮るが、プレイヤーが中にいる物(隠れたクローゼット)は除く
+    const inside = (c) => p.x >= c.minX && p.x <= c.maxX && p.z >= c.minZ && p.z <= c.maxZ;
+    return segmentHitT(e.x, e.z, p.x, p.z, this.collisions, (c) => c.kind === 'enemy' || c.kind === 'furn' || (c.kind === 'furnT' && inside(c))) < 1;
   }
 
   // 外部からの音(扉の開閉・施錠)。main が呼ぶ
   noise(x, z, r, lv = this._plv()) { this._noise = { x, z, r, lv }; }
 
   // ------------------------------------------------------------ 移動の部品
-  // 'R' = 410 の室内(4F)。lv を省くと管理人の階
-  _area(x, z, lv = this.level) { return (lv === 4 && x > 7.86 && z > 5.8 && z < 8.7) ? 'R' : 'C'; }
+  // 'R' = 部屋の中(P3b: 入れる部屋すべて＋食堂・シアター。P2 までは 410 だけ)。lv を省くと管理人の階
+  _area(x, z, lv = this.level) { return this._rid(x, z, lv) ? 'R' : 'C'; }
 
   _nearestNode(x, z, lv = this.level) {
-    if (this._area(x, z, lv) === 'R') return 'R';
+    const rid = this._rid(x, z, lv);
+    if (rid === '410' && lv === 4) return 'R';
+    if (rid && this.G.roomNode[rid]) return this.G.roomNode[rid];
     let best = null, bd = 1e9;
     for (const n of Object.values(this.G.nodes)) {
-      if (n.lv !== lv || n.id === 'R') continue;
+      if (n.lv !== lv || n.id === 'R' || n.room) continue;
       const d = Math.hypot(n.x - x, n.z - z);
       if (d > bd) continue;
       const dd = d + (this._clear(x, z, n.x, n.z, lv) ? 0 : 6);   // 壁越しの点は避ける
@@ -441,12 +519,12 @@ export class EnemyAI {
     // 同じ種類の縦の辺が続くなら(EV で 3 階ぶん等)途中の階を飛ばす
     pts = pts.filter((p, i) => !(i > 0 && i + 1 < pts.length && p.via !== 'walk' && pts[i + 1].via === p.via));
     pts.push({ x: toX, z: toZ, lv: tlv, node: null, via: 'walk' });
-    // 見通しで間引く(扉をまたぐ C1→R / R→C1、階の移動の前後は残す)
+    // 見通しで間引く(扉をまたぐ区間 = 部屋の内外が変わる点の前後、階の移動の前後は残す)
     const out = [];
     let cx = fromX, cz = fromZ, clv = flv;
     for (let i = 0; i < pts.length; i++) {
       const next = pts[i + 1];
-      const isDoorHop = (pts[i].node === 'C1' && next && next.node === 'R') || (pts[i].node === 'R' && next && next.node === 'C1');
+      const isDoorHop = !!next && (this._rid(pts[i].x, pts[i].z, pts[i].lv) !== this._rid(next.x, next.z, next.lv)) && pts[i].lv === next.lv;
       const keep = !next || isDoorHop || next.lv !== pts[i].lv || pts[i].lv !== clv || next.via !== 'walk';
       if (!keep && this._clear(cx, cz, next.x, next.z, clv)) continue;
       out.push(pts[i]);
@@ -466,10 +544,10 @@ export class EnemyAI {
     return true;
   }
 
-  // 線分を塞いでいる閉じた扉(開けられるもの。410 は鍵の段取りがあるので別)
+  // 線分を塞いでいる閉じた扉(開けられるもの。鍵で入る部屋=居室・管理室は鍵の段取りがあるので別)
   _blockingDoor(ax, az, bx, bz) {
     for (const c of this.collisions) {
-      if (c.kind !== 'door' || c.disabled || !c.roomId || c.roomId === '410') continue;
+      if (c.kind !== 'door' || c.disabled || !c.roomId || this._keyDoor(c.roomId)) continue;
       const d = this.doors.get(c.roomId);
       if (!d || !d.operable) continue;
       if (segmentHitT(ax, az, bx, bz, [c]) < 1) return c.roomId;
@@ -620,7 +698,7 @@ export class EnemyAI {
       if (stopIf && stopIf()) return 'stopped';
       const wp = route[0];
       if (wp.lv !== this.level) { yield* this._transfer(wp); route.shift(); continue; }
-      if (wp.lv !== 4 || (wp.node !== 'R' && wp.node !== 'C1')) {
+      {
         const bd = this._blockingDoor(e.pos.x, e.pos.z, wp.x, wp.z);
         if (bd) {
           this.doors.open(bd, 1.3);
@@ -629,19 +707,20 @@ export class EnemyAI {
           for (let t = 0; t < 2.0 && !this.doors.isOpen(bd); t += this.dt) yield;
         }
       }
-      // 扉をまたぐ区間: 廊下→室内は鍵で開けて入る。室内→廊下で閉まっていれば内側から開ける
-      const here = this._area(e.pos.x, e.pos.z);
+      // 扉をまたぐ区間: 廊下→室内は鍵で開けて入る。室内→廊下で閉まっていれば内側から開ける(P3b: 鍵で入る部屋すべて)
       // (経路を引いた時は開いていた扉が後から閉まった場合も、室内の点へ向かうなら扉をまたぐ扱い)
-      if ((wp.node === 'R' || this._area(wp.x, wp.z, wp.lv) === 'R') && here === 'C' && !this.doors.isOpen('410')) {
-        const r = yield* this._doorEntry(this.doors.get('410'), useKey);
+      const here = this._rid(e.pos.x, e.pos.z);
+      const wr = this._rid(wp.x, wp.z, wp.lv);
+      if (wr && wr !== here && !here && this._keyDoor(wr) && !this.doors.isOpen(wr)) {
+        const r = yield* this._doorEntry(this.doors.get(wr), useKey);
         if (r !== 'entered') return r;
         route.shift();
         continue;
       }
-      if (wp.node === 'C1' && here === 'R' && !this.doors.isOpen('410')) {
-        this.doors.setLocked('410', false);
-        this.doors.open('410', 1.5);
-        this.log('door_opened_inside', { room: '410' });
+      if (here && wr !== here && this._keyDoor(here) && !this.doors.isOpen(here)) {
+        this.doors.setLocked(here, false);
+        this.doors.open(here, 1.5);
+        this.log('door_opened_inside', { room: here });
         e.play('look_idle', { fade: 0.3 });
         yield* this._wait(0.9);
       }
@@ -675,7 +754,7 @@ export class EnemyAI {
     this.enemy.aimPoint = new THREE.Vector3(door.collision ? (door.collision.minX + door.collision.maxX) / 2 : f.x, this.floorY + 1.0, f.z);
     yield* this._turnTo(f.yaw);
     // P2d: 中にいると知らなければ(目撃も光漏れも物音もない)、閉じた扉は開けない。ノブを確かめて去る
-    if (door.roomId === '410' && this._area(this.player.pos.x, this.player.pos.z, this._plv()) === 'R' && this.knownRoomId !== '410' && !this.doors.isOpen('410')) {
+    if (this._rid(this.player.pos.x, this.player.pos.z, this._plv()) === door.roomId && this.knownRoomId !== door.roomId && !this.doors.isOpen(door.roomId)) {
       door.rattle = 0.25;
       if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.8);
       this.log('door_skip_unknown', { room: door.roomId });
@@ -741,7 +820,7 @@ export class EnemyAI {
     const e = this.enemy;
     e.setFace('grin', 0);
     // 室内にいたら廊下へ戻り、扉を閉める
-    if (this._area(e.pos.x, e.pos.z) === 'R') yield* this._leaveRoom();
+    if (this._rid(e.pos.x, e.pos.z) && this._keyDoor(this._rid(e.pos.x, e.pos.z))) yield* this._leaveRoom();
     const order = this.level === 4 ? P0_ORDER : this._levelOrder(this.level);
     const budget = AI.lurk.patrolMin + this._rand() * (AI.lurk.patrolMax - AI.lurk.patrolMin);
     while (true) {
@@ -770,8 +849,8 @@ export class EnemyAI {
         // 覗く: 開いていればそのまま、施錠ならノブを確かめて去る
         const res = yield* this._doorEntry(door, false);
         if (res === 'entered') {
-          e.play('look_idle', { fade: 0.4 });
-          yield* this._wait(2.5);
+          // P3b: 部屋を一通り見る(奥まで歩いて見回す)→出て行く。隠れていても知らなければ開けない
+          yield* this._lookAround(tgt);
           yield* this._leaveRoom();
         }
       } else if (this._rand() < 0.3 && door) {
@@ -797,15 +876,120 @@ export class EnemyAI {
 
   *_leaveRoom() {
     const e = this.enemy;
-    const out = this._doorFront('410', 0.7, 0);
-    const mode = this.state === 'PATROL' ? 'PATROL' : 'ALERT';
-    yield* this._goTo(out.x, out.z, mode);
+    const rid = this._rid(e.pos.x, e.pos.z) || '410';
+    if (!this._keyDoor(rid)) return;
+    const out = this._doorFront(rid, 0.7, 0);
+    const mode = this.state === 'PATROL' || this.state === 'SWEEP' ? 'PATROL' : 'ALERT';
+    yield* this._goTo(out.x, out.z, mode, { lv: this.level });
     // 扉に向き直って閉める
     yield* this._turnTo(out.yaw);
-    this.doors.close('410');
-    this.log('door_closed', { room: '410' });
+    this.doors.close(rid);
+    this.log('door_closed', { room: rid });
     yield* this._wait(0.8);
     void e;
+  }
+
+  // P3b: 部屋を一通り見る(玄関の先 → 洋室の奥 → 見回す)。410 は P2 の動き(その場で見回す)のまま
+  *_lookAround(rid) {
+    const e = this.enemy;
+    const r = this.rooms.get(rid);
+    this.log('sweep_room', { room: rid });
+    if (r && r.points) {
+      for (const k of ['room', 'living']) {
+        const [x, z] = r.points[k];
+        const res = yield* this._goTo(x, z, 'PATROL', { arrive: 0.3, lv: r.level });
+        if (res !== 'arrived') break;
+      }
+      e.play('look_nervous', { fade: 0.4, timeScale: 0.7 });
+      yield* this._wait(2.6);
+      yield* this._turnTo(e.yaw + Math.PI);
+      yield* this._wait(0.8);
+    } else {
+      e.play('look_idle', { fade: 0.4 });
+      yield* this._wait(2.5);
+    }
+  }
+
+  // SWEEP: 部屋へ(開いていれば入り、閉まっていれば鍵を使わずノブを確かめる)→一通り見て→出て行く。opts.room
+  *_sweep(opts) {
+    const rid = opts.room;
+    const r = this.rooms.get(rid);
+    if (!r) { this.setState('PATROL'); yield; return; }
+    this.log('sweep_start', { room: rid });
+    const f = this._doorFront(rid, 0.75, 0);
+    const res = yield* this._goTo(f.x, f.z, 'PATROL', { lv: r.level });
+    if (res === 'arrived') {
+      yield* this._turnTo(f.yaw);
+      const door = this.doors.get(rid);
+      const ent = this.doors.isOpen(rid) ? 'entered' : yield* this._doorEntry(door, false);
+      if (ent === 'entered') {
+        if (this.doors.isOpen(rid)) {
+          const [x, z] = r.points ? r.points.entry : [f.x, f.z];
+          yield* this._goTo(x, z, 'PATROL', { lv: r.level });
+        }
+        yield* this._lookAround(rid);
+        yield* this._leaveRoom();
+      }
+    }
+    this.log('sweep_end', { room: rid });
+    this.setState('PATROL');
+    yield;
+  }
+
+  // ------------------------------------------------------------ LOCKER(演出②: 知っている部屋のクローゼット/ロッカーに隠れた)
+  *_locker() {
+    const e = this.enemy, K = LOCKER;
+    const h = this.player.hidden;
+    if (!h) { this.setState('ALERT', { react: false }); yield; return; }
+    const room = h.room;
+    this.log('locker_start', { room });
+    e.setFlashlight(true);
+    e.setFace('grin', 0.3);
+    // 1) 部屋へ(鍵で入る)、隠れ場所の前の少し手前まで
+    const [sx, sz] = h.stand;
+    const [fx, fz] = h.feet;
+    // ゆっくり近づき始める点: 部屋の通路(居室は通路の中ほど、管理室は机の前)
+    const rr = this.rooms.get(room);
+    const ap = rr && rr.points ? (rr.points.living && room === 'OFFICE' ? rr.points.living : rr.points.room) : [sx, sz];
+    const ax = ap[0], az = ap[1];
+    let r = yield* this._goTo(ax, az, 'ALERT', { useKey: true, lv: h.level, arrive: 0.25 });
+    if (r !== 'arrived' && this._rid(e.pos.x, e.pos.z) !== room) { r = yield* this._goTo(sx, sz, 'ALERT', { useKey: true, lv: h.level, arrive: 0.3 }); }
+    if (!this.player.hidden) { this.setState('ALERT', { react: false }); yield; return; }
+    // 2) ゆっくり近づく(足音は小さく、最後は止まる)
+    this.uninterruptible = true;
+    this.log('locker_approach', { room });
+    for (let t = 0; t < 8; t += this.dt) {
+      if (this._stepToward(sx, sz, K.slowSpeed, 'walk_oldman', 2.0, 0.06)) break;
+      yield;
+    }
+    e.speed = 0;
+    yield* this._turnTo(Math.atan2(fx - e.pos.x, fz - e.pos.z));
+    e.aimPoint = new THREE.Vector3(fx, this.floorY + 1.3, fz);
+    e.play('look_idle', { fade: 0.5, timeScale: 0.15 });
+    // 3) 目の前で立ち止まって焦らす: 足音が止まり、息遣い、取っ手に触れる音
+    this.log('locker_tease', { room, dist: +Math.hypot(e.pos.x - fx, e.pos.z - fz).toFixed(2) });
+    const tease = K.tease[0] + this._rand() * (K.tease[1] - K.tease[0]);
+    const doorPos = new THREE.Vector3((sx + fx) / 2, this.floorY + 1.1, (sz + fz) / 2);
+    if (this.audio) this.audio.play('breath', this.enemy.headWorld(), 0.9);
+    let touched = 0;
+    for (let t = 0; t < tease; t += this.dt) {
+      if (touched === 0 && t > tease * 0.45) { touched = 1; if (this.audio) this.audio.play('handle', doorPos, 0.7); this.log('locker_handle'); }
+      if (touched === 1 && t > tease * 0.8) { touched = 2; if (this.audio) this.audio.play('handle', doorPos, 0.9); }
+      e.setFace('grin', Math.min(1, 0.3 + t / tease));
+      yield;
+    }
+    // 4) 開ける → 襲う
+    if (this.roomsSys) this.roomsSys.openCloset(room, 3.0);
+    const cl = this.roomsSys && this.roomsSys.closets.get(room);
+    if (cl) cl.revealed = true;
+    this.log('locker_open', { room });
+    e.setFace('grin', 1.0, true);
+    yield* this._wait(K.openAfter);
+    this.uninterruptible = false;
+    this.player.hidden = null;            // もう隠れていない(視線が通る)
+    this.lastKnown = { x: fx, z: fz, lv: h.level };
+    this.setState('ATTACK');
+    yield;
   }
 
   // ------------------------------------------------------------ ALERT
@@ -861,12 +1045,13 @@ export class EnemyAI {
         if (r !== 'stopped') { this.setState('ALERT', { react: false }); yield; return; }
         continue;
       }
-      // 扉の向こう(410 室内)なら鍵で開けて入る
-      if (this._area(tgt.x, tgt.z, tlv) === 'R' && this._area(e.pos.x, e.pos.z) === 'C' && !this.doors.isOpen('410')) {
-        yield* this._doorEntry(this.doors.get('410'), true);
-        route = null;
-        continue;
-      }
+      // 扉の向こう(鍵で入る部屋の中)なら鍵で開けて入る
+      { const tr = this._rid(tgt.x, tgt.z, tlv), er = this._rid(e.pos.x, e.pos.z);
+        if (tr && !er && this._keyDoor(tr) && !this.doors.isOpen(tr)) {
+          yield* this._doorEntry(this.doors.get(tr), true);
+          route = null;
+          continue;
+        } }
       replan -= this.dt;
       if (!route || replan <= 0) { route = this._route(e.pos.x, e.pos.z, tgt.x, tgt.z); replan = 0.25; }
       const wp = route[0] || tgt;
@@ -938,10 +1123,12 @@ export class EnemyAI {
       if (this.lurkFound) { yield* this._ambush(); return; }
       if (r !== 'arrived') { this.setState('PATROL'); yield; return; }
       // 部屋に入った場合は中から扉を閉める(何もなかったように見せる)
-      if (spot.area === 'R' && this.doors.isOpen('410') && this._area(this.player.pos.x, this.player.pos.z, this._plv()) !== 'R') {
-        yield* this._turnTo(Math.atan2(7.8 - e.pos.x, 7.25 - e.pos.z));
-        this.doors.close('410');
-        this.log('door_closed_inside', { room: '410' });
+      const sr = spot.room || (spot.area === 'R' ? '410' : null);
+      if (sr && this._keyDoor(sr) && this.doors.isOpen(sr) && this._rid(this.player.pos.x, this.player.pos.z, this._plv()) !== sr) {
+        const dp = this.doors.get(sr).pos;
+        yield* this._turnTo(Math.atan2(dp[0] - e.pos.x, dp[1] - e.pos.z));
+        this.doors.close(sr);
+        this.log('door_closed_inside', { room: sr });
         yield* this._wait(1.0);
         if (this.lurkFound) { yield* this._ambush(); return; }
       }
@@ -984,10 +1171,12 @@ export class EnemyAI {
       if (dist <= AI.attackRange && !this.occluded) { this.setState('ATTACK'); yield; return; }
       if (dist > L.giveUp || lost > AI.chaseLose || this._plv() !== this.level) { this.setState('CHASE'); yield; return; }
       const tgt = this.lastKnown;
-      if (this._area(tgt.x, tgt.z, tgt.lv ?? this.level) !== this._area(e.pos.x, e.pos.z) && !this.doors.isOpen('410')) {
-        if (this._area(e.pos.x, e.pos.z) === 'C') { yield* this._doorEntry(this.doors.get('410'), true); route = null; continue; }
-        this.doors.setLocked('410', false); this.doors.open('410', 1.5);
-      }
+      { const tr = this._rid(tgt.x, tgt.z, tgt.lv ?? this.level), er = this._rid(e.pos.x, e.pos.z);
+        const dr = er || tr;
+        if (tr !== er && dr && this._keyDoor(dr) && !this.doors.isOpen(dr)) {
+          if (!er) { yield* this._doorEntry(this.doors.get(tr), true); route = null; continue; }
+          this.doors.setLocked(er, false); this.doors.open(er, 1.5);
+        } }
       replan -= this.dt;
       if (!route || replan <= 0) { route = this._route(e.pos.x, e.pos.z, tgt.x, tgt.z); replan = 0.25; }
       const wp = route[0] || tgt;
@@ -1101,7 +1290,7 @@ export class EnemyAI {
       face: { grin: +e.face.grin.toFixed(2), attack: +e.face.attack.toFixed(2) },
       canSee: this.canSee, heard: this.heard, occluded: this.occluded, lastKnown: this.lastKnown,
       uninterruptible: this.uninterruptible,
-      knownRoomId: this.knownRoomId, scopeFaceDist: this.scopeFaceDist,
+      knownRoomId: this.knownRoomId, scopeFaceDist: this.scopeFaceDist, playerRoom: this._playerRoom,
       lurkSpot: this.state === 'LURK' ? this.lurkSpot : null, lurkFound: this.state === 'LURK' ? this.lurkFound : null,
       enemyFlashlight: this.enemy.flashlight.on,
     };

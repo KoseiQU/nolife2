@@ -26,12 +26,15 @@ import { EnemyAudio } from './enemy_audio.js';
 import { Peephole } from './peephole.js';
 import { AttackMovie } from './attack_movie.js';
 import { Hud } from './hud.js';
+import { Rooms } from './rooms.js';
 import { HUD_TEXT } from './hud_text.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、扉は全部開けられる
 // (契約で「開かない」と決まっている地下の鉄扉は除く)、死亡・襲撃ムービーなし。?tour&floor=N(1〜7・RB・B1)で開始階を指定
 const TOUR = PARAMS.has('tour');
+// P3b: 物語の進行で解放するフラグ(P5 で条件を決める)。roofA = 410/401 のバルコニーから屋上A へ乗り越えられる。?tour と ?roofA では最初から真
+const FLAGS = { roofA: TOUR || PARAMS.has('roofA') };
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -52,7 +55,7 @@ export const LOOK = {
   vignette: 0.42,
   maxRenderPixels: 1920 * 1080,   // Retina でもこの画素数を上限に描く(60fps 目標)
   // 発光面の見た目だけの倍率(ベイク側の光量は Blender の値のまま)。窓は面で見ると白飛びするので抑える
-  emissiveScale: { M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0, M_CarCeiling: 0.0,  // カゴ照明=待機中は消灯
+  emissiveScale: { MX_WinOut: 0.15, MX_SecMon: 0.5, M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0, M_CarCeiling: 0.0,  // カゴ照明=待機中は消灯
     M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6, M_EVCarDisplay: 0.6,   // 近くで見る発光面は白飛びしない程度に
     M_Backdrop: 0.3, M_BracketCover: 0.5 },                         // P3a: 正面玄関の外の暗い街路・屋外の壁付け灯
   // 金属とガラスだけに弱い環境反射(ライトマップは拡散だけなので、無いと SUS が真っ黒に見える)
@@ -63,6 +66,9 @@ export const LOOK = {
   probeGain: 1.0,     // 風除室の静的環境(キューブカメラ)の映り込みの倍率(材質ごとの値は manifest.envProbe.intensity)
   // 透過(transmission)の背景を描く解像度。1 だと風除室を見ている間 GPU が約 +8ms(内蔵ブラウザの計測)、0.5 で約 +2〜3ms
   transmissionScale: 0.5,
+  // P3b: 仮の夜空(P3c で本番に差し替え)。露出 4.5 で見るので、ごく暗い色
+  skyTop: '#010103', skyHorizon: '#06080e', skyGround: '#020203',
+  mirrorEnv: 0.012,
 };
 
 const errBox = document.getElementById('err');
@@ -88,6 +94,18 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
+// P3b: 夜空の仮の背景(地平線がわずかに明るい濃紺のグラデーション)。窓・バルコニー・屋上から見える空が真っ黒の穴にならないように。
+// 本番の空(曇った夜空・月・遠景)は P3c で差し替える
+{
+  const cv = document.createElement('canvas'); cv.width = 4; cv.height = 256;
+  const g = cv.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0.0, LOOK.skyTop); gr.addColorStop(0.47, LOOK.skyHorizon); gr.addColorStop(0.53, LOOK.skyHorizon); gr.addColorStop(1.0, LOOK.skyGround);
+  g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(cv);
+  t.mapping = THREE.EquirectangularReflectionMapping; t.colorSpace = THREE.SRGBColorSpace;
+  scene.background = t;
+}
 scene.fog = new THREE.FogExp2(LOOK.fogColor, LOOK.fogDensity);
 const ambientFloor = new THREE.HemisphereLight(LOOK.ambientSky, LOOK.ambientGround, LOOK.ambientFloor);
 scene.add(ambientFloor);
@@ -163,6 +181,7 @@ await Promise.all(LEVELS.map(async (lv) => { manifests[lv] = await getJSON(`./bu
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK, tour: TOUR });
+let rooms = null;   // P3b: 入れる部屋の仕掛け(下で作る)
 let playerLevel = region.level;          // 階のキー(1..7 / 'RB')。開始は 4F
 const floorY = levelY(region.level);     // 4F(410・覗き穴・チェックポイントの階)
 world.setVisible([glbLevel(playerLevel)]);
@@ -214,6 +233,12 @@ function useAndReport() {
     return null;
   }
   if (t && t.kind === 'evbutton') { elevator.select(t.floor); hud.flash(HUD_TEXT.ev.selected(t.floor)); return null; }
+  if (t && t.rt) {   // P3b: 窓・隠れ場所・屋上A の隔て板
+    const r = rooms.use(t.rt);
+    if (r === 'blocked') hud.flash(HUD_TEXT.room.cantClimb);
+    if (r === 'window') ai.noise(player.pos.x, player.pos.z, 4.0);   // 窓を開け閉めする音(扉より小さい)
+    return null;
+  }
   const r = useNearestDoor();
   hud.onUse({ locked: lastUseLocked });
   return r;
@@ -367,6 +392,7 @@ function onUseKey() {
 player.onKey = (code) => {
   if (code === 'KeyH') hud.showControls();
   if (death) return;
+  if (code === 'KeyE' && rooms.hidden && rooms.hidden.phase === 'hidden' && !movie.active) { rooms.unhide(); return; }   // P3b: 隠れ場所から出る
   // カゴの中: 数字キーで行き先(1〜7)
   const dm = /^Digit([1-7])$/.exec(code);
   if (dm && elevator.inCar(player.pos.x, player.pos.z, playerLevel)) { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
@@ -432,6 +458,7 @@ function updateDeath(dt) {
     door410.angle = 0; door410.target = 0; door410.locked = false; door410.speedMul = 1;
     if (door410.collision) door410.collision.disabled = false;
     movie.end();
+    rooms.forceUnhide();
     player.object.rotation.z = 0;
     player.crouch = false;
     if (playerLevel !== 4) setPlayerLevel(4);
@@ -447,6 +474,7 @@ renderer.domElement.addEventListener('click', () => { if (!player.isLocked()) pl
 // P2e: 画面ガイド
 const hud = new Hud({
   camera, player, doors: doorsHere(), lens, evPanel: world.floors.get(4).panel, canPeep, inRoom410: () => playerLevel === 4 && player.pos.x > 7.86 && player.pos.z > 5.8 && player.pos.z < 8.7,
+  inRoomOf: (door) => ai._rid(player.pos.x, player.pos.z, playerLevel) === door.roomId,
   extraTarget: () => extraTarget(),
   peepKey: () => (peephole.active ? (pendingE && pendingE.held ? 'E' : player.keys.has('KeyP') ? 'P' : 'E') : null),
   isMovie: () => movie.active, isDead: () => !!death,
@@ -473,6 +501,14 @@ const levelLog = [];
 const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel,
   setLevel: (key, o) => setPlayerLevel(key, o) });
 elevator.onRideStart = (to) => world.focus(to);     // 行き先(±1)を先に読み始める(到着は読み終わってから)
+// P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
+rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel, flags: FLAGS,
+  onNoise: (f) => { if (!TOUR) ai.noiseRoom(f.room, f.x, f.z, f.level); },
+  onHide: () => {} });
+world.onBind = (lv, binds) => rooms.onBind(lv, binds);
+world.onUnbind = (lv) => rooms.onUnbind(lv);
+for (const [lv, rec] of world.floors) if (rec.state === 'ready' && rec.binds) rooms.onBind(lv, rec.binds);
+ai.roomsSys = rooms;
 ai.elevator = elevator;                              // P3b-A: 管理人も同じカゴで移動する(階数表示が動く)
 elevator.attach(scene);
 const stairs = new Stairs({ building, player, camera, getLevel: () => playerLevel,
@@ -481,8 +517,24 @@ const stairs = new Stairs({ building, player, camera, getLevel: () => playerLeve
 // 見せる階: ふだんは今の階だけ。外階段・北階段の区画にいる時と上り下りの最中は上下の階も(吹き抜けで見えるので)
 function updateVisibility() {
   const c = glbLevel(playerLevel);
-  const open = stairs.busy || !!stairs.inStairArea(player.pos.x, player.pos.z);
+  const open = stairs.busy || !!stairs.inStairArea(player.pos.x, player.pos.z) || outdoorsHere();
   world.setVisible(open ? [c - 1, c, c + 1] : [c]);
+  if (rooms) rooms.syncVisible(world.visible);
+}
+// P3b: 風の音の場所(屋上A / バルコニー / 屋内)
+function outdoorKind() {
+  if (typeof playerLevel !== 'number') return null;
+  const f = building.floors.find((ff) => ff.level === playerLevel);
+  const p = player.pos;
+  const a = f.shell.roomAir.find((q) => (q.kind === 'balcony' || q.kind === 'roofA') && p.x > q.rect[0] && p.x < q.rect[0] + q.rect[2] && p.z > q.rect[1] && p.z < q.rect[1] + q.rect[3]);
+  return a ? a.kind : null;
+}
+// P3b: バルコニー・屋上A にいる(吹きさらしなので上下の階も見える)。開いた窓の前(室内)からも外が見える
+function outdoorsHere() {
+  if (typeof playerLevel !== 'number') return false;
+  const f = building.floors.find((ff) => ff.level === playerLevel);
+  const p = player.pos;
+  return f.shell.roomAir.some((a) => (a.kind === 'balcony' || a.kind === 'roofA') && p.x > a.rect[0] - 0.6 && p.x < a.rect[0] + a.rect[2] + 0.6 && p.z > a.rect[1] - 0.6 && p.z < a.rect[1] + a.rect[3] + 0.6);
 }
 // 画面ガイドの追加対象: カゴの行き先ボタン/階段の口
 function extraTarget() {
@@ -491,6 +543,13 @@ function extraTarget() {
   if (elevator.facingPanel(camera, playerLevel)) return { kind: 'evpanel', items: [HUD_TEXT.ev.panel] };
   const m = stairs.hint;
   if (m && !stairs.busy) return { kind: 'stair', items: [m.toKey === 'RB' ? HUD_TEXT.stair.roof : m.toKey === 'B1' ? HUD_TEXT.stair.basement : m.dir === 'up' ? HUD_TEXT.stair.up : HUD_TEXT.stair.down] };
+  const rt = rooms.target(playerLevel);
+  if (rt) {
+    const R = HUD_TEXT.room;
+    const items = rt.kind === 'window' ? [rt.open ? R.winClose : R.winOpen] : rt.kind === 'closet' ? [R.hide] : rt.kind === 'unhide' ? [R.unhide]
+      : rt.kind === 'gate' ? [FLAGS.roofA ? R.climb : R.cantClimb] : [];
+    return { kind: 'room_' + rt.kind, rt, items };
+  }
   return null;
 }
 
@@ -535,6 +594,8 @@ function step(dt) {
   simTime += dt;
   player.update(dt);
   stairs.update(dt);
+  rooms.update(dt, playerLevel);
+  rooms.updateWind(dt, outdoorKind());
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
@@ -601,7 +662,7 @@ window.__n2 = {
   setLevel(key) { setPlayerLevel(key); return world.focus(key); },
   // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
-  enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME,
+  enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
@@ -658,3 +719,4 @@ if (TOUR) {
 }
 if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then((m) => m.run(window.__N2)).catch(showErr);
+if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);

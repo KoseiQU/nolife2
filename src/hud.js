@@ -137,7 +137,8 @@ export class Hud {
     if (this.canPeep()) { items.push(TX.scope.peep); kind = 'scope'; }
     if (door && door.operable) {
       const p = this.player.pos;
-      const inside = this.inRoom410 ? this.inRoom410() : (p.x > 7.86 && p.z > 5.8 && p.z < 8.7);   // 410 の室内
+      // その扉の部屋の中にいる(P3b: 入れる部屋すべて。410 だけだった判定を一般化)
+      const inside = this.inRoomOf ? this.inRoomOf(door) : this.inRoom410 ? this.inRoom410() : (p.x > 7.86 && p.z > 5.8 && p.z < 8.7);
       const open = door.target > 0 || door.angle > 0.05;
       if (open) items.push(TX.door.close);
       else if (door.locked) { if (inside) items.push(TX.door.unlock); badge = TX.door.lockedBadge; }

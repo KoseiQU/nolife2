@@ -76,6 +76,28 @@ export function buildAIGraph(building) {
       doorLink(lv, top, nodeId(lv, 'NS'), 'NST' + lv);
     }
   }
+  // P3b: 入れる部屋(居室・管理室)の点。扉をまたぐ辺で一番近い廊下の点へ。410 は P0 の 'R'。食堂・シアターは既存の DN/TH
+  const roomNode = { 410: 'R', DINING: nodeId(1, 'DN'), THEATER: nodeId(1, 'TH') };
+  const CORR = /^(V\d+|H\d+|J|JE|N0|C\d)$/;
+  for (const f of building.floors) {
+    const lv = f.level;
+    if (lv > 7) continue;
+    for (const r of f.rooms) {
+      if (!r.door || !r.door.enterable || r.id === '410' || !r.interior || !r.interior.points) continue;
+      const [x, z] = r.interior.points.room;
+      const id = add(lv, 'R_' + r.id, x, z);
+      nodes[id].room = r.id;
+      roomNode[r.id] = id;
+      const [dx, dz] = r.door.pos;
+      let best = null, bd = 1e9;
+      for (const n of Object.values(nodes)) {
+        if (n.lv !== lv || !CORR.test(n.name)) continue;
+        const d = Math.hypot(n.x - dx, n.z - dz);
+        if (d < bd) { bd = d; best = n.id; }
+      }
+      doorLink(lv, best, id, r.id);
+    }
+  }
   // 階の間
   for (let lv = 1; lv < 7; lv++) {
     link(nodeId(lv, 'EV'), nodeId(lv + 1, 'EV'), null, 'ev');
@@ -85,5 +107,5 @@ export function buildAIGraph(building) {
   link(nodeId(2, 'NS'), nodeId(3, 'NS'), null, 'stair');
   const adj = new Map(Object.keys(nodes).map((k) => [k, []]));
   for (const e of edges) { adj.get(e.a).push(e); adj.get(e.b).push(e); }
-  return { nodes, edges, adj };
+  return { nodes, edges, adj, roomNode };
 }

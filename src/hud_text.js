@@ -29,6 +29,14 @@ export const HUD_TEXT = {
     roof: { key: 'W', text: '屋上へ' },
     basement: { key: 'W', text: '地下へ' },     // P3a-2: 1F 食堂奥の地下への階段
   },
+  room: {                                       // P3b: 入れる部屋(掃き出し窓・隠れ場所・屋上A の隔て板)
+    winOpen: { key: 'E', text: '窓を開ける' },
+    winClose: { key: 'E', text: '窓を閉める' },
+    hide: { key: 'E', text: '隠れる' },
+    unhide: { key: 'E', text: '出る' },
+    climb: { key: 'E', text: '乗り越える' },
+    cantClimb: '乗り越えられない',
+  },
   controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　L 施錠　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },
   start: 'クリックで開始',
