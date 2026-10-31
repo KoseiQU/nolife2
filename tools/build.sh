@@ -41,14 +41,19 @@ for N in $FLOORS; do
   test -f "build/floor_${N}_scene.blend"
   echo "== floor $N: bake (samples=$SAMPLES size=$SIZE device=$DEVICE)"
   "$BLENDER" -b --factory-startup "build/floor_${N}_scene.blend" -P tools/blender/bake.py -- \
-    --samples "$SAMPLES" --size "$SIZE" --device "$DEVICE" --out "build/floor_${N}_lightmap.png" \
+    --samples "$SAMPLES" --size "$SIZE" --device "$DEVICE" --out "build/floor_${N}_lightmap.png" --out2 "build/floor_${N}_rooms_lightmap.png" \
     --blend_out "build/floor_${N}_baked.blend" --info "build/floor_${N}_bake_info.json" > "build/logs/floor_${N}_bake.log" 2>&1 || true
   grep -E '^\[n2|Error|Traceback' "build/logs/floor_${N}_bake.log" || true
   test "build/floor_${N}_lightmap.png" -nt "build/floor_${N}_scene.blend"
   python3 -c "from PIL import Image; Image.open('build/floor_${N}_lightmap.png').convert('RGB').save('build/floor_${N}_lightmap.webp', quality=92, method=6)"
+  # P3b: 部屋の組のライトマップ(入れる部屋の内装・バルコニー・屋上A)
+  if [ -f "build/floor_${N}_rooms_lightmap.png" ] && [ "build/floor_${N}_rooms_lightmap.png" -nt "build/floor_${N}_scene.blend" ]; then
+    python3 -c "from PIL import Image; Image.open('build/floor_${N}_rooms_lightmap.png').convert('RGB').save('build/floor_${N}_rooms_lightmap.webp', quality=80, method=6)"
+  fi
   echo "== floor $N: export"
   "$BLENDER" -b --factory-startup "build/floor_${N}_baked.blend" -P tools/blender/export.py -- --out "build/floor_${N}.glb" \
-    --manifest "build/floor_${N}_manifest.json" --info "build/floor_${N}_bake_info.json" --lightmap "build/floor_${N}_lightmap.webp" --images NONE \
+    --manifest "build/floor_${N}_manifest.json" --info "build/floor_${N}_bake_info.json" --lightmap "build/floor_${N}_lightmap.webp" \
+    --lightmap2 "build/floor_${N}_rooms_lightmap.webp" --images NONE \
     > "build/logs/floor_${N}_export.log" 2>&1 || true
   grep -E '^\[n2|Error|Traceback' "build/logs/floor_${N}_export.log" || true
   test "build/floor_${N}.glb" -nt "build/floor_${N}_lightmap.png"

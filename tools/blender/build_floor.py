@@ -20,6 +20,7 @@ sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 import p0b_ev  # noqa: E402
 import n2tex  # noqa: E402
+import build_rooms  # noqa: E402  (P3b: 入れる部屋の内装・バルコニー・屋上A・外の塊)
 
 ARGS = parse_args({'level': '4', 'out': ''})
 LEVEL = int(ARGS['level'])
@@ -186,6 +187,12 @@ def floor_wall_boxes(floor):
     for o in opens:
         horiz = o['facing'] in ('N', 'S')
         boxes.append(dict(cx=o['pos'][0], cz=o['pos'][1], w=o['width'] if horiz else T, d=T if horiz else o['width'], kind='perimDoor'))
+    # P3b: フィラー壁(4F の縦廊下の北端 = 屋上A との境)。walls.js fillWallBoxes と同じ
+    for (ax, az, bx, bz) in floor.get('fillWalls', []):
+        if abs(az - bz) < 1e-6:
+            boxes.append(dict(cx=(ax + bx) / 2, cz=az, w=abs(bx - ax), d=T, kind='wall'))
+        else:
+            boxes.append(dict(cx=ax, cz=(az + bz) / 2, w=T, d=abs(bz - az), kind='wall'))
     return boxes
 
 
@@ -502,6 +509,7 @@ def build_materials():
     pbr_material('M_Machine', base=(0.40, 0.41, 0.40), rough=0.6)
     # P3b-A: カゴの操作盤の階数表示(8列×3段のアトラス。実行時にカゴの現在地のマスへずらす)
     pbr_material('M_EVCarDisplay', rough=0.05, emit_tex=load_img(tex('ev_car_display.png'), False), emit_strength=2.5)
+    build_rooms.build_materials(sys.modules[__name__])   # P3b: MR_*(部屋の組のライトマップ)・MX_*(ライトマップなし)
     # p0b の材質の実行時テクスチャ(n2tex.save_png を差し替え済みなので画像は build/tex を指す)
     for n in ('M_WireGlass', 'M_WireGlassOut', 'M_EVDisplay', 'M_EVPlate', 'M_CarStone', 'M_ExitSignSq'):
         m = MATS[n]
@@ -551,7 +559,7 @@ def floor_doors():
         out.append(dict(room=room, id=room['id'], kind=room['kind'], pos=(px, pz), facing=dr['facing'], width=dw,
                         horiz=horiz, gap_min=gmin, gap_max=gmax, steel=bool(dr.get('steel')), glass=bool(dr.get('glass')),
                         auto=bool(dr.get('auto')), common=bool(dr.get('common')), unit=room['kind'] == 'unit',
-                        operable=room['id'] in ops, inside_visible=bool(inside)))
+                        operable=room['id'] in ops, inside_visible=bool(inside) or bool(dr.get('enterable'))))
     return out
 
 
@@ -1430,8 +1438,10 @@ def build_1f_extras(col):
         for (za, zb, ya, yb) in ((zc - hz - 0.035, zc - hz, wy0 - 0.035, wy1 + 0.035), (zc + hz, zc + hz + 0.035, wy0 - 0.035, wy1 + 0.035),
                                  (zc - hz, zc + hz, wy1, wy1 + 0.035), (zc - hz, zc + hz, wy0 - 0.035, wy0)):
             rw.box((xw - fd, ya, za), (xw, yb, zb), 'M_HairV' if (zb - za) < 0.1 else 'M_HairH', keep=lambda k, c, n: k != '+x')
-        q = rw.quad([(xw - 0.004, wy0, zc + hz), (xw - 0.004, wy0, zc - hz), (xw - 0.004, wy1, zc - hz), (xw - 0.004, wy1, zc + hz)], (-1, 0, 0), 'M_OfficeDark')
-        orient(q, (-1, 0, 0))
+        office = rooms.get('OFFICE')
+        if not (office and office['door'].get('enterable')):   # P3b: 管理室に入れる時は奥の闇の面を作らない(管理室の内装が見える)
+            q = rw.quad([(xw - 0.004, wy0, zc + hz), (xw - 0.004, wy0, zc - hz), (xw - 0.004, wy1, zc - hz), (xw - 0.004, wy1, zc + hz)], (-1, 0, 0), 'M_OfficeDark')
+            orient(q, (-1, 0, 0))
         for (za, zb) in ((zc - hz, zc + hz),):
             for yy in (wy0, wy1):   # 額縁の内側(見込み)
                 rw.quad([(xw - fd, yy, za), (xw, yy, za), (xw, yy, zb), (xw - fd, yy, zb)], (0, 1 if yy == wy0 else -1, 0), 'M_HairH')
@@ -1662,6 +1672,7 @@ def build():
     if BASEMENT:
         build_basement_stair(col)
     roof_light = build_roof(col) if ROOFB else None
+    rooms_meta = build_rooms.build_all(sys.modules[__name__], col)   # P3b
 
     world = bpy.data.worlds.new('N2_Night')
     world.use_nodes = True
@@ -1670,10 +1681,18 @@ def build():
     bg.inputs['Color'].default_value = (0.55, 0.65, 1.0, 1)     # 曇った夜空の弱い青(屋外の踊り場・屋上にだけ届く)
     bg.inputs['Strength'].default_value = sky
     scene.world = world
+    # P3b: 薄い月明かり(南西の上から)。部屋の組(2枚目のライトマップ)のベイクにだけ効かせる(bake.py が外殻のベイク中は消す)
+    md = bpy.data.lights.new('N2_Moon', 'SUN')
+    md.energy = float(ARGS.get('moon', 0.05)); md.color = (0.72, 0.8, 1.0); md.angle = math.radians(2.0)
+    mo = bpy.data.objects.new('N2_Moon', md)
+    mo.rotation_mode = 'QUATERNION'
+    mo.rotation_quaternion = Vector((0.45, 0.55, -0.7)).normalized().to_track_quat('-Z', 'Y')
+    mo['n2_moon'] = 1
+    col.objects.link(mo)
 
     meta = dict(level=LEVEL, baseY=BASE_Y, ceilH=CEIL_H, doors=door_info, lamps=lamps, walls=len(walls),
-                windows=windows, downlights=downs, brackets=brackets + ([roof_light] if roof_light else []), exits=exits,
-                evButtons=EV_BUTTONS, materials=MAT_TEX)
+                windows=windows, downlights=downs, brackets=brackets + ([roof_light] if roof_light else []) + rooms_meta['roomLights'], exits=exits,
+                evButtons=EV_BUTTONS, materials=MAT_TEX, rooms=rooms_meta['rooms'])
     if LEVEL == 1:
         ent = next((r for r in FLOOR['rooms'] if r['id'] == 'ENTRANCE'), None)
         if ent:
@@ -1689,32 +1708,48 @@ def build():
 NO_LIGHTMAP_KINDS = {'glass', 'glassedge', 'decal'}   # P3a-2: 透明ガラスはベイクしない(ライトマップの UV は 0 に潰す)
 
 
+def lm_group(o):
+    """ライトマップの組: 1 = 外殻(floor_N_lightmap)・2 = 部屋の組(P3b: floor_N_rooms_lightmap)・0 = 使わない。"""
+    if o.get('n2_kind') in NO_LIGHTMAP_KINDS:
+        return 0
+    g = o.get('n2_lm')
+    return 1 if g is None else int(g)
+
+
 def lightmap_uvs(col):
-    flat = [o for o in col.objects if o.type == 'MESH' and o.get('n2_kind') in NO_LIGHTMAP_KINDS]
+    flat = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only') and lm_group(o) == 0]
     for o in flat:
         uvl = o.data.uv_layers.new(name='Lightmap')
         uvl.data.foreach_set('uv', [0.0] * (2 * len(uvl.data)))
         o.data.uv_layers.active = o.data.uv_layers['UVMap']
-    meshes = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only') and o.get('n2_kind') not in NO_LIGHTMAP_KINDS]
-    for o in meshes:
-        uvl = o.data.uv_layers.new(name='Lightmap')
-        o.data.uv_layers.active = uvl
     vl = bpy.context.view_layer
-    vl.update()
-    for o in bpy.context.scene.objects:
-        o.select_set(False)
-    for o in meshes:
-        o.select_set(True)
-    vl.objects.active = meshes[0]
-    bpy.ops.object.mode_set(mode='EDIT')
-    bpy.ops.mesh.select_all(action='SELECT')
-    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
-    bpy.ops.uv.pack_islands(rotate=True, margin_method='FRACTION', margin=float(ARGS.get('uv_margin', 0.003)))
-    bpy.ops.object.mode_set(mode='OBJECT')
-    for o in meshes:
-        o.data.uv_layers.active = o.data.uv_layers['UVMap']
-        o.data.uv_layers['UVMap'].active_render = True
-    log(f'lightmap UV: {len(meshes)} meshes packed')
+    for grp in (1, 2):
+        meshes = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only') and lm_group(o) == grp]
+        if not meshes:
+            continue
+        for o in meshes:
+            uvl = o.data.uv_layers.new(name='Lightmap')
+            o.data.uv_layers.active = uvl
+        vl.update()
+        for o in bpy.context.scene.objects:
+            o.select_set(False)
+        for o in meshes:
+            o.select_set(True)
+        vl.objects.active = meshes[0]
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+        bpy.ops.uv.pack_islands(rotate=True, margin_method='FRACTION', margin=float(ARGS.get('uv_margin', 0.003)))
+        bpy.ops.object.mode_set(mode='OBJECT')
+        for o in meshes:
+            # 詰め込みの丸めで [0,1] をわずかにはみ出すことがある(P3b: 7F の呼びパネルで 1.002)→ 内側へ寄せる
+            lm = o.data.uv_layers['Lightmap'].data
+            buf = [0.0] * (2 * len(lm))
+            lm.foreach_get('uv', buf)
+            lm.foreach_set('uv', [min(0.9995, max(0.0005, v)) for v in buf])
+            o.data.uv_layers.active = o.data.uv_layers['UVMap']
+            o.data.uv_layers['UVMap'].active_render = True
+        log(f'lightmap UV group {grp}: {len(meshes)} meshes packed')
 
 
 if __name__ == '__main__':

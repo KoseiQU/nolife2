@@ -449,6 +449,10 @@ def room_plates():
 
 
 n = room_plates()
+# P3b: 居室の内装・バルコニーのテクスチャ(tools/room_textures.py)
+sys.path.insert(0, os.path.join(ROOT, 'tools'))
+import room_textures  # noqa: E402
+room_textures.run(save, n2tex, normal_from_height, OUT)
 tot = sum(m[2] for m in made)
 for name, size, b in made:
     print(f'  {name:28s} {size[0]}x{size[1]}  {b / 1024:7.1f} KB')

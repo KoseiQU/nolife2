@@ -10,7 +10,9 @@
 //   6) EV と外階段の全階接続: 各階に EV 扉2枚・カゴの行き先ボタン・外階段の鉄扉と段(上の階の踊り場の高さまで)。
 //      7F の段は屋上B の高さまで。1〜3F に北階段(P3a-2: 屋外の鉄骨。2F・3F に鉄扉、1F は地面)。
 //   7) P3a-2: 1F に地下への階段(段が B1 の床まで下りる・B1 の施錠扉)。B1 の当たりが閉じている
-//  最後に追加アセットの合計(GLB＋ライトマップ＋build/tex)を表示し、25MB を超えたら失敗。
+//   8) P3b: 入れる部屋(内装の壁の面が部屋の矩形の内側の面にある・家具・クローゼットの折戸/ロッカーの扉・掃き出し窓の障子)、
+//      バルコニー(床・手すり・隔て板)、4F の屋上A。2枚目のライトマップ(部屋の組)が存在し 2048px 以下
+//  最後に追加アセットの合計(GLB＋ライトマップ2種＋build/tex)を表示し、25MB を超えたら失敗。
 // 実行: node tools/check_glb.mjs [--floor 4] [--verbose]   失敗時は非0終了。
 
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
@@ -160,6 +162,64 @@ function checkFloor(N) {
   }
   const nodeNames = new Set(g.gltf.nodes.map((n) => n.name));
   for (const name of Object.keys(man.meshes)) if (!nodeNames.has(name)) fail(`F${N}: manifest のメッシュが GLB にない ${name}`);
+  // 8) P3b: 2枚目のライトマップ(部屋の組)
+  if (man.lightmap2) {
+    const lm2 = join(ROOT, 'build', man.lightmap2.file);
+    if (!existsSync(lm2)) fail(`F${N}: 部屋の組のライトマップがない ${man.lightmap2.file}`);
+    else {
+      const [w, h] = imageSize(readFileSync(lm2));
+      if (w > 2048 || h > 2048) fail(`F${N}: 部屋の組のライトマップが 2048px 超`);
+      R.lightmap2 = `${w}x${h} ${(statSync(lm2).size / 1e6).toFixed(2)}MB`;
+    }
+  } else fail(`F${N}: 部屋の組のライトマップ(lightmap2)が manifest に無い`);
+  // 8) P3b: 入れる部屋の内装とバルコニー(動かないメッシュは export.py が組×種類ごとに1つへまとめる: ノード名 J<組>_<種類>)
+  {
+    const enter = floor.rooms.filter((r) => r.door && r.door.enterable);
+    const kindNodes = (k) => g.gltf.nodes.map((n, i) => [n, i]).filter(([n]) => n.extras && n.extras.n2_kind === k && n.mesh !== undefined);
+    const kindTrisIn = (k, [x0, z0, w, d]) => kindNodes(k).some(([, i]) => nodeTris(g, world, i).some((t) => { const cx = (t.v[0][0] + t.v[1][0] + t.v[2][0]) / 3, cz = (t.v[0][2] + t.v[1][2] + t.v[2][2]) / 3; return cx > x0 && cx < x0 + w && cz > z0 && cz < z0 + d; }));
+    const need8 = [];
+    for (const r of enter) {
+      if (r.kind === 'unit') need8.push(`ClosetDoor_L_${r.id}`, `ClosetDoorIn_R_${r.id}`, `WinSash_${r.id}`);
+      if (r.id === 'OFFICE') need8.push('LockerDoor_OFFICE');
+    }
+    for (const nm of need8) if (!nodeNames.has(nm)) fail(`F${N}: ${nm} がない`);
+    for (const r of enter.concat(floor.rooms.filter((rr) => rr.id === 'DINING' || rr.id === 'THEATER'))) {
+      if (!kindTrisIn('furn', r.rect)) fail(`F${N}: ${r.id} に家具がない`);
+      if ((r.kind === 'unit' || r.id === 'OFFICE') && !kindTrisIn('roomwall', r.rect)) fail(`F${N}: ${r.id} に内装の壁がない`);
+      if (r.kind === 'unit' && !kindTrisIn('decor', r.rect)) fail(`F${N}: ${r.id} に小物がない`);
+    }
+    for (const r of floor.rooms.filter((rr) => rr.balcony)) {
+      const [bx, bz, bw, bd] = r.balcony.rect;
+      if (!kindTrisIn('balcony', [bx + 0.05, bz + 0.05, bw - 0.1, bd - 0.1])) { fail(`F${N}: ${r.id} のバルコニーの床がない`); break; }
+    }
+    if (floor.rooms.some((r) => r.balcony)) for (const k of ['balrail', 'partition', 'facade']) if (!kindNodes(k).length) fail(`F${N}: バルコニーの ${k} がない`);
+    if (N === 4) for (const k of ['roofA', 'parapet']) if (!kindNodes(k).length) fail(`F4: 屋上A の ${k} がない`);
+    // 内装の壁の面(n2_kind roomwall)は部屋の矩形の内側の面(線 ± 壁厚/2)にある(±2cm)・床から天井まで
+    let rmMax = 0, rmFaces = 0;
+    const walled = enter.filter((r) => r.kind === 'unit' || r.id === 'OFFICE');
+    for (const [, i] of kindNodes('roomwall')) {
+      for (const t of nodeTris(g, world, i)) {
+        const nr = triNormal(t.v);
+        let axis = null;
+        if (Math.abs(nr[0]) > 0.99) axis = 'x'; else if (Math.abs(nr[2]) > 0.99) axis = 'z'; else continue;
+        const ys = t.v.map((p) => p[1]);
+        if (Math.max(...ys) - Math.min(...ys) < 0.1) continue;   // 幅木の上面など
+        const cx = (t.v[0][0] + t.v[1][0] + t.v[2][0]) / 3, cz = (t.v[0][2] + t.v[1][2] + t.v[2][2]) / 3;
+        const r = walled.find((rr) => cx > rr.rect[0] - 0.2 && cx < rr.rect[0] + rr.rect[2] + 0.2 && cz > rr.rect[1] - 0.2 && cz < rr.rect[1] + rr.rect[3] + 0.2);
+        if (!r) continue;   // 管理室の受付の小窓の見込みなど(部屋の外側)
+        const [x, z, w, d] = r.rect, t2 = GEOM.WALL_T / 2;
+        const planes = { x: [x + t2, x + w - t2], z: [z + t2, z + d - t2] };
+        const pl = t.v[0][axis === 'x' ? 0 : 2];
+        const dev = Math.min(...planes[axis].map((q) => Math.abs(q - pl)));   // 幅木の前面(1.2cm 出る)も許容内
+        if (dev > 0.15) continue;   // 部屋の外の見込み
+        rmMax = Math.max(rmMax, dev); rmFaces++;
+        if (dev > 0.02) { fail(`F${N}: ${r.id} の内装の壁の面が部屋の矩形の内側の面からずれている(${axis}=${pl.toFixed(3)})`); break; }
+        if (Math.min(...ys) < base - 1e-3 || Math.max(...ys) > base + GEOM.CEIL_H + 1e-3) { fail(`F${N}: ${r.id} の内装の壁が床〜天井の外`); break; }
+      }
+    }
+    R.roomWallFaces = rmFaces; R.roomWallMaxCm = +(rmMax * 100).toFixed(2);
+    R.rooms = enter.length;
+  }
 
   // 3a) 壁の面 → 衝突箱
   const boxes = collisionBoxes(floor, N).filter((b) => b.kind === 'wall' || b.kind === 'solid');
@@ -357,7 +417,7 @@ for (let N = 1; N <= 7; N++) {
   if (r) rows.push(r);
 }
 for (const r of rows) {
-  console.log(`F${r.floor}: GLB ${r.glbMB}MB tris ${r.tris} prims ${r.prims} | lightmap ${r.lightmap} | wall faces ${r.wallFaces} max ${r.faceVsBoxMaxCm}cm | edge probes ${r.edgeProbes} (no-face ${r.invisibleWallProbes}) | flood ${r.flood.reached}${r.floodRoofB ? ' RB ' + r.floodRoofB.reached : ''} | unit doors ${r.unitDoors} plates ${r.plates} leafOverflow ${r.doorLeafOverflowCm}cm | ext stair y ${JSON.stringify(r.extStairY)}`);
+  console.log(`F${r.floor}: GLB ${r.glbMB}MB tris ${r.tris} prims ${r.prims} | lightmap ${r.lightmap} + rooms ${r.lightmap2} (${r.rooms} rooms, wall faces ${r.roomWallFaces} max ${r.roomWallMaxCm}cm) | wall faces ${r.wallFaces} max ${r.faceVsBoxMaxCm}cm | edge probes ${r.edgeProbes} (no-face ${r.invisibleWallProbes}) | flood ${r.flood.reached}${r.floodRoofB ? ' RB ' + r.floodRoofB.reached : ''} | unit doors ${r.unitDoors} plates ${r.plates} leafOverflow ${r.doorLeafOverflowCm}cm | ext stair y ${JSON.stringify(r.extStairY)}`);
 }
 
 // ---------------------------------------------------------------- 容量
@@ -367,6 +427,7 @@ const add = (k, p) => { if (existsSync(p)) { const s = statSync(p).size; total +
 for (let N = 1; N <= 7; N++) {
   add('glb', join(ROOT, 'build', `floor_${N}.glb`));
   add('lightmap', join(ROOT, 'build', `floor_${N}_lightmap.webp`));
+  add('roomsLightmap', join(ROOT, 'build', `floor_${N}_rooms_lightmap.webp`));
   add('manifest', join(ROOT, 'build', `floor_${N}_manifest.json`));
 }
 for (const f of readdirSync(join(ROOT, 'build', 'tex'))) add('textures', join(ROOT, 'build', 'tex', f));

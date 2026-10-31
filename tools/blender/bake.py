@@ -18,7 +18,16 @@ sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
 ARGS = parse_args({'size': '2048', 'samples': '1024', 'device': 'GPU',
-                   'out': 'build/p0_lightmap.png', 'blend_out': 'build/p0_baked.blend', 'info': 'build/p0_bake_info.json'})
+                   'out': 'build/p0_lightmap.png', 'blend_out': 'build/p0_baked.blend', 'info': 'build/p0_bake_info.json', 'out2': ''})
+# P3b: 部屋の組(n2_lm=2: 入れる部屋の内装・バルコニー・屋上A)は2枚目のライトマップ(--out2)に焼く。n2_lm=0 は焼かない(遮蔽にはなる)
+CLEAR_KINDS = ('glass', 'glassedge', 'decal', 'winsash', 'winout', 'secmon', 'bars')
+
+
+def lm_group(o):
+    if o.get('n2_kind') in ('glass', 'glassedge', 'decal'):
+        return 0
+    g = o.get('n2_lm')
+    return 1 if g is None else int(g)
 SIZE = int(ARGS['size'])
 SAMPLES = int(ARGS['samples'])
 IMG_NAME = 'P0_Lightmap'
@@ -51,6 +60,8 @@ def prepare(scene):
     meshes = [o for o in scene.objects if o.type == 'MESH']
     img = bpy.data.images.get(IMG_NAME) or bpy.data.images.new(IMG_NAME, SIZE, SIZE, alpha=False, float_buffer=True)
     img.colorspace_settings.name = 'Non-Color'
+    img2 = bpy.data.images.new(IMG_NAME + '_rooms', SIZE, SIZE, alpha=False, float_buffer=True)
+    img2.colorspace_settings.name = 'Non-Color'
     saved_normal = {}
     mats = {m for o in meshes for m in o.data.materials if m}
     for m in mats:
@@ -72,30 +83,46 @@ def prepare(scene):
     #   第2UV(Lightmap)は全メッシュ共通のアトラスなので、代理に焼いても結果は同じ画像になる。
     # P3a: ベイク専用の遮蔽(n2_bake_only)は焼き込み先にしない(影だけ落とす)
     # P3a-2: 透明ガラス(とその小口・シール)は焼き込み先にせず、光も遮らない(ベイク中は render から隠す)
-    clear = [o for o in meshes if o.get('n2_kind') in ('glass', 'glassedge', 'decal')]
-    src = [o for o in meshes if o.get('n2_kind') != 'lampcover' and not o.get('n2_bake_only') and o not in clear]
-    for o in scene.objects:
-        o.select_set(False)
-    copies = []
-    for o in src:
-        c = o.copy(); c.data = o.data.copy(); c.name = 'N2_BakeProxy_' + o.name
-        scene.collection.objects.link(c)
-        copies.append(c)
-    with bpy.context.temp_override(active_object=copies[0], object=copies[0],
-                                   selected_objects=copies, selected_editable_objects=copies):
-        bpy.ops.object.join()
-    proxy = copies[0]
-    proxy.name = 'N2_BakeProxy'
+    clear = [o for o in meshes if o.get('n2_kind') in CLEAR_KINDS]
+    src_all = [o for o in meshes if o.get('n2_kind') != 'lampcover' and not o.get('n2_bake_only') and o not in clear]
+    proxies = []
+    for grp in (1, 2):
+        src = [o for o in src_all if lm_group(o) == grp]
+        if not src:
+            proxies.append(None); continue
+        for o in scene.objects:
+            o.select_set(False)
+        copies = []
+        for o in src:
+            c = o.copy(); c.data = o.data.copy(); c.name = f'N2_BakeProxy{grp}_' + o.name
+            c.parent = None
+            c.matrix_world = o.matrix_world.copy()
+            scene.collection.objects.link(c)
+            copies.append(c)
+        with bpy.context.temp_override(active_object=copies[0], object=copies[0],
+                                       selected_objects=copies, selected_editable_objects=copies):
+            bpy.ops.object.join()
+        proxy = copies[0]
+        proxy.name = f'N2_BakeProxy{grp}'
+        proxy.data.uv_layers.active = proxy.data.uv_layers['Lightmap']
+        proxies.append(proxy)
     hidden = []
-    for o in src + clear:
+    for o in [o for o in src_all if lm_group(o) in (1, 2)] + clear:
         hidden.append((o, o.hide_render)); o.hide_render = True
-    proxy.data.uv_layers.active = proxy.data.uv_layers['Lightmap']
-    for o in scene.objects:
+    meshes = (proxies, hidden)
+    return (img, img2), meshes, mats, saved_normal
+
+
+def select_proxy(proxies, grp, mats, img):
+    for o in bpy.context.scene.objects:
         o.select_set(False)
-    proxy.select_set(True)
-    bpy.context.view_layer.objects.active = proxy
-    meshes = (proxy, hidden)
-    return img, meshes, mats, saved_normal
+    p = proxies[grp - 1]
+    p.select_set(True)
+    bpy.context.view_layer.objects.active = p
+    for m in mats:
+        n = m.node_tree.nodes.get('N2_BakeTarget')
+        if n:
+            n.image = img
 
 
 def cleanup(mats, saved_normal, proxy_hidden):
@@ -107,10 +134,13 @@ def cleanup(mats, saved_normal, proxy_hidden):
         nm = nt.nodes.get('N2_NormalMap')
         if nm and m.name in saved_normal:
             nm.inputs['Strength'].default_value = saved_normal[m.name]
-    proxy, hidden = proxy_hidden
-    me = proxy.data
-    bpy.data.objects.remove(proxy, do_unlink=True)
-    bpy.data.meshes.remove(me)
+    proxies, hidden = proxy_hidden
+    for proxy in proxies:
+        if proxy is None:
+            continue
+        me = proxy.data
+        bpy.data.objects.remove(proxy, do_unlink=True)
+        bpy.data.meshes.remove(me)
     for o, h in hidden:
         o.hide_render = h
 
@@ -196,18 +226,39 @@ def srgb_encode(x):
 def main():
     scene = bpy.context.scene
     dev = setup_device(scene, ARGS['device'])
-    img, meshes, mats, saved_normal = prepare(scene)
-    log(f'baking proxy ({len(meshes[1])} meshes joined) -> {SIZE}px, {SAMPLES} spp')
-    try:
-        secs = do_bake(scene)
-    except Exception as e:  # noqa: BLE001
-        if dev == 'CPU':
-            raise
-        log(f'GPU ベイク失敗 → CPU で再試行: {e}')
-        dev = setup_device(scene, 'CPU')
-        secs = do_bake(scene)
-    log(f'bake done in {secs:.1f}s on {dev}')
+    imgs, meshes, mats, saved_normal = prepare(scene)
+    proxies = meshes[0]
+    log(f'baking proxies ({len(meshes[1])} meshes joined) -> {SIZE}px, {SAMPLES} spp')
+    infos = []
+    for grp, img, out in ((1, imgs[0], ARGS['out']), (2, imgs[1], ARGS['out2'])):
+        if proxies[grp - 1] is None or not out:
+            if grp == 2 and proxies[1] is not None:
+                log('部屋の組があるのに --out2 がない(2枚目を焼かない)')
+            continue
+        select_proxy(proxies, grp, mats, img)
+        for o in scene.objects:   # P3b: 月明かりは部屋の組だけ(外殻は P3a で合格した見え方のまま)
+            if o.get('n2_moon'):
+                o.hide_render = (grp == 1)
+        try:
+            secs = do_bake(scene)
+        except Exception as e:  # noqa: BLE001
+            if dev == 'CPU':
+                raise
+            log(f'GPU ベイク失敗 → CPU で再試行: {e}')
+            dev = setup_device(scene, 'CPU')
+            secs = do_bake(scene)
+        log(f'bake group {grp} done in {secs:.1f}s on {dev}')
+        infos.append(save_lightmap(img, out, secs, dev))
+    info = infos[0]
+    if len(infos) > 1:
+        info['rooms'] = infos[1]
+    with open(os.path.join(ROOT, ARGS['info']), 'w') as f:
+        json.dump(info, f, indent=2)
+    cleanup(mats, saved_normal, meshes)
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, ARGS['blend_out']), compress=True)
 
+
+def save_lightmap(img, out_rel, secs, dev):
     raw = np.empty(SIZE * SIZE * 4, np.float32)
     img.pixels.foreach_get(raw)
     raw = raw.reshape(SIZE, SIZE, 4)
@@ -228,7 +279,7 @@ def main():
     out = bpy.data.images.new('P0_Lightmap_PNG', SIZE, SIZE, alpha=False, float_buffer=False)
     out.colorspace_settings.name = 'Non-Color'
     out.pixels.foreach_set(rgba.ravel())
-    png = os.path.join(ROOT, ARGS['out'])
+    png = os.path.join(ROOT, out_rel)
     out.filepath_raw = png
     out.file_format = 'PNG'
     out.save()
@@ -237,12 +288,9 @@ def main():
                 lightMapIntensity=float(np.pi * scale),
                 lum=dict(p50=p50, p99=p99, p999=p999, max=mx),
                 coverage=float((lum > 1e-6).mean()))
-    with open(os.path.join(ROOT, ARGS['info']), 'w') as f:
-        json.dump(info, f, indent=2)
     log(f'saved {png}  scale={scale:.5f} p50={p50:.5f} p99={p99:.5f} max={mx:.4f} denoised={info["denoised"]}')
-
-    cleanup(mats, saved_normal, meshes)
-    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(ROOT, ARGS['blend_out']), compress=True)
+    bpy.data.images.remove(out)
+    return info
 
 
 if __name__ == '__main__':
