@@ -147,8 +147,8 @@ export class World {
       this._prepare(gltf.scene, man, rec);
       rec.group = gltf.scene;
       rec.group.name = 'Floor_' + level;
-      rec.group.visible = this.visible.has(level);
-      this.scene.add(rec.group);
+      // 見せない階は scene から外しておく(描画リスト・影・GTAO の走査に入れない)。setVisible で出し入れする
+      if (this.visible.has(level)) this.scene.add(rec.group);
       rec.state = 'ready';
       this._bind(level, rec);
       if (this.onFloorReady) this.onFloorReady(level, rec);
@@ -185,8 +185,17 @@ export class World {
   }
 
   setVisible(levels) {
-    this.visible = new Set(levels);
-    for (const [l, rec] of this.floors) if (rec.group) rec.group.visible = this.visible.has(l);
+    const next = new Set(levels);
+    let same = next.size === this.visible.size;
+    if (same) for (const l of next) if (!this.visible.has(l)) { same = false; break; }
+    if (same) return;   // 毎フレーム呼ばれるので、変わった時だけ出し入れする
+    this.visible = next;
+    for (const [l, rec] of this.floors) {
+      if (!rec.group) continue;
+      const want = this.visible.has(l);
+      if (want && rec.group.parent !== this.scene) this.scene.add(rec.group);
+      else if (!want && rec.group.parent) rec.group.removeFromParent();
+    }
   }
 
   loadedLevels() { return [...this.floors.entries()].filter(([, r]) => r.state === 'ready').map(([l]) => l).sort(); }

@@ -49,7 +49,7 @@ export async function run(N) {
     N.pump(DT, 3, true);
     const d410 = N.doorApi.get('410');
     const scopeOk = !!(N.doorScope && N.doorScope.parent === d410.node);
-    const vis = N.world.loadedLevels().map((l) => [l, N.world.floors.get(l).group.visible]);
+    const vis = N.world.loadedLevels().map((l) => [l, N.world.floors.get(l).group.parent === N.scene]);
     return { pass: s0 && s1 && s2 && s3 && !!d410.node && scopeOk && vis.find(([l]) => l === 4)[1] && !vis.find(([l]) => l === 5)[1], log, geometries: { at4F: geo0, at7F: geo7 }, door410Bound: !!d410.node, scopeReattached: scopeOk, visible: vis };
   });
 
@@ -109,6 +109,25 @@ export async function run(N) {
     // 7F の廊下にいる(壁抜けしていない)
     const pass = blockedZ < 22.1 && hint.includes('呼ぶ') && inCar && btnHint.includes('7') && at7 && out7 && Math.abs(rodeY0 - 3 * 2.9) < 1e-3;
     return { pass, blockedZ: +blockedZ.toFixed(2), hallHint: hint, buttonHint: btnHint, steps };
+  });
+
+  await T('3b_ev_button_5', async () => {
+    // 4F でカゴに乗り、視線の先の「5」のボタンで E → 5F に着く(ボタンの見た目の位置と判定の対応)
+    await N.teleport(4, 7.1, 21.6, Math.PI); await settle('3,4,5');
+    const ev = N.elevator;
+    ev.call(4);
+    let t = 0;
+    while (!(ev.car.level === 4 && ev.car.state === 'open') && t < 30) { N.pump(DT, 1, false); t += DT; }
+    key('KeyW', true); N.pump(DT, 75, false); key('KeyW', false); N.pump(DT, 2, false);
+    const b5 = N.manifests[4].evButtons.find((b) => b.floor === 5);
+    N.setView(N.player.pos.x, N.player.pos.z, 0, 0);
+    const c = N.camera.position, dx = b5.pos[0] - c.x, dy = b5.pos[1] - c.y, dz = b5.pos[2] - c.z;
+    N.setView(N.player.pos.x, N.player.pos.z, Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz))); N.pump(DT, 2, false);
+    const hint = N.hudState().hint;
+    tap('KeyE');
+    t = 0;
+    for (let i = 0; !(ev.car.level === 5 && ev.car.state === 'open') && t < 30; i++) { N.pump(DT, 1, false); t += DT; if (i % 30 === 0) await sleep(5); }
+    return { pass: hint.includes('5階') && N.level === 5 && ev.car.level === 5, hint, level: N.level, sec: +t.toFixed(1) };
   });
 
   // 外階段の口に立って段の方を向き W(上り下りが終わるまで)

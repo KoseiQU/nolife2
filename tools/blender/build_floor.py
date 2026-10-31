@@ -785,18 +785,18 @@ def build_car_panel(dd):
     pd0, pd1, py0, py1 = d0 + 0.08, d0 + 0.28, 0.86, 1.56
     mb = MeshBuilder(f'EVCarPanel_{dd["id"]}')
     f = L.quad_side(mb, u, py0, py1, pd0, pd1, +1, 'M_CarPanel')
-    # 見る人(左壁を向く)の右 = 扉側(-d)。テクスチャの u は扉側へ増える
+    # 見る人(左袖の壁を向く)の右 = 奥(+d)。テクスチャの u は奥へ増える(P3a 監査: 扉側へ増やしていて数字が鏡文字だった)
     uvs = []
     for loop in f.loops:
         co = loop.vert.co   # Blender 座標(x, -z, y)
         gx, gy, gz = co.x, co.z, -co.y
         dd_ = (gx - L.px) * L.fx + (gz - L.pz) * L.fz
         yy = gy - BASE_Y
-        uvs.append(((pd1 - dd_) / (pd1 - pd0), (yy - py0) / (py1 - py0)))
+        uvs.append(((dd_ - pd0) / (pd1 - pd0), (yy - py0) / (py1 - py0)))
     set_uv(f, mb, uvs)
     mb.finish(bpy.data.collections['P3a'], {'n2_kind': 'evcarpanel', 'n2_room': dd['id']})
     for k, (tu, tv) in CAR_PANEL['buttons'].items():
-        d_ = pd1 - tu * (pd1 - pd0)
+        d_ = pd0 + tu * (pd1 - pd0)
         y_ = py1 - tv * (py1 - py0)
         EV_BUTTONS.append(dict(floor=int(k), pos=[round(v, 4) for v in L.w(u + 0.005, y_, d_)]))
 
