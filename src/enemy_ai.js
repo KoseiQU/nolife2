@@ -9,6 +9,10 @@
 //  P2c: LURK(潜伏)を追加。隠れ場所に立ち止まり消灯して待つ。近づく(≤4m)/同じ部屋に入る/懐中電灯を向けると、
 //  grin で無言のまま walk_brutal で近づき ATTACK。時間配分 潜伏 60〜120 秒 : 巡回 20〜40 秒(DESIGN §3.4.1)。
 //  懐中電灯は PATROL/ALERT/CHASE で点灯、LURK で消灯(§3.2.1)。
+//  P2d: 「部屋を知っている」(knownRoomId)。①入室の瞬間(扉通過から 1.5 秒)を視錐＋遮蔽なしで目撃 ②室内の懐中電灯の光漏れ
+//  (廊下側で扉から 6m、開いていれば 10m)③室内の物音を聞いた、のどれかで立つ。知らなければ、室内で消灯して潜む限り
+//  扉の前で止まってもノブを鳴らして去る。知っていてプレイヤーがスコープを覗いていれば SCOPE 演出(通り過ぎ→消える→
+//  約 2 秒の静寂→戻ってスコープを覗き込む→鍵→扉を開けて襲う)。
 
 import * as THREE from 'three';
 import { segmentHitT } from './enemy.js';
@@ -64,6 +68,18 @@ export const HIDE_SPOTS = [
   { id: 'ev_blind', area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] },          // EV ホール東の死角
 ];
 
+const ROOM_POINT = { x: 8.7, z: 7.4 };   // 「その部屋にいる」と知った時に向かう点(410 室内)
+const DOOR410 = { x: 7.8, z: 7.25 };
+export const SCOPE = {
+  passSpeed: 0.62,         // 気づかないふりで通り過ぎる速さ(巡回と同じ)
+  hide: 2.0,               // 視界から消えて静まる時間
+  returnSpeed: 1.7,        // いきなり戻ってくる
+  stareX: 7.36,            // 覗き込む立ち位置(扉面 7.74 − 半径)
+  headGap: 0.30,           // 頭(骨)をレンズの手前この距離へ(顔の前面はさらに約 8cm 前=レンズの約 20cm 手前。近すぎると近クリップで唇を突き抜ける)
+  stare: 1.6,              // 覗き込んでいる時間(grin 1.0 → 0.5 秒で attack)
+  keys: 1.1, lock: 0.5,
+};
+
 const NODES = {
   N0: [6.9, 6.3], C1: [6.9, 7.38], C2: [6.9, 10.15], C3: [6.9, 13.05], C4: [6.9, 15.95], C5: [6.9, 18.85],
   J: [6.9, 21.2], JE: [8.2, 21.2], EV: [6.95, 21.75], R: [8.75, 7.38],
@@ -91,6 +107,9 @@ export class EnemyAI {
     this.perception = true;
     this.patrolIdx = 0;
     this._rand = mulberry(1234);
+    this.knownRoomId = null;     // P2d: プレイヤーがいると知っている部屋
+    this._playerArea = 'C';
+    this._enterWatch = 0;
     this.selfBox = { minX: 0, maxX: 0, minZ: 0, maxZ: 0, y0: -1e9, y1: 1e9, kind: 'enemy', roomId: null, disabled: false };
     this.collisions.push(this.selfBox);
     this.enemy.onFootstep = (foot, pos) => {
@@ -120,8 +139,10 @@ export class EnemyAI {
     // 懐中電灯: 探している時だけ点ける(§3.2.1)。潜伏中は消して闇に溶ける
     // (ATTACK は直前の状態のまま: 潜伏からの襲撃は消灯のまま、追跡からなら点灯のまま)
     if (s !== 'SCRIPTED' && s !== 'ATTACK') this.enemy.setFlashlight(s !== 'LURK');
+    if (s !== 'SCOPE') { this.enemy.lean = 0; if (s !== 'ATTACK') this.enemy.faceFill = 0; }
     const gen = {
       LURK: () => this._lurk(opts),
+      SCOPE: () => this._scope(),
       PATROL: () => this._patrol(),
       ALERT: () => this._alert(opts),
       CHASE: () => this._chase(),
@@ -146,6 +167,12 @@ export class EnemyAI {
     this._noise = null;
     this._rayTimer = 0;
     this._prevPlayer.copy(this.player.pos);
+    this.knownRoomId = null;
+    this.lurkFound = null;
+    this._enterWatch = 0;
+    this._playerArea = this._area(this.player.pos.x, this.player.pos.z);
+    this.enemy.lean = 0;
+    this.enemy.faceFill = 0;
     this.setState('PATROL', { force: true, log: true });
   }
 
@@ -156,6 +183,13 @@ export class EnemyAI {
     this.time += dt;
     this.stateTime += dt;
     this._trackPlayer(dt);
+    this._updateRoomKnowledge(dt);
+    // 知られている部屋でスコープを覗いている → 覗き返しの演出へ
+    if (this.knownRoomId === '410' && this._playerArea === 'R' && this.isPeeking && this.isPeeking()
+      && !['SCOPE', 'ATTACK', 'DEAD', 'SCRIPTED'].includes(this.state) && !this.uninterruptible
+      && this._area(this.enemy.pos.x, this.enemy.pos.z) === 'C' && !this.doors.isOpen('410') && !(this.state === 'LURK' && this.lurkFound)) {
+      this.setState('SCOPE');
+    }
     if (this.perception && this.state !== 'SCRIPTED' && this.state !== 'DEAD') this._perceive(dt);
     else this._updateOcclusionOnly(dt);
     if (this.pending && !this.uninterruptible) { const [s, o] = this.pending; this.pending = null; this.setState(s, o); }
@@ -225,7 +259,52 @@ export class EnemyAI {
       this._heardAt = null;
       this.lastKnown = { x: at.x, z: at.z };
       this.lastHeardTime = this.time;
+      if (this._playerArea === 'R' && this.knownRoomId !== '410') this._learnRoom('heard');
       if (this.state === 'PATROL' && !this.pending) { this.log('heard', { dist: +dist.toFixed(2) }); this.setState('ALERT', { react: true }); }
+    }
+  }
+
+  // ------------------------------------------------------------ 「部屋を知っている」(P2d)
+  _updateRoomKnowledge(dt) {
+    const p = this.player.pos;
+    const area = this._area(p.x, p.z);
+    if (this._playerArea === 'C' && area === 'R') this._enterWatch = 1.5;   // 扉を通過した瞬間から 1.5 秒が「入るところ」
+    this._playerArea = area;
+    if (area !== 'R') {
+      if (this.knownRoomId) this.log('room_forgot');
+      this.knownRoomId = null; this._enterWatch = 0;
+      return;
+    }
+    if (this.knownRoomId === '410' || this.state === 'DEAD' || this.state === 'SCRIPTED') return;
+    const e = this.enemy.pos;
+    let why = null;
+    if (this._enterWatch > 0) {
+      this._enterWatch -= dt;
+      if (this._seesPoint(p, 15)) why = 'witness';
+    }
+    if (!why && this.player.flashlightOn && this._area(e.x, e.z) === 'C') {
+      const d = Math.hypot(e.x - DOOR410.x, e.z - DOOR410.z);
+      if (d <= (this.doors.isOpen('410') ? 10 : 6)) why = 'light';
+    }
+    if (why) this._learnRoom(why);
+  }
+
+  // 視錐(半頂角 45°)＋遮蔽なし＋距離。暗さによる視認距離は問わない(人が扉を出入りする動きは見える)
+  _seesPoint(p, range) {
+    const e = this.enemy;
+    const dist = Math.hypot(p.x - e.pos.x, p.z - e.pos.z);
+    if (dist > range) return false;
+    if (Math.abs(wrap(Math.atan2(p.x - e.pos.x, p.z - e.pos.z) - e.yaw)) > AI.vision.halfAngle) return false;
+    return !this._blocked(p);
+  }
+
+  _learnRoom(why) {
+    this.knownRoomId = '410';
+    this.log('room_known', { why });
+    // 探しに行く(追跡中・潜伏からの接近中・演出中はそのまま)
+    if ((this.state === 'PATROL' || this.state === 'ALERT' || (this.state === 'LURK' && !this.lurkFound)) && !this.uninterruptible) {
+      this.lastKnown = { ...ROOM_POINT };
+      this.setState('ALERT', { react: false });
     }
   }
 
@@ -407,7 +486,8 @@ export class EnemyAI {
       const wp = route[0];
       // 扉をまたぐ区間: 廊下→室内は鍵で開けて入る。室内→廊下で閉まっていれば内側から開ける
       const here = this._area(e.pos.x, e.pos.z);
-      if (wp.node === 'R' && here === 'C' && !this.doors.isOpen('410')) {
+      // (経路を引いた時は開いていた扉が後から閉まった場合も、室内の点へ向かうなら扉をまたぐ扱い)
+      if ((wp.node === 'R' || this._area(wp.x, wp.z) === 'R') && here === 'C' && !this.doors.isOpen('410')) {
         const r = yield* this._doorEntry(this.doors.get('410'), useKey);
         if (r !== 'entered') return r;
         route.shift();
@@ -449,6 +529,16 @@ export class EnemyAI {
     this.uninterruptible = true;
     this.enemy.aimPoint = new THREE.Vector3(door.collision ? (door.collision.minX + door.collision.maxX) / 2 : f.x, this.floorY + 1.0, f.z);
     yield* this._turnTo(f.yaw);
+    // P2d: 中にいると知らなければ(目撃も光漏れも物音もない)、閉じた扉は開けない。ノブを確かめて去る
+    if (door.roomId === '410' && this._area(this.player.pos.x, this.player.pos.z) === 'R' && this.knownRoomId !== '410' && !this.doors.isOpen('410')) {
+      door.rattle = 0.25;
+      if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.8);
+      this.log('door_skip_unknown', { room: door.roomId });
+      yield* this._wait(1.2);
+      this.uninterruptible = false;
+      this.enemy.aimPoint = null;
+      return 'locked';
+    }
     if (door.locked) {
       if (!useKey) {
         door.rattle = 0.25;
@@ -730,6 +820,95 @@ export class EnemyAI {
     }
   }
 
+  // ------------------------------------------------------------ SCOPE(覗き返し、P2d)
+  *_scope() {
+    const e = this.enemy, S = SCOPE;
+    const lensZ = DOOR410.z;
+    this.uninterruptible = true;
+    this.log('scope_start');
+    e.setFace('grin', 0); e.setFace('attack', 0); e.aimPoint = null; e.setFlashlight(true);
+    const fromSouth = e.pos.z >= lensZ;
+    const start = fromSouth ? { x: 6.9, z: 9.6 } : { x: 6.9, z: 6.3 };
+    const passEnd = fromSouth ? { x: 6.9, z: 6.5 } : { x: 6.9, z: 8.2 };
+    const pocket = fromSouth ? { x: 7.42, z: 6.2 } : { x: 7.42, z: 8.32 };   // 扉脇の壁際=スコープの視野(±55°)の外
+    // 1) 通り過ぎる起点へ(扉より手前の側。扉に近ければいったん下がる)
+    yield* this._goTo(start.x, start.z, 'PATROL', { arrive: 0.25 });
+    // 2) 気づかないふりで扉の前を横切る(足音あり)
+    let passed = false;
+    for (let t = 0; t < 20; t += this.dt) {
+      if (!passed && (fromSouth ? e.pos.z < lensZ : e.pos.z > lensZ)) { passed = true; this.log('scope_pass'); }
+      if (this._stepToward(passEnd.x, passEnd.z, S.passSpeed, 'walk_oldman', 2.0, 0.12)) break;
+      yield;
+    }
+    // 3) 壁際へ寄って視界から消える → 消灯して静まる
+    for (let t = 0; t < 6; t += this.dt) { if (this._stepToward(pocket.x, pocket.z, 0.6, 'walk_standard', 3.0, 0.06)) break; yield; }
+    e.setFlashlight(false);
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.4, timeScale: 0.2 });
+    this.log('scope_hide');
+    yield* this._wait(S.hide);
+    // 4) いきなり戻ってくる(扉の正面へ素早く)。戻る時にはもう満面の笑み
+    this.log('scope_return');
+    e.setFace('grin', 1.0, true);
+    for (let t = 0; t < 3; t += this.dt) {
+      if (this._stepToward(S.stareX, lensZ, S.returnSpeed, 'walk_hurried', 12.0, 0.05)) break;
+      yield;
+    }
+    e.yaw = Math.PI / 2;   // 扉(+x)へ正対
+    // 5) 覗き込む: 上体を倒して頭をレンズの手前へ。顔は下から懐中電灯の照り返しで浮かぶ
+    e.play('look_nervous', { fade: 0.15, timeScale: 0.0 });
+    e.actions.look_nervous.time = 5.4;   // 頭がほぼ正面を向く瞬間
+    e.setFlashlight(true);
+    const L = this.getLens ? this.getLens() : { x: 7.785, z: lensZ };
+    const lensY = this.floorY + (this.lensEyeY || 1.48);
+    e.aimPoint = new THREE.Vector3(L.x, this.floorY + 0.7, L.z);
+    e.faceFill = 0.5;
+    e.faceRate.grin = 6; e.faceRate.attack = 4;
+    let stareT = 0, logged = false;
+    this.scopeFaceDist = Infinity;
+    const head = new THREE.Vector3();
+    while (stareT < S.stare) {
+      e.headWorld(head);
+      // 頭の高さ・前後を目標へ寄せる(上体の倒し=lean、立ち位置=root.x)
+      // 頭(骨)の高さを上体の倒し(lean)で、前後を立ち位置で合わせる。首で起こすので顔は正面のまま、
+      // レンズ(床から 1.48m)の真正面に顔が来る(大柄な管理人が背を丸めて覗き込む)
+      const tx = L.x - S.headGap, ty = lensY + 0.04;
+      e.lean = THREE.MathUtils.clamp(e.lean + (head.y - ty) * 14.0 * this.dt, 0, 0.8);
+      e.pos.x = THREE.MathUtils.clamp(e.pos.x + THREE.MathUtils.clamp((tx - head.x) * 0.8, -0.04, 0.04), 6.9, S.stareX + 0.06);
+      e.pos.z += (L.z - e.pos.z) * 0.2;
+      const face = head.clone().add(new THREE.Vector3(0.08, 0.07, 0));   // 顔の前面(扉側 +x)
+      this.scopeFaceDist = Math.hypot(face.x - L.x, face.y - lensY, face.z - L.z);
+      if (this.scopeFaceDist <= 0.3) {
+        if (!logged) { logged = true; this.log('scope_stare', { dist: +this.scopeFaceDist.toFixed(3) }); }
+        stareT += this.dt;
+        if (stareT >= 0.5) { e.setFace('attack', 1.0); e.setFace('grin', 0.6); }
+      } else if (stareT === 0) {
+        this._stareWait = (this._stareWait || 0) + this.dt;
+        if (this._stareWait > 1.5) { stareT = 1e-3; }   // 届かなくても演出は進める
+      }
+      yield;
+    }
+    this._stareWait = 0;
+    // 6) 鍵束→錠→扉を開けて入る(覗き穴視点はここで閉じる。プレイヤーは室内から扉が開くのを見る)
+    if (this.audio) this.audio.play('keys', doorPos(this.doors.get('410'), this.floorY));
+    this.log('keys', { room: '410' });
+    yield* this._wait(S.keys);
+    if (this.audio) this.audio.play('lock', doorPos(this.doors.get('410'), this.floorY));
+    this.log('unlock', { room: '410' });
+    this.doors.setLocked('410', false);
+    if (this.onScopeOpen) this.onScopeOpen();
+    yield* this._wait(S.lock);
+    e.lean = 0; e.faceFill = 0; e.faceRate.grin = 0.8; e.faceRate.attack = 3.0;
+    e.setFace('attack', 0); e.setFace('grin', 0.8);
+    this.doors.open('410', 3.0);
+    this.log('door_opened', { room: '410' });
+    yield* this._wait(0.35);
+    this.uninterruptible = false;
+    this.lastKnown = { x: this.player.pos.x, z: this.player.pos.z };
+    this.setState('CHASE');
+    yield;
+  }
+
   // ------------------------------------------------------------ SCRIPTED(デバッグ)
   *_scripted(opts) {
     if (opts.goto) {
@@ -746,6 +925,7 @@ export class EnemyAI {
       face: { grin: +e.face.grin.toFixed(2), attack: +e.face.attack.toFixed(2) },
       canSee: this.canSee, heard: this.heard, occluded: this.occluded, lastKnown: this.lastKnown,
       uninterruptible: this.uninterruptible,
+      knownRoomId: this.knownRoomId, scopeFaceDist: this.scopeFaceDist,
       lurkSpot: this.state === 'LURK' ? this.lurkSpot : null, lurkFound: this.state === 'LURK' ? this.lurkFound : null,
       enemyFlashlight: this.enemy.flashlight.on,
     };

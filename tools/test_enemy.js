@@ -109,6 +109,7 @@ export async function run(N) {
     const locked = W.door410().locked;
     N.enemy.place(6.9, 12.5, Math.PI);
     N.ai.lastKnown = { x: 8.75, z: 7.3 };
+    N.ai.knownRoomId = '410';   // P2d 以降: 鍵で入るのは「中にいると知っている」時だけ(物音を聞いた想定)
     N.ai.setState('ALERT', { force: true, log: true, react: true });
     const ev0 = N.ai.events.length;
     let t = 0, enteredAt = null, maxAngle = 0, wallClip = 0;
@@ -191,6 +192,73 @@ export async function run(N) {
     N.setFlashlight(false);
     const pass = res.room_off >= DARK_MIN.room && res.corridor_off >= DARK_MIN.corridor;
     return { pass, meanLumaCenter50: res, threshold: DARK_MIN };
+  });
+
+  T('9_witness_scope_return_out', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    // 扉を開け、戸口(廊下側)に立つ。管理人は 2.8m 先からこちらを向いている(暗く静止=まだ見つかっていない)
+    N.doorApi.open('410'); for (let i = 0; i < 60; i++) N.pump(DT, 1, false);
+    N.setView(7.5, 7.05, -Math.PI / 2, 0); N.setFlashlight(false);
+    N.enemy.place(6.3, 9.6, Math.atan2(7.8 - 6.3, 7.25 - 9.6));
+    N.ai.setState('PATROL', { force: true, log: true });
+    N.pump(DT, 2, false);
+    const ev0 = N.ai.events.length;
+    // 部屋へ入る瞬間を見られる
+    N.setView(8.0, 7.05, -Math.PI / 2, 0); N.pump(DT, 3, false);
+    const known = N.ai.knownRoomId, why = (N.ai.events.slice(ev0).find((e) => e.ev === 'room_known') || {}).why;
+    // 奥へ下がって扉を閉め、消灯したままスコープを覗く
+    N.setView(8.85, 7.6, Math.PI / 2, 0); N.doorApi.close('410'); for (let i = 0; i < 90; i++) N.pump(DT, 1, false);
+    N.setView(8.75, 7.3, Math.PI / 2, 0); N.pump(DT, 1, false);
+    N.peephole(true);
+    let t = 0, minFace = Infinity, grinAtStare = null, attackAfterStare = 0, stareAt = null, peepAtUnlock = null, hitAt = null;
+    for (let i = 0; i < Math.round(60 / DT) && hitAt === null; i++) {
+      N.pump(DT, 1, false); t += DT;
+      const evs = N.ai.events.slice(ev0);
+      if (N.ai.state === 'SCOPE' && isFinite(N.ai.scopeFaceDist)) minFace = Math.min(minFace, N.ai.scopeFaceDist);
+      if (stareAt === null && evs.some((e) => e.ev === 'scope_stare')) { stareAt = t; grinAtStare = N.enemyObj.face.grin; }
+      if (stareAt !== null && t - stareAt <= 1.2) attackAfterStare = Math.max(attackAfterStare, N.enemyObj.face.attack);
+      if (peepAtUnlock === null && evs.some((e) => e.ev === 'unlock')) peepAtUnlock = N.peepholeObj.active;
+      if (N.deathState()) hitAt = t;
+    }
+    const order = ['room_known', 'scope_start', 'scope_pass', 'scope_hide', 'scope_return', 'scope_stare', 'keys', 'unlock', 'door_opened', 'attack_start', 'hit'];
+    const evs = N.ai.events.slice(ev0);
+    const idx = order.map((k) => evs.findIndex((e) => e.ev === k));
+    const inOrder = idx.every((v, i) => v >= 0 && (i === 0 || v > idx[i - 1]));
+    const tl = evs.filter((e) => order.includes(e.ev)).map((e) => `${e.t.toFixed(1)} ${e.ev}`);
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    N.ai.lurkEnabled = true;
+    return {
+      pass: known === '410' && why === 'witness' && inOrder && minFace <= 0.3 && grinAtStare >= 0.5 && attackAfterStare > 0.9 && peepAtUnlock === false && hitAt !== null,
+      knownWhy: why, faceToLensMin_m: +minFace.toFixed(3), grinAtStare: grinAtStare && +grinAtStare.toFixed(2), attackWithin1_2sOfStare: +attackAfterStare.toFixed(2),
+      peepholeClosedAtUnlock: peepAtUnlock === false, outAfter_s: hitAt && +hitAt.toFixed(1), timeline: tl,
+    };
+  });
+
+  T('10_unwitnessed_dark_safe', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false);
+    N.pump(DT, 2, false);
+    N.enemy.place(6.9, 11.5, Math.PI);
+    N.ai.setState('PATROL', { force: true, log: true });
+    N.ai.patrolIdx = 5;                 // 次の巡回先 = 410
+    const r0 = N.ai._rand; N.ai._rand = () => 0.1;   // 「扉を確かめる」側へ必ず進む
+    const ev0 = N.ai.events.length;
+    let skipAt = null, t = 0;
+    for (let i = 0; i < Math.round(45 / DT); i++) {
+      N.pump(DT, 1, false); t += DT;
+      if (skipAt === null && N.ai.events.slice(ev0).some((e) => e.ev === 'door_skip_unknown')) skipAt = t;
+      if (skipAt !== null && t - skipAt > 8) break;
+    }
+    const evs = N.ai.events.slice(ev0).map((e) => e.ev);
+    const e = N.enemyObj.pos;
+    const leftDoor = Math.hypot(e.x - 7.8, e.z - 7.25);
+    const safe = { skipAt: skipAt && +skipAt.toFixed(1), opened: evs.includes('door_open_in') || evs.includes('door_opened'), known: N.ai.knownRoomId, dead: !!N.deathState(), doorAngle: +W.door410().angle.toFixed(2), enemyDistFromDoorAfter8s: +leftDoor.toFixed(2) };
+    // おまけ: 室内で懐中電灯を点けると、扉から 6m 以内の管理人に光漏れで気づかれる
+    N.enemy.place(6.9, 10.0, Math.PI); N.ai.setState('PATROL', { force: true }); N.ai.patrolIdx = 0;
+    N.setFlashlight(true); N.pump(DT, 10, false);
+    const lightWhy = (N.ai.events.slice(ev0).find((x) => x.ev === 'room_known') || {}).why || null;
+    N.setFlashlight(false); N.ai._rand = r0; N.ai.lurkEnabled = true;
+    return { pass: skipAt !== null && !safe.opened && safe.known === null && !safe.dead && safe.doorAngle === 0 && leftDoor > 1.5 && lightWhy === 'light', ...safe, lightLeakKnownWhy: lightWhy };
   });
 
   W.reset();

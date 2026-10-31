@@ -330,7 +330,12 @@ const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室
 const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管理人(EV ホール、北を向く)
 const ai = new EnemyAI({ enemy, audio: enemyAudio, player, collisions, doors: doorApi, doorInfo, floorY,
   onKill: () => { movie.hit(); startDeath(); },
-  onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; movie.start(); } });
+  onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; movie.start(); },
+  // P2d: スコープ演出の入出力(覗いているか／扉が開く瞬間に覗き穴視点を閉じる／レンズ位置)
+  isPeeking: () => peephole.active,
+  onScopeOpen: () => { peephole.forced = false; peephole.set(false); pendingE = null; },
+  getLens: () => lens,
+  lensEyeY: 1.48 });
 // P2c: 襲撃ムービー(固定カメラ・顔の補助光・血飛沫)。血の合成は最終段(粒子の後)
 const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
 composer.addPass(movie.pass);
@@ -500,11 +505,17 @@ function step(dt) {
   updateDeath(dt);
   grainPass.uniforms.time.value = simTime;
 }
-function render() { renderer.info.reset(); composer.render(); }
+const _bufSize = new THREE.Vector2();
+function render() {
+  // 覗き穴の円形マスクは描画バッファの縦横比で決まる(スクリーンショット等で解像度を変えても楕円にならないよう毎回合わせる)
+  renderer.getDrawingBufferSize(_bufSize);
+  peephole.pass.uniforms.aspect.value = _bufSize.x / _bufSize.y;
+  renderer.info.reset(); composer.render();
+}
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
   const t0 = performance.now();
-  step(Math.min(dt, 0.1));
+  if (!window.__n2 || !window.__n2.paused) step(Math.min(dt, 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める
   render();
   const cpu = performance.now() - t0;
   frameTimes.push([now, dt * 1000, cpu]);
