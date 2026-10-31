@@ -15,7 +15,6 @@ UA = {'User-Agent': 'nolife2-asset-fetch/1.0'}
 TEXTURES = {
     'wall_cloth':   ('ambientcg', 'Wallpaper001A'),    # クロス壁紙(ウッドチップ調の白いビニルクロス相当)
     'ceiling_tile': ('ambientcg', 'OfficeCeiling001'), # 岩綿吸音板調の天井材
-    'floor_sheet':  ('polyhaven', 'terrazzo_tiles'),   # 細かい斑の長尺シート床の代用
     'door_wood':    ('polyhaven', 'teak_veneer'),      # 木目化粧板の扉
 }
 

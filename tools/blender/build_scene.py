@@ -19,6 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 import p0b_ev  # noqa: E402
+import n2tex  # noqa: E402
 
 ARGS = parse_args({'out': 'build/p0_scene.blend'})
 BUILDING = json.load(open(os.path.join(ROOT, 'data', 'building.json')))
@@ -36,6 +37,7 @@ SILL_H = 0.015                 # 沓摺り
 LEAF_T = 0.04                  # 扉板の厚み
 EV_ALCOVE_W = 1.0              # walls.js GEOM.EV_ALCOVE_W(EV扉のアルコーブ)
 EV_ALCOVE_D = 0.27             # walls.js GEOM.EV_ALCOVE_D
+EV_OPEN_SHIFT = 0.2            # walls.js GEOM.EV_OPEN_SHIFT(開口を正面から見て左へ)
 LEVEL = REGION['level']
 BASE_Y = (LEVEL - 1) * FLOOR_H  # 4F 床 = 8.7
 FLOOR = next(f for f in BUILDING['floors'] if f['level'] == LEVEL)
@@ -78,6 +80,13 @@ def side_gaps(room, side):
             gaps.append((o['pos'][0] if horiz else o['pos'][1], o.get('width', DOOR_W)))
     return gaps
 
+def ev_opening_center(room):
+    """walls.js evOpeningCenter の移植。"""
+    px, pz = room['door']['pos']
+    k = EV_OPEN_SHIFT
+    return {'N': (px + k, pz), 'S': (px - k, pz), 'W': (px, pz - k)}.get(room['door']['facing'], (px, pz + k))
+
+
 def elevator_blocks(room):
     """walls.js elevatorBlocks の移植: EV塊の扉面にアルコーブを掘る(奥 evBack + 左右 evSide)。"""
     x, z, w, d = room['rect']
@@ -86,7 +95,7 @@ def elevator_blocks(room):
     if not room.get('door'):
         return [box(x, z, x + w, z + d, 'evBack')]
     AW, AD = EV_ALCOVE_W, EV_ALCOVE_D
-    px, pz = room['door']['pos']
+    px, pz = ev_opening_center(room)
     f = room['door']['facing']
     if f == 'N':
         return [box(x, z + AD, x + w, z + d, 'evBack'), box(x, z, px - AW / 2, z + AD, 'evSide'), box(px + AW / 2, z, x + w, z + AD, 'evSide')]
@@ -278,7 +287,7 @@ def load_img(path, non_color):
     return img
 
 def pbr_material(name, tex=None, size=1.0, rot=False, base=(0.8, 0.8, 0.8), rough=0.6,
-                 metal=0.0, emit=None, emit_strength=0.0, emit_tex=None, normal_strength=1.0):
+                 metal=0.0, emit=None, emit_strength=0.0, emit_tex=None, normal_strength=1.0, files=None):
     m = bpy.data.materials.new(name)
     m.use_nodes = True
     nt = m.node_tree
@@ -287,15 +296,16 @@ def pbr_material(name, tex=None, size=1.0, rot=False, base=(0.8, 0.8, 0.8), roug
     bsdf.inputs['Roughness'].default_value = rough
     bsdf.inputs['Metallic'].default_value = metal
     uvn = nt.nodes.new('ShaderNodeUVMap'); uvn.uv_map = 'UVMap'; uvn.location = (-900, 0)
-    if tex:
-        d = os.path.join(TEX_DIR, tex)
-        a = nt.nodes.new('ShaderNodeTexImage'); a.image = load_img(os.path.join(d, 'albedo.jpg'), False)
+    if tex or files:
+        d = os.path.join(TEX_DIR, tex) if tex else ''
+        files = files or {k: os.path.join(d, k + '.jpg') for k in ('albedo', 'roughness', 'normal')}
+        a = nt.nodes.new('ShaderNodeTexImage'); a.image = load_img(files['albedo'], False)
         a.location = (-600, 300); nt.links.new(uvn.outputs['UV'], a.inputs['Vector'])
         nt.links.new(a.outputs['Color'], bsdf.inputs['Base Color'])
-        r = nt.nodes.new('ShaderNodeTexImage'); r.image = load_img(os.path.join(d, 'roughness.jpg'), True)
+        r = nt.nodes.new('ShaderNodeTexImage'); r.image = load_img(files['roughness'], True)
         r.location = (-600, 0); nt.links.new(uvn.outputs['UV'], r.inputs['Vector'])
         nt.links.new(r.outputs['Color'], bsdf.inputs['Roughness'])
-        n = nt.nodes.new('ShaderNodeTexImage'); n.image = load_img(os.path.join(d, 'normal.jpg'), True)
+        n = nt.nodes.new('ShaderNodeTexImage'); n.image = load_img(files['normal'], True)
         n.location = (-600, -300); nt.links.new(uvn.outputs['UV'], n.inputs['Vector'])
         nm = nt.nodes.new('ShaderNodeNormalMap'); nm.location = (-300, -300); nm.uv_map = 'UVMap'
         nm.inputs['Strength'].default_value = normal_strength
@@ -360,7 +370,14 @@ def make_exit_sign_image():
 def build_materials():
     pbr_material('M_Wall', 'wall_cloth', size=1.0, rough=0.85)
     pbr_material('M_Ceiling', 'ceiling_tile', size=3.0, rough=0.9)
-    pbr_material('M_Floor', 'floor_sheet', size=2.0, rough=0.5)
+    # 床: 淡いグレーのまだら模様の長尺シート(DESIGN §2.2・自作 n2tex.floor_sheet。1枚=1m角)
+    alb, nrm, rgh = n2tex.floor_sheet()
+    ff = {}
+    for k, arr in (('albedo', alb), ('normal', nrm), ('roughness', np.repeat(rgh[..., None], 3, axis=2))):
+        img = n2tex.save_png(bpy, ROOT, f'floor_{k}', arr)
+        ff[k] = bpy.path.abspath(img.filepath)
+        bpy.data.images.remove(img)
+    pbr_material('M_Floor', files=ff, size=1.0, rough=0.7, normal_strength=0.6)
     pbr_material('M_DoorWood', 'door_wood', size=1.0, rot=True, rough=0.5)
     pbr_material('M_Frame', base=(0.11, 0.10, 0.09), rough=0.45)                 # 塗装スチール枠
     pbr_material('M_Baseboard', base=(0.035, 0.035, 0.035), rough=0.55)          # ソフト幅木

@@ -14,7 +14,9 @@
 
 export const GEOM = { FLOOR_H: 2.9, CEIL_H: 2.4, WALL_T: 0.12, DOOR_W: 0.9,
   // NOLIFE 2 P0b(DESIGN §2.2): EV扉は廊下壁から奥まったアルコーブに収まる(幅×奥行)
-  EV_ALCOVE_W: 1.0, EV_ALCOVE_D: 0.27 };
+  EV_ALCOVE_W: 1.0, EV_ALCOVE_D: 0.27,
+  // P0b差し戻し(DESIGN §2.2): 呼びパネル用に右の袖壁を広げるため、開口(=アルコーブ)を扉の正面から見て左へ寄せる量
+  EV_OPEN_SHIFT: 0.2 };
 const T = GEOM.WALL_T;
 
 // 区間[lo,hi]から gaps[{center,width}] を引いた区間リスト
@@ -181,12 +183,24 @@ export function elevatorBlocks(room) {
   const box = (x0, z0, x1, z1, part) => ({ cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, kind: 'solid', part, roomId: room.id });
   if (!room.door) return [box(x, z, x + w, z + d, 'evBack')];
   const AW = GEOM.EV_ALCOVE_W, AD = GEOM.EV_ALCOVE_D;
-  const [px, pz] = room.door.pos;
+  const [px, pz] = evOpeningCenter(room);
   switch (room.door.facing) {
     case 'N': return [box(x, z + AD, x + w, z + d, 'evBack'), box(x, z, px - AW / 2, z + AD, 'evSide'), box(px + AW / 2, z, x + w, z + AD, 'evSide')];
     case 'S': return [box(x, z, x + w, z + d - AD, 'evBack'), box(x, z + d - AD, px - AW / 2, z + d, 'evSide'), box(px + AW / 2, z + d - AD, x + w, z + d, 'evSide')];
     case 'W': return [box(x + AD, z, x + w, z + d, 'evBack'), box(x, z, x + AD, pz - AW / 2, 'evSide'), box(x, pz + AW / 2, x + AD, z + d, 'evSide')];
     default:  return [box(x, z, x + w - AD, z + d, 'evBack'), box(x + w - AD, z, x + w, pz - AW / 2, 'evSide'), box(x + w - AD, pz + AW / 2, x + w, z + d, 'evSide')];
+  }
+}
+
+// EVの開口(アルコーブ)の中心。door.pos から「扉の正面に立つ人の左」へ EV_OPEN_SHIFT ずらす
+export function evOpeningCenter(room) {
+  const [px, pz] = room.door.pos;
+  const k = GEOM.EV_OPEN_SHIFT;
+  switch (room.door.facing) {
+    case 'N': return [px + k, pz];   // 南を向いて見る → 左 = 東(+x)
+    case 'S': return [px - k, pz];
+    case 'W': return [px, pz - k];
+    default:  return [px, pz + k];
   }
 }
 

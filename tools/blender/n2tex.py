@@ -156,3 +156,52 @@ def save_png(bpy, root, name, arr):
     img = bpy.data.images.load(path, check_existing=False)
     img.colorspace_settings.name = 'sRGB'
     return img
+
+
+def _noise_aniso(h, w, cy, cx, seed):
+    """タイル可能な値ノイズ(縦 cy × 横 cx セル)。cx<<cy で横長の筋、cy<<cx で縦長の筋。"""
+    rng = np.random.default_rng(seed)
+    g = rng.random((cy, cx)).astype(np.float32)
+    ys = np.arange(h) * cy / h; xs = np.arange(w) * cx / w
+    y0 = ys.astype(int); x0 = xs.astype(int)
+    fy = (ys - y0)[:, None]; fx = (xs - x0)[None, :]
+    fy = fy * fy * (3 - 2 * fy); fx = fx * fx * (3 - 2 * fx)
+    y1 = (y0 + 1) % cy; x1 = (x0 + 1) % cx
+    a = g[y0][:, x0]; b = g[y0][:, x1]; c = g[y1][:, x0]; d = g[y1][:, x1]
+    return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy
+
+
+def floor_sheet(n=1024, seed=21):
+    """廊下の長尺シート(写真 corridor_to_ev_4F / ev_open_and_exit_door): 淡いグレー地に、
+    細い掻き傷状の横筋・縦筋がまだらに入る柄。1枚 = 1.0m 角のタイル。
+    戻り値: (albedo sRGB HxWx3, normal(OpenGL) HxWx3, roughness HxW)"""
+    sel = _noise_aniso(n, n, 6, 6, seed) * 0.6 + _noise_aniso(n, n, 13, 13, seed + 1) * 0.4   # 横/縦どちらが優勢か
+    patch = _noise_aniso(n, n, 10, 10, seed + 2) * 0.5 + _noise_aniso(n, n, 26, 26, seed + 3) * 0.5
+    t = np.clip((sel - 0.5) * 5 + 0.5, 0, 1)
+    def flecks(cy, cx, sd, thr):
+        z = _noise_aniso(n, n, cy, cx, sd) - 0.5
+        dark = np.clip((-z - thr) * 7.0, 0, 1)            # 暗い掻き傷(閾値でくっきり)
+        light = np.clip((z - thr) * 5.0, 0, 1)
+        return dark, light
+    hd, hl = flecks(520, 34, seed + 4, 0.16)               # 横に短い細い傷(約3cm×2mm)
+    vd, vl = flecks(34, 520, seed + 5, 0.16)
+    hd2, _ = flecks(260, 16, seed + 6, 0.20)
+    vd2, _ = flecks(16, 260, seed + 7, 0.20)
+    mott = np.clip((patch - 0.5) * 2.4, -1, 1)
+    amp = 0.45 + 0.55 * np.clip(mott + 0.4, 0, 1)          # 濃いまだらほど傷が密
+    dark = (t * (hd + 0.6 * hd2) + (1 - t) * (vd + 0.6 * vd2)) + 0.45 * ((1 - t) * hd + t * vd)
+    light = t * hl + (1 - t) * vl
+    grain = np.random.default_rng(seed + 8).random((n, n)).astype(np.float32) - 0.5
+    v = 0.63 + 0.03 * mott - 0.30 * np.clip(dark, 0, 1.2) * amp + 0.06 * light + 0.05 * grain
+    v = np.clip(v, 0, 1)
+    albedo = np.stack([v * 1.0, v * 0.975, v * 0.935], axis=2)
+    strokes = light - dark
+    height = strokes * 0.5 + grain * 0.2
+    gy, gx = np.gradient(height)
+    k = 2.0
+    nx, ny = -gx * k, gy * k                               # OpenGL: +Y 上(画像は上が行0なので符号を反転)
+    nz = np.ones_like(nx)
+    l = np.sqrt(nx * nx + ny * ny + nz * nz)
+    normal = np.stack([nx / l * 0.5 + 0.5, ny / l * 0.5 + 0.5, nz / l * 0.5 + 0.5], axis=2)
+    rough = np.clip(0.72 + 0.08 * mott + 0.06 * np.clip(dark, 0, 1), 0.4, 0.95)
+    return albedo.astype(np.float32), normal.astype(np.float32), rough.astype(np.float32)

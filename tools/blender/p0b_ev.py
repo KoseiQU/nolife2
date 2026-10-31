@@ -11,12 +11,15 @@ import n2tex
 # 寸法(m)
 EV_OPEN_W = 0.80      # 扉の有効幅(2枚合計)
 EV_OPEN_H = 2.10
-FRAME_W = 0.05        # 三方枠の見付け(写真: 細い金属枠。外側はアルコーブ奥の白い壁)
+FRAME_W = 0.08        # 三方枠の見付け(DESIGN §2.2: ≈8〜10cm)
 FRAME_HEAD_TOP = 2.17 # 枠の上端(=アルコーブの垂れ壁の下端)
 DOOR_D0 = 0.30        # 扉板の表面(アルコーブ奥の面 0.27 より 3cm 奥)
 DOOR_T = 0.03
-WIN_W, WIN_Y0, WIN_Y1, WIN_SHIFT = 0.20, 0.98, 1.83, 0.03   # 窓: 幅・下端・上端・中央寄せ
+WIN_W, WIN_Y0, WIN_Y1, WIN_SHIFT = 0.20, 0.98, 1.83, 0.015   # 窓: 幅・下端・上端・中央寄せ
 PANEL_W, DISP_H, PLATE_H, DISP_TOP = 0.09, 0.22, 0.32, 1.75
+PANEL_GAP = 0.17      # 三方枠の外縁から呼びパネル左端まで(写真 ≈15〜20cm)
+LEAF_STEP = 0.03      # 片寄せ2枚扉の前後の段差(右=手前・左=奥)
+LEAF_LAP = 0.02       # 合わせ目での重なり
 BEAM_H = 0.25
 EV_PARAMS = dict(open_w=EV_OPEN_W, open_h=EV_OPEN_H)
 
@@ -86,6 +89,12 @@ def framed_panel(L, mb, u0, u1, y0, y1, d0, d1, hole, mat):
     L.box(mb, hu1, u1, hy0, hy1, d0, d1, mat)
 
 
+def ev_local(ctx, dd):
+    """EVの局所座標。原点 = 開口の中心(door.pos から正面に立つ人の左へ EV_OPEN_SHIFT。walls.js と同じ)。"""
+    room = dd['room']
+    return Local(ctx.ev_opening_center(room), dd['facing'], ctx.BASE_Y)
+
+
 def build_materials(ctx):
     root = ctx.ROOT
     pm = ctx.pbr_material
@@ -131,7 +140,7 @@ def _set_base_tex(mat, img):
 
 def ev_back_face_with_opening(ctx, mb, wall, dd):
     """アルコーブ奥の塊(evBack)の扉側の面を、扉の開口を抜いて張る(後で扉が開いた時にカゴが見えるように)。"""
-    L = Local(dd['pos'], dd['facing'], ctx.BASE_Y)
+    L = ev_local(ctx, dd)
     d = ctx.EV_ALCOVE_D
     half = EV_OPEN_W / 2
     # 塊の扉側の面の u 範囲(切り詰め後の箱から)
@@ -148,7 +157,7 @@ def ev_back_face_with_opening(ctx, mb, wall, dd):
 
 def build_elevator(ctx, dd, col):
     MB = ctx.MeshBuilder
-    L = Local(dd['pos'], dd['facing'], ctx.BASE_Y)
+    L = ev_local(ctx, dd)
     AD, AW = ctx.EV_ALCOVE_D, ctx.EV_ALCOVE_W
     half = EV_OPEN_W / 2
     rid = dd['id']
@@ -171,21 +180,22 @@ def build_elevator(ctx, dd, col):
     L.box(sill, -half - FRAME_W, half + FRAME_W, 0, 0.008, AD - 0.06, 0.42, 'M_Sill')
     sill.finish(col, {'n2_kind': 'evsill', 'n2_room': rid})
 
-    # 中央開き2枚扉(左右別メッシュ・各扉に縦長の網入りガラス窓。窓は中央寄せ)
-    for side, (u0, u1) in (('L', (-half, -0.002)), ('R', (0.002, half))):
+    # 片寄せ2枚扉(2速式・DESIGN §2.2): 閉じると合わせ目は開口のほぼ中央、右の扉が手前・左が奥で前後に重なる。
+    # 開くときは2枚とも左(呼びパネルの反対側)へ退避: 奥の左扉が half、手前の右扉はその2倍動く(2速)。
+    left_dir = [-L.rx, 0.0, -L.rz]
+    leaves = (('L', -half, LEAF_LAP / 2, DOOR_D0 + LEAF_STEP, half),          # 奥・遅い扉
+              ('R', -LEAF_LAP / 2, half, DOOR_D0, 2 * half))                  # 手前・速い扉
+    for side, u0, u1, d0, dist in leaves:
         mb = MB(f'EVDoor_{side}_{rid}')
-        # 窓は扉の中心より合わせ目側へ WIN_SHIFT 寄せる(写真)
         c = (u0 + u1) / 2 + (WIN_SHIFT if side == 'L' else -WIN_SHIFT)
         hu0, hu1 = c - WIN_W / 2, c + WIN_W / 2
-        framed_panel(L, mb, u0, u1, 0.006, EV_OPEN_H, DOOR_D0, DOOR_D0 + DOOR_T, (hu0, hu1, WIN_Y0, WIN_Y1), 'M_EVDoor')
-        L.box(mb, hu0, hu1, WIN_Y0, WIN_Y1, DOOR_D0 + DOOR_T / 2 - 0.003, DOOR_D0 + DOOR_T / 2 + 0.003, 'M_WireGlass')
-        slide = (-1 if side == 'L' else 1)
-        sx, sz = L.rx * slide, L.rz * slide
-        mb.finish(col, {'n2_kind': 'evdoor', 'n2_room': rid, 'n2_side': side,
-                        'n2_slide': [sx, 0.0, sz], 'n2_slide_dist': half - 0.01})
+        framed_panel(L, mb, u0, u1, 0.006, EV_OPEN_H, d0, d0 + DOOR_T, (hu0, hu1, WIN_Y0, WIN_Y1), 'M_EVDoor')
+        L.box(mb, hu0, hu1, WIN_Y0, WIN_Y1, d0 + DOOR_T / 2 - 0.003, d0 + DOOR_T / 2 + 0.003, 'M_WireGlass')
+        mb.finish(col, {'n2_kind': 'evdoor', 'n2_room': rid, 'n2_side': side, 'n2_layer': 'front' if side == 'R' else 'back',
+                        'n2_slide': left_dir, 'n2_slide_dist': dist})
 
     # 呼びボタンパネル(右の袖壁・廊下側の面)。上段=黒艶の階数表示、下段=ヘアラインSUS
-    pu = AW / 2 + 0.17 + PANEL_W / 2
+    pu = half + FRAME_W + PANEL_GAP + PANEL_W / 2    # 三方枠のすぐ右
     pb = MB(f'EVCallPanel_{rid}')
     L.box(pb, pu - PANEL_W / 2, pu + PANEL_W / 2, DISP_TOP - DISP_H - PLATE_H, DISP_TOP, -0.010, 0.0, 'M_SUS',
           keep=lambda k, c, n: (n[0] * -L.fx + n[2] * -L.fz) < 0.5)    # 正面は下の2枚の画像面
@@ -197,11 +207,12 @@ def build_elevator(ctx, dd, col):
     L.quad_facing_viewer(pp, pu - PANEL_W / 2, pu + PANEL_W / 2, DISP_TOP - DISP_H - PLATE_H, DISP_TOP - DISP_H, -0.0102, 'M_EVPlate', uv01=True)
     pp.finish(col, {'n2_kind': 'evplate', 'n2_room': rid})
 
-    build_car(ctx, L, rid, col)
+    Lcar = Local(dd['pos'], dd['facing'], ctx.BASE_Y)    # カゴはシャフトの中心に(開口だけ左へ寄っている)
+    build_car(ctx, Lcar, rid, col, hole_c=-ctx.EV_OPEN_SHIFT)
     return dict(id=rid, kind='elevator', panelU=pu)
 
 
-def build_car(ctx, L, rid, col):
+def build_car(ctx, L, rid, col, hole_c=0.0):
     """カゴ内部(扉は閉のまま。GLB に含めるだけ)。"""
     MB = ctx.MeshBuilder
     half = EV_OPEN_W / 2
@@ -214,10 +225,10 @@ def build_car(ctx, L, rid, col):
         L.quad_side(c, -cu, y0, y1, d0, d1, +1, m)                       # 左壁(右向き)
         L.quad_side(c, cu, y0, y1, d0, d1, -1, m)                        # 右壁(左向き)
         # 前壁の内側(開口を抜く)
-        L.quad_away(c, -cu, -half, y0, y1, d0, m)
-        L.quad_away(c, half, cu, y0, y1, d0, m)
+        L.quad_away(c, -cu, hole_c - half, y0, y1, d0, m)
+        L.quad_away(c, hole_c + half, cu, y0, y1, d0, m)
         if y1 > EV_OPEN_H:
-            L.quad_away(c, -half, half, max(y0, EV_OPEN_H), y1, d0, m)
+            L.quad_away(c, hole_c - half, hole_c + half, max(y0, EV_OPEN_H), y1, d0, m)
     c.finish(col, {'n2_kind': 'evcar', 'n2_room': rid})
     det = MB(f'EVCarDetail_{rid}')
     # 手すり(ステンレス)左右と奥
