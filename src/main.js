@@ -22,6 +22,8 @@ import { EnemyAI } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
 import { Peephole } from './peephole.js';
 import { AttackMovie } from './attack_movie.js';
+import { Hud } from './hud.js';
+import { HUD_TEXT } from './hud_text.js';
 
 const PARAMS = new URLSearchParams(location.search);
 
@@ -186,6 +188,8 @@ gltf.scene.traverse((o) => {
   }
 });
 scene.add(gltf.scene);
+// P2e: EV 呼びボタンの位置(静的結合で節点が消える前に控える)
+const evPanelPos = (() => { const n = gltf.scene.getObjectByName('EVCallPanel_EV4'); if (!n) return null; n.updateMatrixWorld(true); return new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3()); })();
 mergeStatic(gltf.scene);
 
 // 静的メッシュ(扉板以外)を材質ごとに1つへ結合する。115 プリミティブ × (本描画+影+GTAO法線) で
@@ -249,13 +253,22 @@ function useNearestDoor() {
     if ((dx * fwd.x + dz * fwd.z) / Math.max(dist, 1e-3) < 0.35) continue; // 見ている方の扉
     best = d; bestD = dist;
   }
+  lastUseLocked = false;
   if (!best) return null;
   if (best.operable && !(best.locked && best.target === 0)) {
     best.target = best.target > 0 ? 0 : best.openAngle;
     best.speedMul = 1;
     if (ai) ai.noise(best.node.position.x, best.node.position.z, 9.0);   // 扉の開閉音(聴覚 9m)
-  } else best.rattle = 0.25;   // 施錠: ノブだけ鳴る。ごく小さく揺らす
+  } else { best.rattle = 0.25; lastUseLocked = true; }   // 施錠: ノブだけ鳴る。ごく小さく揺らす
   return best.roomId;
+}
+let lastUseLocked = false;
+// E を押した(短押しが確定した)時: 扉を操作し、画面ガイドへ結果を渡す(開かない扉=「鍵がかかっている」、EV=「反応がない」)
+function useAndReport() {
+  if (hud.target && hud.target.kind === 'ev') { hud.onUse(null); return null; }
+  const r = useNearestDoor();
+  hud.onUse({ locked: lastUseLocked });
+  return r;
 }
 function nearestOperableDoor(maxD = 1.6) {
   const p = player.object.position;
@@ -390,10 +403,6 @@ function buildDoorScopeInside() {
   door410.node.add(grp);
   doorScope = grp;
 }
-const peepHint = document.createElement('div');
-peepHint.textContent = 'E長押し：覗く';
-peepHint.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;text-align:center;color:#c9c2b6;font:13px/1.6 -apple-system,"Hiragino Sans",sans-serif;letter-spacing:.12em;opacity:0;transition:opacity .25s;pointer-events:none;text-shadow:0 0 6px #000;';
-document.body.appendChild(peepHint);
 let pendingE = null;   // E の長押し判定 {t, held}
 function canPeep() {
   const p = player.object.position;
@@ -405,9 +414,10 @@ function canPeep() {
 }
 function onUseKey() {
   if (canPeep()) { pendingE = { t: 0, held: false }; return null; }   // 短押し=扉、長押し=覗き穴(離した時に決まる)
-  return useNearestDoor();
+  return useAndReport();
 }
 player.onKey = (code) => {
+  if (code === 'KeyH') hud.showControls();
   if (death) return;
   if (code === 'KeyL') {
     const d = nearestOperableDoor();
@@ -425,14 +435,13 @@ function updatePeepInput(dt) {
       pendingE.t += dt;
       if (!pendingE.held && pendingE.t >= 0.35) { pendingE.held = true; peephole.set(true); }
     } else {
-      if (pendingE.held) peephole.set(false); else useNearestDoor();
+      if (pendingE.held) peephole.set(false); else useAndReport();
       pendingE = null;
     }
   }
   if (peephole.active && !pendingE && !player.keys.has('KeyP') && !peephole.forced) peephole.set(false);
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   peephole.update(size.x, size.y);
-  peepHint.style.opacity = (!peephole.active && !death && !movie.active && canPeep()) ? '1' : '0';
 }
 
 // ---------------------------------------------------------------- death / checkpoint (P2b)
@@ -441,8 +450,8 @@ overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;background:#
 const flash = document.createElement('div');
 flash.style.cssText = 'position:fixed;inset:0;pointer-events:none;background:#8a0000;opacity:0;mix-blend-mode:normal;';
 const caption = document.createElement('div');
-caption.textContent = '見つかった';
-caption.style.cssText = 'color:#b9b2a8;font:500 22px/1 "Hiragino Mincho ProN","Yu Mincho",serif;letter-spacing:.5em;opacity:0;transition:none;';
+caption.innerHTML = `<div>${HUD_TEXT.death.title}</div><div style="margin-top:22px;font:400 13px/1 -apple-system,'Hiragino Sans',sans-serif;letter-spacing:.25em;color:#7d776f">${HUD_TEXT.death.sub}</div>`;
+caption.style.cssText = 'color:#b9b2a8;font:500 22px/1 "Hiragino Mincho ProN","Yu Mincho",serif;letter-spacing:.5em;opacity:0;transition:none;text-align:center;';
 overlay.appendChild(caption);
 document.body.append(flash, overlay);
 let death = null;   // { t, respawned }
@@ -483,8 +492,14 @@ function updateDeath(dt) {
 }
 let deathCount = 0;
 renderer.domElement.addEventListener('click', () => { if (!player.isLocked()) player.lock(); });
-player.controls.addEventListener('lock', () => document.body.classList.add('locked'));
-player.controls.addEventListener('unlock', () => document.body.classList.remove('locked'));
+// P2e: 画面ガイド
+const hud = new Hud({
+  camera, player, doors, lens, evPanel: evPanelPos, canPeep,
+  peepKey: () => (peephole.active ? (pendingE && pendingE.held ? 'E' : player.keys.has('KeyP') ? 'P' : 'E') : null),
+  isMovie: () => movie.active, isDead: () => !!death,
+});
+player.controls.addEventListener('lock', () => { document.body.classList.add('locked'); hud.setPointer(true); });
+player.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); hud.setPointer(false); });
 resize();
 
 // ---------------------------------------------------------------- loop
@@ -503,6 +518,7 @@ function step(dt) {
   updateDoors(dt);
   enemyAudio.update(dt);
   updateDeath(dt);
+  hud.update(dt);
   grainPass.uniforms.time.value = simTime;
 }
 const _bufSize = new THREE.Vector2();
@@ -548,7 +564,7 @@ function stats() {
 window.__n2 = {
   THREE, scene, camera, renderer, player, composer, doors, collisions, manifest, LOOK,
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME,
-  movie, ambientFloor, get doorScope() { return doorScope; }, peepHintVisible: () => peepHint.style.opacity === '1',
+  movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
   peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },

@@ -261,6 +261,34 @@ export async function run(N) {
     return { pass: skipAt !== null && !safe.opened && safe.known === null && !safe.dead && safe.doorAngle === 0 && leftDoor > 1.5 && lightWhy === 'light', ...safe, lightLeakKnownWhy: lightWhy };
   });
 
+  T('11_hud_hints', () => {
+    W.reset();
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 21.0, Math.PI);
+    const H = () => N.hudState();
+    const at = (x, z, yaw) => { N.setView(x, z, yaw, 0); N.pump(DT, 2, false); return H(); };
+    const tap = (code, frames = 3) => { W.key(code, true); N.pump(DT, frames, false); W.key(code, false); N.pump(DT, 2, false); };
+    const r = {};
+    r.corridorDoor = at(6.95, 7.25, -Math.PI / 2).hint;                 // 廊下から 410 の扉を見る(0.85m)
+    r.away = at(6.9, 12.5, Math.PI).hint;                                // 離れる(扉を見ていない・遠い)
+    r.inside = at(8.75, 7.3, Math.PI / 2).hint;                          // 室内から扉(スコープ 0.97m・正対)
+    tap('KeyL'); r.insideLocked = H().hint;
+    N.peephole(true); N.pump(DT, 2, false); r.peep = H(); N.peephole(false); N.pump(DT, 2, false);
+    tap('KeyL'); r.unlockedAgain = H().hint;
+    at(6.95, 15.95, Math.PI / 2); tap('KeyE'); r.otherDoorToast = H().toast;   // 開かない扉(404)で E
+    const ev = N.hud.evPanel;
+    const ex = ev.x - 0.9 * 0.2, ez = ev.z - 0.9;
+    r.ev = at(ex, ez, Math.atan2(-(ev.x - ex), -(ev.z - ez))).hint; tap('KeyE'); r.evToast = H().toast;
+    tap('KeyF'); N.pump(DT, 12, false); r.flashToast = H().toast; tap('KeyF'); N.pump(DT, 12, false);
+    tap('KeyH'); r.controls = H().controls;
+    const pass = r.corridorDoor.includes('開ける') && !r.corridorDoor.includes('施錠') && r.away === ''
+      && r.inside.includes('覗く') && r.inside.includes('開ける') && r.inside.includes('施錠')
+      && r.insideLocked.includes('解錠') && r.insideLocked.includes('施錠中')
+      && r.peep.hint === '' && r.peep.release.includes('やめる')
+      && r.unlockedAgain.includes('施錠') && r.otherDoorToast === '鍵がかかっている'
+      && r.ev.includes('呼ぶ') && r.evToast === '反応がない' && r.flashToast.includes('懐中電灯') && r.controls;
+    return { pass, ...r, peep: { hint: r.peep.hint, release: r.peep.release } };
+  });
+
   W.reset();
   N.render();
   if (new URLSearchParams(location.search).get('fps') === '1') { out.fps = await measureFps(N); show(); }
