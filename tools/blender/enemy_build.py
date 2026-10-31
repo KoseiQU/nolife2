@@ -723,6 +723,46 @@ def export_fbx(rig):
                 cache[m.name] = fbx_material(m, tex_dir)
             slot.material = cache[m.name]
     bpy.context.view_layer.update()
+    extra = {}
+    if final:   # Mixamo 用: 骨・モディファイア・頂点グループ・親子なしの 1 メッシュへ(形状キー grin / attack は保持)
+        moving = 0
+        for o in meshes:
+            o.parent = None
+            for md in list(o.modifiers):
+                o.modifiers.remove(md)
+            o.vertex_groups.clear()
+            if o.data.shape_keys and 'attack' in o.data.shape_keys.key_blocks:
+                b_ = o.data.shape_keys.reference_key; a_ = o.data.shape_keys.key_blocks['attack']
+                n_ = len(o.data.vertices)
+                bb = np.empty(n_ * 3, np.float32); b_.data.foreach_get('co', bb)
+                aa = np.empty(n_ * 3, np.float32); a_.data.foreach_get('co', aa)
+                moving += int((np.linalg.norm((aa - bb).reshape(-1, 3), axis=1) > 0.001).sum())
+        with bpy.context.temp_override(selected_objects=meshes, selected_editable_objects=meshes):
+            bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        body_c = next(o for o in meshes if o.name.endswith('.body'))
+        with bpy.context.temp_override(active_object=body_c, object=body_c, selected_objects=meshes,
+                                       selected_editable_objects=meshes):
+            bpy.ops.object.join()
+        body_c.name = f'N2E_{C["id"]}_kanrinin'
+        body_c.data.name = body_c.name
+        kb = body_c.data.shape_keys.key_blocks
+        assert 'grin' in kb and 'attack' in kb, [k.name for k in kb]
+        n_ = len(body_c.data.vertices)
+        bb = np.empty(n_ * 3, np.float32); kb[0].data.foreach_get('co', bb)
+        aa = np.empty(n_ * 3, np.float32); kb['attack'].data.foreach_get('co', aa)
+        moving_after = int((np.linalg.norm((aa - bb).reshape(-1, 3), axis=1) > 0.001).sum())
+        assert moving_after >= moving, f'結合で attack の動きが失われた: {moving} → {moving_after}'
+        # 原点 = 足元の床: 最下点(靴底)を z=0 に揃える(形状キーも一緒に動く)
+        zmin = float(bb.reshape(-1, 3)[:, 2].min())
+        body_c.location.z -= zmin
+        with bpy.context.temp_override(selected_objects=[body_c], selected_editable_objects=[body_c], active_object=body_c):
+            bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
+        kb[0].data.foreach_get('co', bb)
+        meshes = [body_c]
+        zs = bb.reshape(-1, 3)[:, 2]
+        extra = dict(attack_moving_verts=moving, attack_moving_after_join=moving_after, floor_shift=-zmin,
+                     floor_z=float(zs.min()), top_z=float(zs.max()))
+        log(f'mixamo: joined 1 mesh, keys {[k.name for k in kb]}, attack moving verts {moving} → {moving_after}')
     # 書き出す形(レスト・モディファイア適用後)の頂点数・三角形数・素材数を記録 → enemy_check.py が再読込と照合
     dg = bpy.context.evaluated_depsgraph_get()
     stats = {}
@@ -739,7 +779,7 @@ def export_fbx(rig):
                              use_mesh_modifiers=not final, mesh_smooth_type='FACE', add_leaf_bones=False,
                              path_mode='COPY', embed_textures=True, bake_anim=False)
     mb = os.path.getsize(path) / 1e6
-    info = dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats, tris=sum(v['tris'] for v in stats.values()))
+    info = dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats, tris=sum(v['tris'] for v in stats.values()), **extra)
     if final:
         e = (rig.matrix_world @ rig.data.bones['eye.L'].head_local + rig.matrix_world @ rig.data.bones['eye.R'].head_local) / 2
         info['eye_center_rest'] = list(e)

@@ -13,7 +13,8 @@
 #  8) 帽子のクラウン: 天井(外面)が頭頂 +10mm 以内(=頭に密着したドーム)
 #  9) ハンマー: 三角形 ≤3k・全長 0.38〜0.42m・テクスチャ ≤2048・原点=握り・hammer.fbx/.glb が読み直せる
 # 10) FBX の体に形状キー grin があり、値 1 で口まわりが ≥8mm 動く
-# 11) FBX の体に形状キー attack があり、顎先が ≥25mm 下がる。歯・舌・眉・まつ毛も attack を持つ
+# 11) FBX の体に形状キー attack があり、顎先が ≥25mm 下がる。歯・舌・眉・まつ毛も attack で動く(結合後も)
+# 12) Mixamo 用: 骨・空・頂点グループ・モディファイア・親子なし、回転0・スケール1、足元が床、grin/attack あり
 
 import bpy, json, math, os, sys
 import numpy as np
@@ -194,12 +195,28 @@ for o in new:
     if ref is None or ref['verts'] != len(o.data.vertices) or ref['mats'] != len(o.material_slots):
         mism.append((o.name, len(o.data.vertices), len(o.material_slots), ref))
 rec('三角形数(FBX)', tris <= 60000, tris, '≤60000')
-fbody = next((o for o in new if o.name.startswith(body.name.split('_src')[0].split('.body')[0] + '.body')), None)
+allnew = [o for o in bpy.data.objects if o not in before]
+rec('Mixamo: 再読込の ARMATURE/EMPTY 数', not any(o.type in ('ARMATURE', 'EMPTY') for o in allnew),
+    {t: sum(1 for o in allnew if o.type == t) for t in ('ARMATURE', 'EMPTY', 'MESH')}, 'ARMATURE 0・EMPTY 0')
+rec('Mixamo: メッシュの回転0・スケール1・親なし', all(o.parent is None and max(abs(v) for v in o.rotation_euler) < 1e-4
+                                                and max(abs(v - 1) for v in o.scale) < 1e-4 for o in new),
+    [(o.name, tuple(round(v, 4) for v in o.rotation_euler), tuple(round(v, 4) for v in o.scale)) for o in new], '回転0・スケール1')
+rec('Mixamo: 頂点グループ・モディファイアなし', all(len(o.vertex_groups) == 0 and len(o.modifiers) == 0 for o in new),
+    [(o.name, len(o.vertex_groups), len(o.modifiers)) for o in new], '0')
+keys_ = sorted({k.name for o in new if o.data.shape_keys for k in o.data.shape_keys.key_blocks})
+rec('Mixamo: シェイプキー grin・attack', 'grin' in keys_ and 'attack' in keys_, keys_, 'grin, attack')
+zz = [(o.matrix_world @ v.co).z for o in new for v in o.data.vertices]
+rec('Mixamo: 足元が床(最下点 z, m)・全高(m)', abs(min(zz)) < 0.01 and 1.75 < max(zz) - min(zz) < 1.90,
+    (round(min(zz), 4), round(max(zz) - min(zz), 3)), '|z|<0.01・1.75〜1.90')
+raw = open(fbx, 'rb').read()
+rec('Mixamo: FBX 内に骨ノード(LimbNode/Cluster/Skin/Null)なし', all(raw.count(k) == 0 for k in (b'LimbNode', b'Cluster', b'Skin', b'Null')),
+    {k.decode(): raw.count(k) for k in (b'LimbNode', b'Cluster', b'Skin', b'Null', b'BlendShape')}, 'すべて 0(BlendShape は形状キー)')
+fbody = next((o for o in new if o.data.shape_keys and 'grin' in o.data.shape_keys.key_blocks), None)
 gk = fbody.data.shape_keys.key_blocks.get('grin') if fbody is not None and fbody.data.shape_keys else None
 if gk is None:
     rec('grin シェイプキー(FBX)', False, 'なし', 'あり・口角 ≥8mm')
 else:
-    ec_ = Vector(export['eye_center_rest'])
+    ec_ = Vector(export['eye_center_rest']) + Vector((0, 0, export.get('floor_shift', 0.0)))
     bk = fbody.data.shape_keys.reference_key
     mw_ = fbody.matrix_world
     mv = 0.0
@@ -212,7 +229,7 @@ ak = fbody.data.shape_keys.key_blocks.get('attack') if fbody is not None and fbo
 if ak is None:
     rec('attack シェイプキー(FBX)', False, 'なし', 'あり・顎先 ≥25mm 下がる')
 else:
-    ec_ = Vector(export['eye_center_rest'])
+    ec_ = Vector(export['eye_center_rest']) + Vector((0, 0, export.get('floor_shift', 0.0)))
     bk = fbody.data.shape_keys.reference_key
     mw_ = fbody.matrix_world
     drop = 0.0
@@ -221,9 +238,11 @@ else:
         if ec_.z - 0.20 < p_.z < ec_.z - 0.09 and abs(p_.x - ec_.x) < 0.025 and p_.y < ec_.y + 0.01:
             drop = max(drop, p_.z - (mw_ @ b_.co).z)
     rec('attack シェイプキー(FBX): 顎先の下がり(mm)', drop >= 0.025, round(drop * 1000, 1), '≥25')
-    fol = [o.name for o in new if o.data.shape_keys and 'attack' in o.data.shape_keys.key_blocks]
-    need = ('teeth', 'tongue', 'brow_strips', 'lash_strips')
-    rec('attack に追従(歯・舌・眉・まつ毛)', all(any(k in nm for nm in fol) for k in need), sorted(fol), ', '.join(need))
+    # 1 メッシュに結合済み: 結合前に attack で動いた頂点数(体＋歯＋舌＋眉＋まつ毛)が、FBX 再読込後も動いているか
+    n_ = len(fbody.data.vertices)
+    mvc = sum(1 for a_, b_ in zip(bk.data, ak.data) if (b_.co - a_.co).length > 0.001)
+    rec('attack に追従(歯・舌・眉・まつ毛を含む動く頂点数)', mvc >= export.get('attack_moving_verts', 1), mvc,
+        f"≥{export.get('attack_moving_verts')}(結合前の合計)")
 rec('FBX 再読込: メッシュ数', len(new) == len(export['meshes']), len(new), len(export['meshes']))
 rec('FBX 再読込: 頂点数・素材数の一致', not mism, mism or '全一致', '全一致')
 fimgs = {i for i in bpy.data.images if i.users and i.packed_file is not None or i.filepath.endswith(('.jpg', '.png'))}

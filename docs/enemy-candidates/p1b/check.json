@@ -104,6 +104,79 @@
    "limit": "≤60000"
   },
   {
+   "check": "Mixamo: 再読込の ARMATURE/EMPTY 数",
+   "ok": true,
+   "value": {
+    "ARMATURE": 0,
+    "EMPTY": 0,
+    "MESH": 1
+   },
+   "limit": "ARMATURE 0・EMPTY 0"
+  },
+  {
+   "check": "Mixamo: メッシュの回転0・スケール1・親なし",
+   "ok": true,
+   "value": [
+    [
+     "N2E_07_kanrinin",
+     [
+      -0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ]
+    ]
+   ],
+   "limit": "回転0・スケール1"
+  },
+  {
+   "check": "Mixamo: 頂点グループ・モディファイアなし",
+   "ok": true,
+   "value": [
+    [
+     "N2E_07_kanrinin",
+     0,
+     0
+    ]
+   ],
+   "limit": "0"
+  },
+  {
+   "check": "Mixamo: シェイプキー grin・attack",
+   "ok": true,
+   "value": [
+    "Basis",
+    "attack",
+    "grin"
+   ],
+   "limit": "grin, attack"
+  },
+  {
+   "check": "Mixamo: 足元が床(最下点 z, m)・全高(m)",
+   "ok": true,
+   "value": [
+    0.0,
+    1.836
+   ],
+   "limit": "|z|<0.01・1.75〜1.90"
+  },
+  {
+   "check": "Mixamo: FBX 内に骨ノード(LimbNode/Cluster/Skin/Null)なし",
+   "ok": true,
+   "value": {
+    "LimbNode": 0,
+    "Cluster": 0,
+    "Skin": 0,
+    "Null": 0,
+    "BlendShape": 3
+   },
+   "limit": "すべて 0(BlendShape は形状キー)"
+  },
+  {
    "check": "grin シェイプキー(FBX): 口まわりの最大移動(mm)",
    "ok": true,
    "value": 20.6,
@@ -116,22 +189,16 @@
    "limit": "≥25"
   },
   {
-   "check": "attack に追従(歯・舌・眉・まつ毛)",
+   "check": "attack に追従(歯・舌・眉・まつ毛を含む動く頂点数)",
    "ok": true,
-   "value": [
-    "N2E_07.body.001",
-    "N2E_07.brow_strips.001",
-    "N2E_07.lash_strips.001",
-    "N2E_07.teeth_base.001",
-    "N2E_07.tongue01.001"
-   ],
-   "limit": "teeth, tongue, brow_strips, lash_strips"
+   "value": 4731,
+   "limit": "≥4731(結合前の合計)"
   },
   {
    "check": "FBX 再読込: メッシュ数",
    "ok": true,
-   "value": 11,
-   "limit": 11
+   "value": 1,
+   "limit": 1
   },
   {
    "check": "FBX 再読込: 頂点数・素材数の一致",
@@ -148,7 +215,7 @@
   {
    "check": "FBX サイズ(MB)",
    "ok": true,
-   "value": 21.3,
+   "value": 21.7,
    "limit": "≤50"
   }
  ]
