@@ -1,0 +1,622 @@
+{
+ "version": 1,
+ "glb": "exterior.glb",
+ "instances": "exterior_instances.bin",
+ "materials": {
+  "M_Wall": {
+   "map": "build/tex/wall_cloth_albedo.jpg",
+   "roughnessMap": "build/tex/wall_cloth_roughness.jpg",
+   "normalMap": "build/tex/wall_cloth_normal.jpg",
+   "normalScale": 1.0
+  },
+  "M_Floor": {
+   "map": "build/tex/floor_sheet_albedo.jpg",
+   "roughnessMap": "build/tex/floor_sheet_roughness.jpg",
+   "normalMap": "build/tex/floor_sheet_normal.jpg",
+   "normalScale": 0.6
+  },
+  "M_Stone": {
+   "map": "build/tex/stone_floor_albedo.jpg",
+   "roughnessMap": "build/tex/stone_floor_roughness.jpg",
+   "normalMap": "build/tex/stone_floor_normal.jpg",
+   "normalScale": 0.5
+  },
+  "M_StoneWall": {
+   "map": "build/tex/stone_wall_albedo.jpg",
+   "normalMap": "build/tex/stone_wall_normal.jpg",
+   "normalScale": 0.5
+  },
+  "M_ExtWall": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0
+  },
+  "M_Deck": {
+   "map": "build/tex/diamond_albedo.jpg",
+   "normalMap": "build/tex/diamond_normal.jpg",
+   "normalScale": 1.0
+  },
+  "M_GlassClear": {
+   "roughnessMap": "build/tex/glass_smudge.jpg",
+   "opacity": 0.12
+  },
+  "M_HairV": {
+   "roughnessMap": "build/tex/hairline_roughness.jpg"
+  },
+  "M_HairH": {
+   "roughnessMap": "build/tex/hairline_roughness.jpg"
+  },
+  "M_Paving": {
+   "map": "build/tex/paving_albedo.jpg",
+   "normalMap": "build/tex/paving_normal.jpg",
+   "normalScale": 1.0
+  },
+  "M_GalleryFloor": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0
+  },
+  "MR_Pal": {
+   "map": "build/tex/room_palette.png"
+  },
+  "MR_PalGloss": {
+   "map": "build/tex/room_palette.png"
+  },
+  "MR_Appl": {
+   "map": "build/tex/room_appliances.png"
+  },
+  "MR_Facade": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0,
+   "tint": [
+    1.3,
+    1.3,
+    1.27
+   ]
+  },
+  "MR_BalFloor": {
+   "map": "build/tex/floor_sheet_albedo.jpg",
+   "roughnessMap": "build/tex/floor_sheet_roughness.jpg",
+   "normalMap": "build/tex/floor_sheet_normal.jpg",
+   "normalScale": 0.4,
+   "tint": [
+    0.55,
+    0.56,
+    0.55
+   ]
+  },
+  "MR_Concrete": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0
+  },
+  "MX_WinGlass": {
+   "opacity": 0.16
+  },
+  "MX_Bars": {
+   "map": "build/tex/rail_bars.png"
+  },
+  "MX_Mass": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0,
+   "tint": [
+    0.95,
+    0.95,
+    0.93
+   ]
+  },
+  "MX_Ground": {
+   "map": "build/tex/paving_albedo.jpg",
+   "normalMap": "build/tex/paving_normal.jpg",
+   "normalScale": 1.0
+  },
+  "XE_Ground": {
+   "map": "build/tex/ext_ground.jpg",
+   "tint": [
+    0.42,
+    0.46,
+    0.4
+   ]
+  },
+  "XE_Pavers": {
+   "map": "build/tex/ext_pavers.jpg"
+  },
+  "XE_Asphalt": {
+   "map": "build/tex/paving_albedo.jpg",
+   "normalMap": "build/tex/paving_normal.jpg",
+   "normalScale": 1.0,
+   "tint": [
+    0.85,
+    0.85,
+    0.86
+   ]
+  },
+  "XE_Concrete": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0
+  },
+  "XE_Curb": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0,
+   "tint": [
+    1.15,
+    1.15,
+    1.12
+   ]
+  },
+  "XE_Fence": {
+   "map": "build/tex/ext_fence.png"
+  },
+  "XE_Shrub": {
+   "map": "build/tex/ext_grass.jpg",
+   "tint": [
+    0.7,
+    0.75,
+    0.7
+   ]
+  },
+  "XE_Soil": {
+   "map": "build/tex/ext_ground.jpg",
+   "tint": [
+    0.7,
+    0.65,
+    0.6
+   ]
+  },
+  "XE_WinGlow": {
+   "map": "build/tex/room_palette.png",
+   "emissiveMap": "build/tex/room_palette.png"
+  },
+  "XE_Soffit": {
+   "map": "build/tex/concrete_albedo.jpg",
+   "normalMap": "build/tex/concrete_normal.jpg",
+   "normalScale": 1.0,
+   "tint": [
+    0.9,
+    0.9,
+    0.88
+   ]
+  },
+  "XE_Billboard": {
+   "map": "build/tex/ext_trees.webp"
+  },
+  "XE_City": {
+   "map": "build/tex/ext_city.webp"
+  }
+ },
+ "bands": {
+  "1": {
+   "y0": 0.0,
+   "y1": 2.9,
+   "tris": 5760
+  },
+  "2": {
+   "y0": 2.9,
+   "y1": 5.8,
+   "tris": 7369
+  },
+  "3": {
+   "y0": 5.8,
+   "y1": 8.7,
+   "tris": 6237
+  },
+  "4": {
+   "y0": 8.7,
+   "y1": 11.6,
+   "tris": 5112
+  },
+  "5": {
+   "y0": 11.6,
+   "y1": 14.5,
+   "tris": 4256
+  },
+  "6": {
+   "y0": 14.5,
+   "y1": 17.4,
+   "tris": 3438
+  },
+  "7": {
+   "y0": 17.4,
+   "y1": 20.3,
+   "tris": 4594
+  }
+ },
+ "litWindows": [
+  {
+   "room": "318",
+   "level": 3,
+   "curtain": "beige",
+   "pos": [
+    21.22,
+    6.9,
+    28.356
+   ],
+   "facing": "S"
+  },
+  {
+   "room": "416",
+   "level": 4,
+   "curtain": "wine",
+   "pos": [
+    24.12,
+    9.8,
+    28.356
+   ],
+   "facing": "S"
+  },
+  {
+   "room": "217",
+   "level": 2,
+   "curtain": "teal",
+   "pos": [
+    18.32,
+    4.0,
+    28.356
+   ],
+   "facing": "S"
+  },
+  {
+   "room": "204",
+   "level": 2,
+   "curtain": "lightblue",
+   "pos": [
+    -0.256,
+    4.0,
+    10.52
+   ],
+   "facing": "W"
+  },
+  {
+   "room": "503",
+   "level": 5,
+   "curtain": "cream",
+   "pos": [
+    -0.256,
+    12.7,
+    16.32
+   ],
+   "facing": "W"
+  },
+  {
+   "room": "309",
+   "level": 3,
+   "curtain": "beige",
+   "pos": [
+    14.056,
+    6.9,
+    16.32
+   ],
+   "facing": "E"
+  },
+  {
+   "room": "407",
+   "level": 4,
+   "curtain": "wine",
+   "pos": [
+    14.056,
+    9.8,
+    16.32
+   ],
+   "facing": "E"
+  },
+  {
+   "room": "108",
+   "level": 1,
+   "curtain": "khaki",
+   "pos": [
+    22.02,
+    1.1,
+    14.044
+   ],
+   "facing": "N"
+  }
+ ],
+ "poleLights": [
+  [
+   30.4,
+   3.45,
+   6.5
+  ],
+  [
+   30.4,
+   3.45,
+   19.5
+  ],
+  [
+   30.4,
+   3.45,
+   31.5
+  ],
+  [
+   4.5,
+   3.45,
+   32.0
+  ],
+  [
+   12.5,
+   3.45,
+   31.7
+  ],
+  [
+   21,
+   3.45,
+   33.5
+  ],
+  [
+   21,
+   3.45,
+   2.5
+  ]
+ ],
+ "porchLights": [
+  [
+   16.6,
+   2.54,
+   29.22
+  ],
+  [
+   18.6,
+   2.54,
+   29.22
+  ]
+ ],
+ "pilotisLight": [
+  23.6,
+  2.6999999999999997,
+  25.2
+ ],
+ "terrain": {
+  "center": [
+   18.0,
+   15.75
+  ],
+  "rings": 87,
+  "segs": 144,
+  "rMax": 1420.0
+ },
+ "ridges": [
+  {
+   "R": 1250.0,
+   "haze": 0.45
+  },
+  {
+   "R": 1750.0,
+   "haze": 0.68
+  },
+  {
+   "R": 2400.0,
+   "haze": 0.84
+  }
+ ],
+ "city": {
+  "R": 1480.0,
+  "az0": -12.000000000000002,
+  "az1": 40.0,
+  "y0": -122.0,
+  "y1": -22.0
+ },
+ "moon": {
+  "azDeg": 135.0,
+  "elDeg": 36.0
+ },
+ "skyK": 16.0,
+ "trees": {
+  "near": 3787,
+  "billboards": 19740,
+  "nearFields": "x10,y10,z10,h100,rot1000,variant,tint1000",
+  "bbFields": "x10,y10,z10,h100,variant,tint1000"
+ },
+ "boundary": [
+  {
+   "kind": "fence",
+   "axis": "z",
+   "plane": 34.5,
+   "lo": -2.0,
+   "hi": 26.12,
+   "out": [
+    0,
+    1
+   ]
+  },
+  {
+   "kind": "hedge",
+   "axis": "x",
+   "plane": -2,
+   "lo": 28.22,
+   "hi": 34.5,
+   "out": [
+    -1,
+    0
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "x",
+   "plane": 15.6,
+   "lo": 28.1,
+   "hi": 28.220000000000002,
+   "out": [
+    -1,
+    0
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "x",
+   "plane": 19.6,
+   "lo": 28.1,
+   "hi": 28.220000000000002,
+   "out": [
+    1,
+    0
+   ]
+  },
+  {
+   "kind": "hedge",
+   "axis": "z",
+   "plane": 20.42,
+   "lo": -2.0,
+   "hi": -1.0044444444444443,
+   "out": [
+    0,
+    -1
+   ]
+  },
+  {
+   "kind": "hedge",
+   "axis": "x",
+   "plane": -2,
+   "lo": 20.42,
+   "hi": 28.220000000000002,
+   "out": [
+    -1,
+    0
+   ]
+  },
+  {
+   "kind": "wall",
+   "axis": "z",
+   "plane": -3,
+   "lo": 26.12,
+   "hi": 38.0,
+   "out": [
+    0,
+    -1
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "z",
+   "plane": 34.5,
+   "lo": 26.12,
+   "hi": 31.565,
+   "out": [
+    0,
+    1
+   ]
+  },
+  {
+   "kind": "gate",
+   "axis": "z",
+   "plane": 34.5,
+   "lo": 31.565,
+   "hi": 37.504999999999995,
+   "out": [
+    0,
+    1
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "z",
+   "plane": 34.5,
+   "lo": 37.504999999999995,
+   "hi": 38.0,
+   "out": [
+    0,
+    1
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "x",
+   "plane": 38.0,
+   "lo": -3.0,
+   "hi": 34.5,
+   "out": [
+    1,
+    0
+   ]
+  },
+  {
+   "kind": "wall",
+   "axis": "z",
+   "plane": -3,
+   "lo": 19.52,
+   "hi": 26.119999999999997,
+   "out": [
+    0,
+    -1
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "x",
+   "plane": 19.52,
+   "lo": -3.0,
+   "hi": 0.014906832298136496,
+   "out": [
+    -1,
+    0
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "z",
+   "plane": 13.18,
+   "lo": 14.92,
+   "hi": 17.475555555555555,
+   "out": [
+    0,
+    1
+   ]
+  },
+  {
+   "kind": "fence",
+   "axis": "x",
+   "plane": 14.92,
+   "lo": 3.02,
+   "hi": 11.655999999999999,
+   "out": [
+    -1,
+    0
+   ]
+  }
+ ],
+ "road": [
+  [
+   34.5,
+   34.5
+  ],
+  [
+   35.2,
+   44.0
+  ],
+  [
+   38.5,
+   55.0
+  ],
+  [
+   46.0,
+   66.0
+  ],
+  [
+   58.0,
+   75.5
+  ],
+  [
+   74.0,
+   82.0
+  ],
+  [
+   95.0,
+   86.0
+  ],
+  [
+   120.0,
+   88.0
+  ],
+  [
+   150.0,
+   92.0
+  ],
+  [
+   180.0,
+   99.0
+  ]
+ ]
+}

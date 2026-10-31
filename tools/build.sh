@@ -1,15 +1,17 @@
 #!/bin/bash
 # tools/build.sh — P3a: 全館の外殻を1コマンドで再現する(無人実行)。
-#   building.json → make_textures.py(build/tex) → 階ごとに build_floor.py → bake.py → export.py → ライトマップ WebP 化 → check_glb.mjs
+#   building.json → make_textures.py(build/tex) → 階ごとに build_floor.py → bake.py → export.py → ライトマップ WebP 化
+#   → P3c: ext_textures.py(build/tex/ext_*) → build_exterior.py(build/exterior.glb。階の GLB から外観の帯を取り出すので階の後) → check_glb.mjs
 # 使い方: tools/build.sh                 全階(1〜7。7F は屋上B込み)
 #         tools/build.sh --floor 4       1階だけ
 #         tools/build.sh --samples 512 --size 2048 --device GPU|CPU
 #         tools/build.sh --p0            旧 P0(4F の1区間 build/p0.glb)を作る(参考用)
+#         tools/build.sh --exterior      外観・外環境だけ作り直す(階の GLB はそのまま)
 # 環境変数 BLENDER で Blender の場所を上書きできる。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BLENDER="${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}"
-SAMPLES=1024; SIZE=2048; DEVICE=GPU; FLOORS="1 2 3 4 5 6 7"; P0=0
+SAMPLES=1024; SIZE=2048; DEVICE=GPU; FLOORS="1 2 3 4 5 6 7"; P0=0; EXT_ONLY=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --samples) SAMPLES="$2"; shift 2;;
@@ -17,6 +19,7 @@ while [ $# -gt 0 ]; do
     --device) DEVICE="$2"; shift 2;;
     --floor) FLOORS="$2"; shift 2;;
     --p0) P0=1; shift;;
+    --exterior) EXT_ONLY=1; FLOORS=""; shift;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
@@ -58,6 +61,12 @@ for N in $FLOORS; do
   grep -E '^\[n2|Error|Traceback' "build/logs/floor_${N}_export.log" || true
   test "build/floor_${N}.glb" -nt "build/floor_${N}_lightmap.png"
 done
+echo "== exterior (P3c)"
+python3 tools/ext_textures.py | tail -1
+"$BLENDER" -b --factory-startup -P tools/blender/build_exterior.py -- --out build/exterior.glb --manifest build/exterior_manifest.json \
+  > build/logs/exterior_build.log 2>&1 || true
+grep -E '^\[n2|Error|Traceback' build/logs/exterior_build.log || true
+test build/exterior.glb -nt build/tex/ext_sky.webp
 echo "== check"
 node tools/check_glb.mjs
 echo "== done in $(( $(date +%s) - T0 ))s"
