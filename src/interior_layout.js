@@ -188,7 +188,7 @@ export function unitInterior(room) {
   const doorPlane = F.pt(3.54, 0.68);
   const hide = {
     room: room.id, b: closet.b, f: closet.f,
-    eye: [r4(doorPlane[0] - fv[0] * 0.16), r4(doorPlane[1] - fv[1] * 0.16)],    // 扉の隙間の 16cm 奥
+    eye: [r4(doorPlane[0] - fv[0] * 0.11), r4(doorPlane[1] - fv[1] * 0.11)],    // 扉の隙間の 11cm 奥
     feet: [r4(ccx), r4(ccz)],
     out: F.pt(3.54, 1.25).map(r4),                                             // 出た時に立つ場所(通路)
     stand: F.pt(3.54, 1.42).map(r4),                                           // 管理人が立ち止まる所(扉の 0.74m 前)
@@ -321,7 +321,7 @@ export function commonInterior(room) {
     deco('extinguisher', 21.7, 22.25, 21.9, 22.45, 0, 0.55, 'W');
     addFall('mug', 20.24, 0.72, 25.85, 'desk');
     addFall('binders', 21.46, 1.8, 23.0, 'shelf');
-    hide = { room: room.id, b: lk.b, f: 'W', eye: [21.52, 27.2], feet: [21.67, 27.2], out: [20.95, 27.2], stand: [20.66, 27.2], yaw: FACING_YAW.W, locker: true };
+    hide = { room: room.id, b: lk.b, f: 'W', eye: [21.5, 27.2], feet: [21.67, 27.2], out: [20.95, 27.2], stand: [20.66, 27.2], yaw: FACING_YAW.W, locker: true };
     points = { entry: [20.8, 22.8], room: [20.9, 24.8], living: [20.9, 26.0] };
     passage = [{ rect: [20.4, 22.16, 21.4, 25.6] }];
     // 当たりが通路(扉→机の前)を塞がない

@@ -439,7 +439,8 @@ def _closet(col, it, base, room):
     # 外側の側面(部屋から見える箱の左右。天井まで)
     L.box(b, -0.03, W + 0.03, 0.0, H, 0.0, D, 'MR_Wall', keep=lambda k, c, n, F=L.front, Bk=L.back_key(): k not in (F, Bk, '+y', '-y'))
     # 中(内向きの面): 側面・奥(部屋の壁の手前)・天井。床・棚・パイプ・服
-    L.ibox(b, 0.0, W, 0.0, 2.0, 0.03, D - 0.001, 'MR_Wall', keep=lambda k, c, n, F=L.front: k not in (F, '+y'))
+    # 内向きの面: 開口(正面)の面は内向きの法線が back_key の向きなので除く。床(内向き +y)は下で張る
+    L.ibox(b, 0.0, W, 0.0, 2.0, 0.03, D - 0.001, 'MR_Wall', keep=lambda k, c, n, Bk=L.back_key(): k not in (Bk, '+y'))
     L.box(b, 0.0, W, 0.0, 0.002, 0.03, D, 'MR_Floor' if L.f in 'NS' else 'MR_FloorZ', keep=lambda k, c, n: k == '+y')
     L.pbox(b, 0.02, W - 0.02, 1.72, 1.74, 0.2, D - 0.02, 'white')                                  # 枕棚
     L.box(b, 0.02, W - 0.02, 1.64, 1.66, D - 0.32, D - 0.3, 'MR_Metal')                           # パイプ
@@ -460,19 +461,22 @@ def _closet(col, it, base, room):
         hx, hy, hz = L.w(hinge_a, 0.0, 0.035)
         outer = C.MeshBuilder(f'ClosetDoor_{side}_{room}', origin=(hx, hy, hz))
         ob = B.__new__(B); ob.mb = outer; ob.name = outer.name
-        L.box(ob, a_out0 + 0.002, a_out1 - 0.002, 0.02, 1.99, 0.005, 0.035, 'MR_WoodLight')
+        L.pbox(ob, a_out0 + 0.002, a_out1 - 0.002, 0.02, 1.99, 0.005, 0.035, 'cream', keep=lambda k, c, n: True)
         mid_a = a_out1 if side == 'L' else a_out0
         mx_, my_, mz_ = L.w(mid_a, 0.0, 0.035)
         inner = C.MeshBuilder(f'ClosetDoorIn_{side}_{room}', origin=(mx_, my_, mz_))
         ib = B.__new__(B); ib.mb = inner; ib.name = inner.name
-        L.box(ib, a_in0 + 0.002, a_in1 - 0.002, 0.02, 1.99, 0.005, 0.035, 'MR_WoodLight')
+        L.pbox(ib, a_in0 + 0.002, a_in1 - 0.002, 0.02, 1.99, 0.005, 0.035, 'cream', keep=lambda k, c, n: True)
+        for yy in (0.5, 1.2):   # 折戸の鏡板の溝(細い影の線)
+            L.pbox(ib, a_in0 + 0.03, a_in1 - 0.03, yy, yy + 0.008, -0.001, 0.005, 'lightgray', keep=lambda k, c, n: True)
         ka = a_in1 - 0.05 if side == 'L' else a_in0 + 0.03
         L.box(ib, ka, ka + 0.02, 0.85, 1.15, -0.012, 0.005, 'MR_Metal')                            # 取っ手
         oo = outer.finish(col, dict(ROOMS_PROPS, n2_kind='closetdoor', n2_room=room, n2_side=side, n2_sign=sgn, n2_part='outer'))
         io = inner.finish(col, dict(ROOMS_PROPS, n2_kind='closetdoor', n2_room=room, n2_side=side, n2_sign=sgn, n2_part='inner'))
         if oo and io:
+            # 子の位置は親(外側の板の蝶番)からの相対に直す(matrix_world は作った直後は未更新なので使わない)
             io.parent = oo
-            io.matrix_parent_inverse = oo.matrix_world.inverted()
+            io.location = io.location - oo.location
 
 
 def _locker(col, it, base, room):
@@ -483,7 +487,7 @@ def _locker(col, it, base, room):
     L.pbox(b, 0.0, W, 0.0, H, 0.03, D, 'locker', keep=lambda k, c, n, F=L.front: k != F)
     L.pbox(b, 0.0, 0.03, 0.0, H, 0.0, 0.03, 'locker'); L.pbox(b, W - 0.03, W, 0.0, H, 0.0, 0.03, 'locker')
     L.pbox(b, 0.0, W, H - 0.04, H, 0.0, 0.03, 'locker'); L.pbox(b, 0.0, W, 0.0, 0.05, 0.0, 0.03, 'locker')
-    L.box(b, 0.03, W - 0.03, 0.05, H - 0.04, D - 0.002, D, 'MR_Pal', keep=lambda k, c, n, F=L.front: k == F)   # 奥(内側の背板)
+    L.ibox(b, 0.03, W - 0.03, 0.05, H - 0.04, 0.03, D - 0.002, 'MR_Partition', keep=lambda k, c, n, Bk=L.back_key(): k != Bk)   # 内側(側板・背板・天板・底板)
     L.pbox(b, 0.04, W - 0.04, 1.55, 1.57, 0.06, D - 0.03, 'steel')
     L.pbox(b, 0.1, 0.16, 0.6, 1.5, D - 0.2, D - 0.05, 'navy')       # 掛かった作業着(1着)
     b.finish(col, {'n2_kind': 'locker', 'n2_room': room})
@@ -1129,7 +1133,7 @@ def build_massing(col):
                 mb.quad(pts, (ox, 0, oz), 'MX_Mass')
         # この階の屋上(上の階が無い部分)の屋根面とパラペット(上下1階の範囲外なら塊として)
         if L != N:
-            up = _building_rects(floors[L + 1]) if L < 7 else []
+            up = (_building_rects(floors[L + 1]) + [list(r) for r in (floors[L + 1].get('roofA') or {}).get('rects', [])]) if L < 7 else []
             for (x, z, w, d) in rects:
                 for (cx0, cz0, cx1, cz1) in _uncovered_cells(x, z, w, d, up):
                     mb.quad([(cx0, yt + 0.0, cz1), (cx1, yt, cz1), (cx1, yt, cz0), (cx0, yt, cz0)], (0, 1, 0), 'MX_Mass')
@@ -1221,7 +1225,7 @@ def build_own_roofs(col):
         return
     floors = {f['level']: f for f in C.BUILDING['floors'] if f['level'] <= 7}
     rects = _building_rects(floors[N])
-    up = _building_rects(floors[N + 1])
+    up = _building_rects(floors[N + 1]) + [list(r) for r in (floors[N + 1].get('roofA') or {}).get('rects', [])]   # 屋上A は 4F の作り
     yt = N * C.FLOOR_H
     rb = B('OwnRoof')
     cells = []

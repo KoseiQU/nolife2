@@ -24,6 +24,7 @@ export const ROOMS = {
   hideYaw: 0.75,         // 隠れている間に見回せる左右(rad)
   hidePitch: 0.45,
   eyeY: 1.52,            // 隠れている時の目の高さ
+  hideGap: 0.09,         // 隠れている間の扉の開き(隙間越しに部屋が見える)
 };
 const FACING_VEC = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] };
 
@@ -89,7 +90,14 @@ export class Rooms {
       if (n.part === 'inner') continue;
       const node = n.node;
       node.updateMatrixWorld(true);
-      const bb = new THREE.Box3().setFromObject(node);
+      // 板そのもののメッシュだけで中心を出す(子の内側の板は含めない)
+      const bb = new THREE.Box3();
+      const visit = (o, root) => {
+        if (o !== root && o.userData && (o.userData.n2_kind === 'closetdoor' || o.userData.n2_kind === 'lockerdoor')) return;
+        if (o.isMesh) { o.geometry.computeBoundingBox(); bb.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld)); }
+        for (const ch of o.children) visit(ch, root);
+      };
+      visit(node, node);
       const ctr = bb.getCenter(new THREE.Vector3());
       const piv = node.getWorldPosition(new THREE.Vector3());
       const rx = ctr.x - piv.x, rz = ctr.z - piv.z;
@@ -299,8 +307,8 @@ export class Rooms {
       let dy = e.y - H.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
       e.y = H.yaw + THREE.MathUtils.clamp(dy, -ROOMS.hideYaw, ROOMS.hideYaw);
       e.x = THREE.MathUtils.clamp(e.x, -ROOMS.hidePitch, ROOMS.hidePitch);
-      // 管理人に開けられた(演出②)後も目線はここ。扉は閉じ切らず隙間を残す(0.04)
-      if (c.target === 0 && c.open01 < 0.035 && !c.revealed) { c.open01 = 0.035; c.target = 0.035; this._applyCloset(c); }
+      // 管理人に開けられた(演出②)後も目線はここ。扉は閉じ切らず隙間を残す(hideGap)
+      if (c.target === 0 && c.open01 < ROOMS.hideGap && !c.revealed) { c.open01 = ROOMS.hideGap; c.target = ROOMS.hideGap; this._applyCloset(c); }
     } else if (H.phase === 'out') {
       const k = Math.min(1, H.t / 0.7);
       const s = k * k * (3 - 2 * k);
