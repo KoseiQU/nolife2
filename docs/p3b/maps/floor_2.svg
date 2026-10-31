@@ -1,24 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="812" height="911" viewBox="0 0 812 911" font-family="Helvetica,Arial,sans-serif">
 <rect width="100%" height="100%" fill="#f7f7f4"/>
-<text x="12" y="26" font-size="20" font-weight="bold" fill="#222">2F　緑＝入れる部屋　灰＝空（施錠）　青＝共用</text>
-<text x="642" y="26" font-size="13" fill="#555">上＝北　下＝南（エントランス側）</text>
-<rect x="56.0" y="68.0" width="386.4" height="568.4" fill="#e3e3de" stroke="none"/>
-<rect x="224.0" y="636.4" width="560.0" height="50.4" fill="#e3e3de" stroke="none"/>
-<rect x="224.0" y="686.8" width="50.4" height="53.2" fill="#e3e3de" stroke="none"/>
-<rect x="274.4" y="686.8" width="487.2" height="168.0" fill="#e3e3de" stroke="none"/>
-<rect x="540.4" y="468.4" width="243.6" height="168.0" fill="#e3e3de" stroke="none"/>
-<rect x="128.8" y="636.4" width="95.2" height="126.0" fill="#e3e3de" stroke="none"/>
-<rect x="442.4" y="68.0" width="156.8" height="81.2" fill="#e3e3de" stroke="none"/>
-<rect x="28.0" y="68.0" width="28.0" height="81.2" fill="#e3e3de" stroke="none"/>
-<rect x="442.4" y="392.8" width="28.0" height="81.2" fill="#e3e3de" stroke="none"/>
-<rect x="436.8" y="854.8" width="81.2" height="28.0" fill="#e3e3de" stroke="none"/>
-<rect x="540.4" y="440.4" width="81.2" height="28.0" fill="#e3e3de" stroke="none"/>
-<polyline points="249.2,82.0 249.2,661.6 229.6,661.6 249.2,661.6 770.0,661.6" fill="none" stroke="#cfcac0" stroke-width="50.4" stroke-linecap="butt" stroke-linejoin="miter"/>
-<rect x="56.0" y="68.0" width="168.0" height="81.2" fill="#8fd19e" stroke="#2e7d32" stroke-width="1.5"/>
+<text x="12" y="26" font-size="18" font-weight="bold" fill="#222">2F　緑＝最初から入れる　橙＝進行で解放　灰＝空（施錠）　青＝共用</text>
+<text x="662" y="26" font-size="12" fill="#555">上＝北　下＝南</text>
+<rect x="56.0" y="68.0" width="386.4" height="568.4" fill="#e3e3de"/>
+<rect x="224.0" y="636.4" width="560.0" height="50.4" fill="#e3e3de"/>
+<rect x="224.0" y="686.8" width="50.4" height="53.2" fill="#e3e3de"/>
+<rect x="274.4" y="686.8" width="487.2" height="168.0" fill="#e3e3de"/>
+<rect x="540.4" y="468.4" width="243.6" height="168.0" fill="#e3e3de"/>
+<rect x="128.8" y="636.4" width="95.2" height="126.0" fill="#e3e3de"/>
+<rect x="442.4" y="68.0" width="156.8" height="81.2" fill="#e3e3de"/>
+<rect x="28.0" y="68.0" width="28.0" height="81.2" fill="#e3e3de"/>
+<rect x="442.4" y="392.8" width="28.0" height="81.2" fill="#e3e3de"/>
+<rect x="436.8" y="854.8" width="81.2" height="28.0" fill="#e3e3de"/>
+<rect x="540.4" y="440.4" width="81.2" height="28.0" fill="#e3e3de"/>
+<polyline points="249.2,82.0 249.2,661.6 229.6,661.6 249.2,661.6 770.0,661.6" fill="none" stroke="#cfcac0" stroke-width="50.4"/>
+<rect x="56.0" y="68.0" width="168.0" height="81.2" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
 <rect x="28.0" y="68.0" width="28.0" height="81.2" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="224.0" cy="108.6" r="3" fill="#333"/>
 <text x="140.0" y="112.6" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">201</text>
-<rect x="56.0" y="149.2" width="168.0" height="81.2" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
+<rect x="56.0" y="149.2" width="168.0" height="81.2" fill="#8fd19e" stroke="#2e7d32" stroke-width="1.5"/>
 <rect x="28.0" y="149.2" width="28.0" height="81.2" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="224.0" cy="189.8" r="3" fill="#333"/>
 <text x="140.0" y="193.8" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">202</text>
@@ -82,7 +82,7 @@
 <rect x="518.0" y="854.8" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="558.6" cy="686.8" r="3" fill="#333"/>
 <text x="558.6" y="774.8" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">217</text>
-<rect x="599.2" y="686.8" width="81.2" height="168.0" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
+<rect x="599.2" y="686.8" width="81.2" height="168.0" fill="#8fd19e" stroke="#2e7d32" stroke-width="1.5"/>
 <rect x="599.2" y="854.8" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="639.8" cy="686.8" r="3" fill="#333"/>
 <text x="639.8" y="774.8" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">218</text>
@@ -90,15 +90,15 @@
 <rect x="680.4" y="854.8" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="721.0" cy="686.8" r="3" fill="#333"/>
 <text x="721.0" y="774.8" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">219</text>
-<rect x="540.4" y="468.4" width="81.2" height="168.0" fill="#8fd19e" stroke="#2e7d32" stroke-width="1.5"/>
+<rect x="540.4" y="468.4" width="81.2" height="168.0" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
 <rect x="540.4" y="440.4" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="581.0" cy="636.4" r="3" fill="#333"/>
 <text x="581.0" y="556.4" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">222</text>
-<rect x="621.6" y="468.4" width="81.2" height="168.0" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
+<rect x="621.6" y="468.4" width="81.2" height="168.0" fill="#f5b86b" stroke="#b5651d" stroke-width="1.5"/>
 <rect x="621.6" y="440.4" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="662.2" cy="636.4" r="3" fill="#333"/>
 <text x="662.2" y="556.4" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">221</text>
-<rect x="702.8" y="468.4" width="81.2" height="168.0" fill="#d9d9d4" stroke="#999" stroke-width="1.5"/>
+<rect x="702.8" y="468.4" width="81.2" height="168.0" fill="#f5b86b" stroke="#b5651d" stroke-width="1.5"/>
 <rect x="702.8" y="440.4" width="81.2" height="28.0" fill="none" stroke="#888" stroke-width="0.8" stroke-dasharray="3,2"/>
 <circle cx="743.4" cy="636.4" r="3" fill="#333"/>
 <text x="743.4" y="556.4" font-size="13" text-anchor="middle" fill="#111" font-weight="bold">220</text>
