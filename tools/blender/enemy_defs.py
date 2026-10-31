@@ -174,4 +174,35 @@ CANDIDATES = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# P1b: 確定像(DESIGN §3.4.1)。服は 02、顔は 04 の方向、大柄。質感向上は enemy_p1b.py(final=True で有効)。
+#   MakeHuman の髪(板ポリ)と制帽は使わず、髪・眉・まつ毛はヘアカーブ、制帽は自作メッシュ。
+#   eyebrows / eyelashes の MakeHuman メッシュは「毛を生やす位置の型紙」としてだけ使い、描画・書き出しはしない。
+# ---------------------------------------------------------------------------
+FINAL = dict(
+    id='07', name='07_kanrinin_final', short='確定: 大柄の管理人', final=True,
+    age=67, build='大柄・太めでがっしり', outfit='紺のつなぎ＋黄色い腕章「管理」＋黒の作業靴＋紺の制帽',
+    phenotype=dict(gender=1.0, age=AGE(67), muscle=0.62, weight=0.80, height=0.637, proportions=0.38,
+                   race=dict(asian=0.90, caucasian=0.05, african=0.05)),
+    targets={'r-eye-bag-incr': 0.9, 'l-eye-bag-incr': 0.9, 'head-age-incr': 0.5, 'head-round': 0.7,
+             'head-fat-incr': 0.4, 'neck-scale-horiz-incr': 0.5, 'neck-double-incr': 0.25,
+             'r-cheek-trans-down': 0.35, 'l-cheek-trans-down': 0.35, 'nose-scale-horiz-incr': 0.25,
+             'nose-volume-incr': 0.2, 'mouth-angles-down': 0.55, 'stomach-pregnant-incr': 0.35,
+             'mouth-upperlip-volume-decr': 0.5, 'mouth-lowerlip-volume-decr': 0.35, 'mouth-upperlip-height-decr': 0.2,
+             'measure-shoulder-dist-incr': 0.4},
+    expr={'eye-left-opened-up': 0.22, 'eye-right-opened-up': 0.22, 'eyebrows-left-inner-up': 0.12,
+          'eyebrows-right-inner-up': 0.12},
+    skin='old_asian_male', skin_tint=(0.42, 0.90), skin_rough=0.45, eyes='brown',
+    hair='', eyebrows='eyebrow003', eyelashes='eyelashes01',
+    clothes=['elvs_male_coveralls_1', 'shoes03'],
+    recolor={
+        'elvs_male_coveralls_1': [(None, (0.13, 0.16, 0.25), 1.0, 0.85, (0.4, 1.6, 0.17))],
+    },
+    strip={}, extras=['armband'],
+    pose=dict(arm_out=11, elbow=14, slouch=6, neck=4, head_tilt=7, head_turn=0, head_roll=0),
+    aim='§3.4.1 の確定像。大柄な体、上目遣いの丸顔、紺つなぎに腕章と制帽',
+    risk='',
+)
+CANDIDATES.append(FINAL)
+
 BY_ID = {c['id']: c for c in CANDIDATES}

@@ -1,0 +1,83 @@
+{
+ "candidate": "07",
+ "results": [
+  {
+   "check": "身長(m)",
+   "ok": true,
+   "value": 1.796,
+   "limit": "1.80±0.02"
+  },
+  {
+   "check": "テクスチャ最大(.blend, px)",
+   "ok": true,
+   "value": 4096,
+   "limit": "≤4096"
+  },
+  {
+   "check": "肌の突き抜け(頂点数)",
+   "ok": true,
+   "value": {
+    "cap": 0,
+    "elvs_male_coveralls_1": 0
+   },
+   "limit": "0"
+  },
+  {
+   "check": "虹彩の平均色(灰白でない)",
+   "ok": true,
+   "value": {
+    "rgb": [
+     0.195,
+     0.107,
+     0.068
+    ],
+    "lum": 0.123,
+    "sat": 0.65,
+    "share": 0.079
+   },
+   "limit": "輝度<0.35・彩度>0.2"
+  },
+  {
+   "check": "つば下端 − 目の中心(m)",
+   "ok": true,
+   "value": 0.0147,
+   "limit": "> 0"
+  },
+  {
+   "check": "目へのレイが帽子に遮られない",
+   "ok": true,
+   "value": "なし",
+   "limit": "なし"
+  },
+  {
+   "check": "三角形数(FBX)",
+   "ok": true,
+   "value": 55104,
+   "limit": "≤60000"
+  },
+  {
+   "check": "FBX 再読込: メッシュ数",
+   "ok": true,
+   "value": 10,
+   "limit": 10
+  },
+  {
+   "check": "FBX 再読込: 頂点数・素材数の一致",
+   "ok": true,
+   "value": "全一致",
+   "limit": "全一致"
+  },
+  {
+   "check": "テクスチャ最大(FBX, px)",
+   "ok": true,
+   "value": 4096,
+   "limit": "≤4096"
+  },
+  {
+   "check": "FBX サイズ(MB)",
+   "ok": true,
+   "value": 18.02,
+   "limit": "≤50"
+  }
+ ]
+}

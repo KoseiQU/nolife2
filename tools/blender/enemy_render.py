@@ -4,7 +4,10 @@
 #     Blender -b build/enemy/NN_xxx.blend -P tools/blender/enemy_render.py -- --mode portrait --out docs/enemy-candidates/NN_portrait.jpg
 #   insitu   : P0b の廊下(build/p0_baked.blend)に候補を追加読み込みし、常夜灯＋低い位置の懐中電灯で全身 1920×1080
 #     Blender -b build/p0_baked.blend -P tools/blender/enemy_render.py -- --mode insitu --enemy build/enemy/NN_xxx.blend --out ...
+#   peephole : insitu と同じ廊下で、顔の 0.6m 手前(覗き穴の高さ 1.50m)から見上げる顔アップ。光は腰の高さから
+#   threequarter: 全身を斜め45°から、中立照明(グレーのホリ)
 #   sheet    : portrait を横に並べた一覧 --inputs a.jpg,b.jpg,... --out docs/enemy-candidates/00_overview.jpg
+#   compare  : 前後比較 --inputs 前の廊下,後の廊下,前の顔,後の顔 --out .../compare_before_after.jpg
 #   共通: [--samples N] [--device GPU|CPU] [--exposure EV]
 # 6体とも同じカメラ・同じ照明(このファイルの定数)で撮る。JPEG は 2MB 以下になるまで品質を下げる。
 
@@ -16,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
-ARGS = parse_args({'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
+ARGS = parse_args({'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
 MODE = ARGS['mode']
 
 # --- 廊下(P0b)での立ち位置とカメラ。Blender 座標 = (x, -z, y)(build_scene.py と同じ)。床 z=8.7 ---
@@ -161,6 +164,11 @@ def portrait():
     if ARGS.get('side'):   # 調整用: 真横(キャラの右側)から全身
         cam.location = (h0.x - 6.0, h0.y, 0.95); cam.data.lens = 50
         look_at(cam, (h0.x, h0.y, 0.95))
+    elif ARGS.get('orbit'):   # 調整用: 頭のまわりを回って寄る(度。90=キャラの左)
+        a = math.radians(float(ARGS['orbit']))
+        hc = Vector((h0.x, h0.y, (h0.z + h1.z) / 2))
+        cam.location = hc + Vector((math.sin(a), -math.cos(a), 0.05)) * 0.9
+        look_at(cam, hc)
     else:
         look_at(cam, (h0.x, h0.y, cz))
     # 背景: 無地の中間グレー(曲面ホリ)
@@ -182,7 +190,39 @@ def portrait():
     return scene
 
 
-def insitu():
+def threequarter():
+    """全身・斜め45°(キャラの左前)・中立照明。服の皺と帽子の形の確認用(1200×1600)。"""
+    scene = bpy.context.scene
+    setup_cycles(scene, int(ARGS['samples'] or 256))
+    scene.render.resolution_x, scene.render.resolution_y = 1200, 1600
+    scene.view_settings.exposure = float(ARGS['exposure'] or PORTRAIT_EXPOSURE)
+    rig = enemy_root(scene)
+    mn, mx = world_bbox([o for o in rig.children if o.type == 'MESH' and not o.hide_render])
+    c = Vector(((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mx.z / 2 + 0.02))
+    cam = bpy.data.objects.new('N2_Cam', bpy.data.cameras.new('N2_Cam'))
+    scene.collection.objects.link(cam); scene.camera = cam
+    cam.data.lens = 50; cam.data.sensor_fit = 'VERTICAL'; cam.data.sensor_height = 24
+    dist = (mx.z * 1.12) / 2 / math.tan(math.atan(12 / 50))
+    d = Vector((math.sin(math.radians(45)), -math.cos(math.radians(45)), 0))
+    cam.location = c + d * dist + Vector((0, 0, 0.15))
+    look_at(cam, c)
+    bpy.ops.mesh.primitive_plane_add(size=30, location=(c.x, c.y, 0))
+    fl = bpy.context.object
+    bpy.ops.mesh.primitive_plane_add(size=30, location=(c.x - d.x * 3, c.y - d.y * 3, 5))
+    bg = bpy.context.object; bg.rotation_euler = (math.radians(90), 0, math.radians(45))
+    mat = bpy.data.materials.new('N2_Backdrop')
+    b = mat.node_tree.nodes['Principled BSDF']
+    b.inputs['Base Color'].default_value = (0.09, 0.09, 0.09, 1); b.inputs['Roughness'].default_value = 0.9
+    fl.data.materials.append(mat); bg.data.materials.append(mat)
+    w = bpy.data.worlds.new('N2_PortraitWorld'); scene.world = w
+    w.node_tree.nodes['Background'].inputs['Color'].default_value = (0.02, 0.02, 0.02, 1)
+    add_area(scene, 'N2_Key', c + Vector((-2.2, -3.2, 2.2)), c + Vector((0, 0, 0.3)), 2.5, 240, (1.0, 1.0, 1.0))
+    add_area(scene, 'N2_Fill', c + Vector((3.2, -2.0, 0.6)), c, 3.0, 60, (0.93, 0.96, 1.0))
+    add_area(scene, 'N2_Rim', c + Vector((1.2, 2.8, 2.4)), c + Vector((0, 0, 0.4)), 1.6, 140, (1.0, 1.0, 1.0))
+    return scene
+
+
+def insitu(peephole=False):
     scene = bpy.context.scene
     setup_cycles(scene, int(ARGS['samples'] or 512))
     scene.render.resolution_x, scene.render.resolution_y = 1920, 1080
@@ -193,7 +233,7 @@ def insitu():
         dst.objects = list(src.objects)
     col = bpy.data.collections.new('N2_Enemy'); scene.collection.children.link(col)
     for o in dst.objects:
-        if o is not None and o.type in ('ARMATURE', 'MESH'):
+        if o is not None and o.type in ('ARMATURE', 'MESH', 'CURVES'):
             col.objects.link(o)
     rig = enemy_root(scene)
     rig.location = (ENEMY_XY[0], ENEMY_XY[1], FLOOR_Z)
@@ -206,6 +246,21 @@ def insitu():
     cam.data.clip_start = 0.05
     cam.location = (CAM_XY[0], CAM_XY[1], FLOOR_Z + EYE_H)
     look_at(cam, (ENEMY_XY[0], ENEMY_XY[1], FLOOR_Z + 1.25))
+    if peephole:
+        # 覗き穴: 顔の 0.6m 手前、扉の覗き穴の高さ(1.50m)から見上げる。光は腰の高さ(1.0m)から上へ
+        h0, h1 = head_point(rig)
+        face = (h0 + h1) / 2 + Vector((0, 0.06, -0.02))
+        cam.location = (face.x, face.y + 0.6, FLOOR_Z + 1.50)
+        cam.data.lens = 12 / math.tan(math.radians(40) / 2)
+        look_at(cam, face)
+        bpy.context.view_layer.update()
+        ld = bpy.data.lights.new('N2_Peep_Flash', 'SPOT')
+        ld.energy = 2.0; ld.color = (1.0, 0.93, 0.87); ld.spot_size = math.radians(50); ld.spot_blend = 0.6
+        ld.shadow_soft_size = 0.012
+        o = bpy.data.objects.new('N2_Peep_Flash', ld); scene.collection.objects.link(o)
+        o.location = (face.x + 0.10, face.y + 0.35, FLOOR_Z + 1.0)
+        look_at(o, face)
+        return scene
     # 懐中電灯: 腰の高さ(床から約1.05m)の右手に下げて持ち、敵の胸へ向ける = DESIGN §3.4「下からの照らし」
     bpy.context.view_layer.update()   # matrix_world を確定させてから手元の位置を出す
     fl_loc = cam.matrix_world @ Vector((0.16, -0.55, -0.15))
@@ -244,12 +299,83 @@ def sheet():
     log(f'saved {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
 
 
+def text_tile(text, w, h, path):
+    """見出し文字の画像(黒地に白)。Blender 同梱の Noto Sans CJK を Workbench で撮る。"""
+    font_path = os.path.join(os.path.dirname(bpy.app.binary_path), '..', 'Resources',
+                             f'{bpy.app.version[0]}.{bpy.app.version[1]}', 'datafiles', 'fonts', 'Noto Sans CJK Regular.woff2')
+    sc = bpy.data.scenes.new('N2_Text')
+    sc.render.engine = 'BLENDER_WORKBENCH'
+    sc.display.shading.light = 'FLAT'; sc.display.shading.color_type = 'MATERIAL'
+    sc.render.resolution_x, sc.render.resolution_y = w, h
+    sc.view_settings.view_transform = 'Standard'
+    sc.world = bpy.data.worlds.new('N2_TextWorld'); sc.world.color = (0, 0, 0)
+    cam = bpy.data.objects.new('N2_TextCam', bpy.data.cameras.new('N2_TextCam'))
+    cam.data.type = 'ORTHO'; cam.data.ortho_scale = w / h
+    cam.location = (0, 0, 5); sc.collection.objects.link(cam); sc.camera = cam
+    cu = bpy.data.curves.new('N2_Txt', 'FONT'); cu.body = text
+    cu.font = bpy.data.fonts.load(os.path.abspath(font_path), check_existing=True)
+    cu.align_x = 'CENTER'; cu.align_y = 'CENTER'; cu.size = 0.55
+    m = bpy.data.materials.new('N2_TxtMat'); m.diffuse_color = (0.9, 0.9, 0.9, 1)
+    t = bpy.data.objects.new('N2_Txt', cu); t.data.materials.append(m); sc.collection.objects.link(t)
+    sc.render.filepath = path; sc.render.image_settings.file_format = 'PNG'
+    bpy.ops.render.render(scene=sc.name, write_still=True)
+    bpy.data.scenes.remove(sc)
+    im = bpy.data.images.load(path)
+    import numpy as np
+    a = np.empty(w * h * 4, np.float32); im.pixels.foreach_get(a)
+    os.remove(path)
+    return a.reshape(h, w, 4)
+
+
+def compare():
+    """前後比較(左=P1 の 02 廊下 / 04 顔、右=P1b の 07 同条件)。--inputs a_insitu,b_insitu,a_portrait,b_portrait"""
+    import numpy as np
+    f = [os.path.join(ROOT, x) for x in ARGS['inputs'].split(',')]
+    W, H = 1920, 1180
+    canvas = np.zeros((H, W, 4), np.float32); canvas[..., 3] = 1
+    def load(path, w, h):
+        im = bpy.data.images.load(path); im.scale(w, h)
+        a = np.empty(w * h * 4, np.float32); im.pixels.foreach_get(a)
+        return a.reshape(h, w, 4)
+    # 画像の行は下から。下段=顔(高さ 540)、上段=廊下(960×540)、最上段=見出し(100)
+    top_y = 540
+    canvas[top_y:top_y + 540, 0:956] = load(f[0], 956, 540)
+    canvas[top_y:top_y + 540, 964:1920] = load(f[1], 956, 540)
+    pw = 405
+    canvas[0:540, 478 - pw // 2:478 - pw // 2 + pw] = load(f[2], pw, 540)
+    canvas[0:540, 1442 - pw // 2:1442 - pw // 2 + pw] = load(f[3], pw, 540)
+    tmp = os.path.join(ROOT, 'build', '_cmp_label.png')
+    canvas[1080:1180, 0:956] = text_tile('前（P1: 02 の服 / 04 の顔）', 956, 100, tmp)
+    canvas[1080:1180, 964:1920] = text_tile('後（P1b: 07 確定像）', 956, 100, tmp)
+    out = bpy.data.images.new('N2_Cmp', W, H)
+    out.pixels.foreach_set(canvas.ravel())
+    path = os.path.join(ROOT, ARGS['out'])
+    out.filepath_raw = path; out.file_format = 'JPEG'
+    bpy.context.scene.render.image_settings.quality = 90
+    out.save()
+    log(f'saved {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
+
+
+def show_export_hair(scene):
+    """確認用: ヘアカーブを隠し、書き出し用の帯メッシュ(髪・眉・まつ毛)で描く = ゲームでの見え方。"""
+    for o in scene.objects:
+        if o.type == 'CURVES':
+            o.hide_render = True
+        if o.get('n2_export_only'):
+            o.hide_render = False
+
+
 def main():
     if MODE == 'sheet':
         return sheet()
+    if MODE == 'compare':
+        return compare()
     out = os.path.join(ROOT, ARGS['out'])
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    scene = portrait() if MODE == 'portrait' else insitu()
+    scene = {'portrait': portrait, 'insitu': insitu, 'peephole': lambda: insitu(True),
+             'threequarter': threequarter}[MODE]()
+    if ARGS.get('strips'):
+        show_export_hair(scene)
     if ARGS.get('debug_lights'):
         for o in scene.objects:
             if o.type == 'LIGHT': print('LIGHT', o.name, o.data.type, o.data.energy, tuple(round(v, 2) for v in o.matrix_world.translation), o.hide_render)

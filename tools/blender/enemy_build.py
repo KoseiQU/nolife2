@@ -10,7 +10,7 @@
 #   → 色替え(テクスチャを numpy で灰色化して色を乗せる。柄・しわは残す) → 袖落とし等の簡易加工
 #   → 自作小物(腕章・名札) → 立ちポーズ → 保存
 
-import bpy, bmesh, addon_utils, math, os, sys
+import bpy, bmesh, addon_utils, json, math, os, sys
 import numpy as np
 from mathutils import Matrix, Vector
 
@@ -117,7 +117,7 @@ def white_patch_mask(lum, thr, r=7):
     return _dilate(m, 2)
 
 
-def recolor_pixels(px, rules):
+def recolor_pixels(px, rules, erase_out=None):
     rgb = px[..., :3].copy()
     alpha = px[..., 3]
     lum = rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32)
@@ -143,6 +143,8 @@ def recolor_pixels(px, rules):
         rel = np.clip(lum / max(ref, 1e-3), clamp[0], clamp[1])
         if erase is not None:
             rel = np.where(erase, 1.0, rel)
+            if erase_out is not None:
+                erase_out.append(erase)
         shade = 1 + (rel - 1) * keep                      # 濃淡を keep だけ残す
         new = np.clip(np.array(tint, np.float32)[None, None, :] * shade[..., None], 0, 1)
         k = (m * amount)[..., None]
@@ -189,9 +191,15 @@ def recolor_object(obj, rules, tag):
         for node in m.node_tree.nodes:
             if is_color_tex(node):
                 src = node.image
-                arr = recolor_pixels(image_to_np(src), rules)
+                erased = []
+                arr = recolor_pixels(image_to_np(src), rules, erased)
                 path = os.path.join(TEX_OUT, f'{C["id"]}_{tag}.png')
                 node.image = np_to_image(arr, f'{C["id"]}_{tag}', path)
+                if erased:   # 白消しした領域(ロゴ等)。P1b で法線マップ側の凹凸も消すのに使う
+                    m = np.any(erased, axis=0).astype(np.float32)
+                    mk = np.stack([m, m, m, np.ones_like(m)], -1)
+                    obj['n2_erase_mask'] = np_to_image(mk, f'{C["id"]}_{tag}_erase',
+                                                       os.path.join(TEX_OUT, f'{C["id"]}_{tag}_erase.png')).name
                 done += 1
     log(f'recolor {obj.name}: {done} tex')
 
@@ -554,11 +562,12 @@ def color_image_of(mat):
     return (pref or cands or [None])[0]
 
 
-def export_image(img, tex_dir, has_alpha):
+def export_image(img, tex_dir, has_alpha, max_px=None):
     w, h = img.size
     cp = img.copy()
-    if max(w, h) > FBX_TEX_MAX:
-        k = FBX_TEX_MAX / max(w, h)
+    lim = max_px or FBX_TEX_MAX
+    if max(w, h) > lim:
+        k = lim / max(w, h)
         cp.scale(max(1, int(w * k)), max(1, int(h * k)))
     ext = 'png' if has_alpha else 'jpg'
     path = os.path.join(tex_dir, f'{bpy.path.clean_name(img.name)}.{ext}')
@@ -568,14 +577,56 @@ def export_image(img, tex_dir, has_alpha):
         bpy.context.scene.render.image_settings.quality = 88
     cp.save()
     out = bpy.data.images.load(path, check_existing=False)
+    if img.colorspace_settings.name == 'Non-Color':
+        out.colorspace_settings.name = 'Non-Color'
     return out
+
+
+def fbx_material(m, tex_dir):
+    """FBX が拾える単純な Principled(画像→色[＋α]、法線マップ、粗さ)へ置き換えた複製を作る。
+    P1b の焼き込み素材はカスタムプロパティ n2_albedo / n2_normal / n2_rough / n2_alpha で画像を指定。"""
+    final = C.get('final')
+    if m.get('n2_albedo'):
+        img = bpy.data.images[m['n2_albedo']]
+        alpha = bool(m.get('n2_alpha'))
+    else:
+        img = color_image_of(m)
+        pb0 = m.node_tree.nodes.get('Principled BSDF')
+        alpha = bool(pb0 and pb0.inputs['Alpha'].links) and C['id'] + '_skin' != (img.name if img else '')
+    nm = bpy.data.materials.new(m.name + '_fbx')
+    nt = nm.node_tree
+    b = nt.nodes['Principled BSDF']
+    b.inputs['Roughness'].default_value = float(m.get('n2_rough_value', 0.7))
+    if img:
+        ei = export_image(img, tex_dir, alpha, 4096 if final else None)
+        tx = nt.nodes.new('ShaderNodeTexImage'); tx.image = ei
+        nt.links.new(tx.outputs['Color'], b.inputs['Base Color'])
+        if alpha:
+            nt.links.new(tx.outputs['Alpha'], b.inputs['Alpha'])
+    else:
+        pb = m.node_tree.nodes.get('Principled BSDF')
+        if pb:
+            for k in ('Base Color', 'Metallic', 'Roughness'):
+                b.inputs[k].default_value = pb.inputs[k].default_value
+    if m.get('n2_normal'):
+        ni = export_image(bpy.data.images[m['n2_normal']], tex_dir, False, 2048)
+        ni.colorspace_settings.name = 'Non-Color'
+        tn = nt.nodes.new('ShaderNodeTexImage'); tn.image = ni
+        nmn = nt.nodes.new('ShaderNodeNormalMap')
+        nt.links.new(tn.outputs['Color'], nmn.inputs['Color']); nt.links.new(nmn.outputs['Normal'], b.inputs['Normal'])
+    if m.get('n2_rough'):
+        ri = export_image(bpy.data.images[m['n2_rough']], tex_dir, False, 2048)
+        ri.colorspace_settings.name = 'Non-Color'
+        tr = nt.nodes.new('ShaderNodeTexImage'); tr.image = ri
+        nt.links.new(tr.outputs['Color'], b.inputs['Roughness'])
+    return nm
 
 
 def export_fbx(rig):
     tex_dir = os.path.join(OUT, 'fbx_tex', C['id'])
     os.makedirs(tex_dir, exist_ok=True)
     rig.data.pose_position = 'REST'
-    meshes = [o for o in rig.children if o.type == 'MESH']
+    meshes = [o for o in rig.children if o.type == 'MESH' and not o.get('n2_no_export')]
     cache = {}
     for o in meshes:
         for slot in o.material_slots:
@@ -583,24 +634,16 @@ def export_fbx(rig):
             if not m:
                 continue
             if m.name not in cache:
-                img = color_image_of(m)
-                pb0 = m.node_tree.nodes.get('Principled BSDF')
-                alpha = bool(pb0 and pb0.inputs['Alpha'].links) and C['id'] + '_skin' != (img.name if img else '')
-                nm = bpy.data.materials.new(m.name + '_fbx')
-                b = nm.node_tree.nodes['Principled BSDF']
-                b.inputs['Roughness'].default_value = 0.7
-                if img:
-                    ei = export_image(img, tex_dir, alpha)
-                    tx = nm.node_tree.nodes.new('ShaderNodeTexImage'); tx.image = ei
-                    nm.node_tree.links.new(tx.outputs['Color'], b.inputs['Base Color'])
-                    if alpha:
-                        nm.node_tree.links.new(tx.outputs['Alpha'], b.inputs['Alpha'])
-                else:
-                    pb = m.node_tree.nodes.get('Principled BSDF')
-                    if pb:
-                        b.inputs['Base Color'].default_value = pb.inputs['Base Color'].default_value
-                cache[m.name] = nm
+                cache[m.name] = fbx_material(m, tex_dir)
             slot.material = cache[m.name]
+    bpy.context.view_layer.update()
+    # 書き出す形(レスト・モディファイア適用後)の頂点数・三角形数・素材数を記録 → enemy_check.py が再読込と照合
+    dg = bpy.context.evaluated_depsgraph_get()
+    stats = {}
+    for o in meshes:
+        ev = o.evaluated_get(dg); me = ev.to_mesh(); me.calc_loop_triangles()
+        stats[o.name] = dict(verts=len(me.vertices), tris=len(me.loop_triangles), mats=len(o.material_slots))
+        ev.to_mesh_clear()
     for o in bpy.context.scene.objects:
         o.select_set(o in meshes)
     bpy.context.view_layer.objects.active = meshes[0]
@@ -609,7 +652,10 @@ def export_fbx(rig):
                              use_mesh_modifiers=True, mesh_smooth_type='FACE', add_leaf_bones=False,
                              path_mode='COPY', embed_textures=True, bake_anim=False)
     mb = os.path.getsize(path) / 1e6
-    log(f'fbx {path} ({mb:.1f} MB, {len(meshes)} meshes, {len(cache)} mats)')
+    with open(os.path.join(OUT, C['name'] + '_export.json'), 'w') as f:
+        json.dump(dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats,
+                       tris=sum(v['tris'] for v in stats.values())), f, indent=1, ensure_ascii=False)
+    log(f'fbx {path} ({mb:.1f} MB, {len(meshes)} meshes, {len(cache)} mats, {sum(v["tris"] for v in stats.values())} tris)')
     assert mb <= 50, f'FBX が 50MB を超えた: {mb:.1f}MB'
 
 
@@ -652,6 +698,10 @@ def main():
         elif e in ('nametag', 'badge'):
             extras.append(make_nametag(rig, cloth, e))
     rig['n2_candidate'] = C['id']
+    if C.get('final'):   # P1b: 質感向上(レストで焼く・生やす・作る)
+        import enemy_p1b
+        enemy_p1b.init(log, TEX_OUT, C['id'])
+        enemy_p1b.upgrade(C, body, rig, objs, extras)
     # Aポーズ(レスト)の状態を記録してからポーズ
     apply_pose(rig)
     bpy.context.view_layer.objects.active = rig

@@ -15,3 +15,6 @@
 | build/enemy/*: カーゴパンツ（cortu_cargo_pants, 作者 Cortu）・黒縁眼鏡（spamrakuen_tbm_glasses_frames_01, 作者 spamrakuen） | http://www.makehumancommunity.org/node/2798 ・/node/3330 （asset packs pants01・glasses01） | CC0 1.0 | 2026-10-31 |
 | build/enemy/tex/*_armband.png・*_nametag.png（腕章「管理」・名札の文字。enemy_build.py が Blender 同梱の Noto Sans CJK で描く） | Blender 5.2 同梱 datafiles/fonts/Noto Sans CJK Regular.woff2（https://github.com/notofonts/noto-cjk） | SIL OFL 1.1（フォント）／描いた画像は自作（CC0扱い） | 2026-10-31 |
 | docs/enemy-candidates/*.jpg（上記アセットで生成した候補レンダ） | 自作（tools/build_enemies.sh） | 上記各アセットのライセンスに従う（CC-BY 分は帰属表示が必要: Elvaerwyn, Mindfront） | 2026-10-31 |
+| build/enemy/07_*（P1b 確定像。肌・服の焼き込みテクスチャ、制帽、髪・眉・まつ毛の毛束テクスチャ） | 自作（tools/blender/enemy_p1b.py が Cycles の手続き的シェーダ／numpy で描く。元は上記 MakeHuman の CC0 肌・CC-BY のつなぎ） | 自作部分は CC0 扱い／つなぎの改変物は CC-BY（帰属: Elvaerwyn） | 2026-10-31 |
+| build/enemy/07_*: 黒の作業靴（shoes03） | MakeHuman system assets（上記と同じパック） | CC0 1.0 | 2026-10-31 |
+| docs/enemy-candidates/p1b/*.jpg（P1b のレンダ） | 自作（tools/build_enemy_final.sh） | 上記各アセットのライセンスに従う（CC-BY 分は帰属表示が必要: Elvaerwyn） | 2026-10-31 |
