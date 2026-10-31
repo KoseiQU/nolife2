@@ -30,10 +30,10 @@ import { Rooms } from './rooms.js';
 import { HUD_TEXT } from './hud_text.js';
 
 const PARAMS = new URLSearchParams(location.search);
-// 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、扉は全部開けられる
-// (契約で「開かない」と決まっている地下の鉄扉は除く)、死亡・襲撃ムービーなし。?tour&floor=N(1〜7・RB・B1)で開始階を指定
+// 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
+// P3b-3: 扉は通常プレイと同じ(内装のある部屋だけ開く。空室・物語の部屋・地下の鉄扉は開かない)。?tour&floor=N(1〜7・RB・B1)で開始階を指定
 const TOUR = PARAMS.has('tour');
-// P3b: 物語の進行で解放するフラグ(P5 で条件を決める)。roofA = 410/401 のバルコニーから屋上A へ乗り越えられる。?tour と ?roofA では最初から真
+// P3b: 物語の進行で解放するフラグ(P5 で条件を決める)。roofA = 410 のバルコニーから屋上A へ乗り越えられる(P3b-3: 401 からは不可)。?tour と ?roofA では最初から真
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA') };
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)

@@ -8,7 +8,8 @@
 //  4) 外階段: 4F の鉄扉→踊り場→上る(5F,6F,7F,屋上B)→屋上を歩く(落ちない)→下る(…→1F)。段の手前の当たりで階段へ踏み外さない
 //  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
-//  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い・4F の施錠扉が開く
+//  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い。P3b-3: 内装のない部屋(空室 73・物語の部屋 5)の扉は開かない
+//     (「開ける」が出ない・E で「鍵がかかっている」)、内装のある部屋の扉は開く、地下の鉄扉は開かない
 //  6) 1F 風除室: 内側の自動ドアは近づくと開き、外側(正面玄関)は閉じたまま
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
 
@@ -37,24 +38,51 @@ export async function run(N) {
   }
   const pos = () => ({ x: +N.player.pos.x.toFixed(2), y: +N.player.pos.y.toFixed(2), z: +N.player.pos.z.toFixed(2), level: N.level });
   if (N.tour) {
-    // 見学モード(?test=building&tour): 管理人が scene に無い・AI が動かない・4F の施錠扉(居室)が開けられる・地下の鉄扉は開かない
+    // 見学モード(?test=building&tour): 管理人が scene に無い・AI が動かない。P3b-3: 扉は通常プレイと同じ
+    //  (空室 407 は開かない＝「開ける」が出ず E で「鍵がかかっている」、入れる部屋 413 は開く、物語の部屋・地下の鉄扉は開かない)
     await T('9_tour_mode', async () => {
       const inScene = !!N.enemyObj.root.parent;
       const st0 = N.ai.stats();
       await N.teleport(4, 6.9, 13.05, Math.PI / 2); await settle('3,4,5');
       N.pump(DT, 120, false);
       const st1 = N.ai.stats();
+      // a) 空室 407(西棟 東列・W 向き): 扉の前に立つ → 「開ける」が出ない → E → 「鍵がかかっている」・開かない
       const d = N.doorApi.get('407');
-      const bound = !!d.node;
       N.setView(7.2, d.pos[1], -Math.PI / 2, 0); N.pump(DT, 2, false);
-      const hint = N.hudState().hint;
+      const emptyHint = N.hudState().hint;
+      tap('KeyE'); N.pump(DT, 30, false);
+      const emptyToast = N.hudState().toast;
+      const emptyOpened = N.doorApi.isOpen('407');
+      // b) 入れる部屋 413(南棟・N 向き): 「開ける」→ E → 開く
+      const d2 = N.doorApi.get('413');
+      N.setView(d2.pos[0], d2.pos[1] - 0.7, Math.PI, 0); N.pump(DT, 2, false);
+      const roomHint = N.hudState().hint;
       tap('KeyE'); N.pump(DT, 90, false);
-      const opened = N.doorApi.isOpen('407') && d.node.rotation.y !== 0;
+      const roomOpened = N.doorApi.isOpen('413') && !!d2.node && d2.node.rotation.y !== 0;
+      N.doorApi.close('413'); N.pump(DT, 90, false);
+      // c) 全館: 開く扉 = 内装のある部屋(入れる部屋)だけ。空室・物語の部屋は開かない
+      const bad = [];
+      let units = 0, enter = 0, story = 0;
+      for (const f of N.building.floors) {
+        if (f.level > 7) continue;
+        for (const r of f.rooms) {
+          if (r.kind !== 'unit' && r.id !== 'OFFICE' && r.id !== 'KITCHEN') continue;
+          const dd = N.doorApi.get(r.id);
+          const want = !!(r.door.enterable && r.interior);
+          if (r.kind === 'unit') { units++; if (want) enter++; if (r.story) story++; }
+          if (!dd || dd.operable !== want) bad.push(r.id);
+        }
+      }
       const b1 = N.doorApi.get('B1DOOR');
       const tag = document.getElementById('tourTag');
-      const pass = !inScene && st0.state === 'SCRIPTED' && JSON.stringify(st0.pos) === JSON.stringify(st1.pos) && bound && hint.includes('開ける') && opened
+      const pass = !inScene && st0.state === 'SCRIPTED' && JSON.stringify(st0.pos) === JSON.stringify(st1.pos)
+        && !emptyHint.includes('開ける') && emptyToast.includes('鍵がかかっている') && !emptyOpened
+        && roomHint.includes('開ける') && roomOpened
+        && bad.length === 0 && units === 104 && enter === 26 && story === 5
         && !b1.operable && !!tag && tag.textContent === '見学モード';
-      return { pass, enemyInScene: inScene, aiState: st0.state, aiMoved: JSON.stringify(st0.pos) !== JSON.stringify(st1.pos), door407: { bound, hint, opened }, b1Operable: b1.operable, tag: tag && tag.textContent };
+      return { pass, enemyInScene: inScene, aiState: st0.state, aiMoved: JSON.stringify(st0.pos) !== JSON.stringify(st1.pos),
+        empty407: { hint: emptyHint, toast: emptyToast, opened: emptyOpened }, room413: { hint: roomHint, opened: roomOpened },
+        doors: { units, enterableUnits: enter, storyRooms: story, closedUnits: units - enter, mismatch: bad }, b1Operable: b1.operable, tag: tag && tag.textContent };
     });
     N.testResult = out;
     console.log('[test_building]', JSON.stringify(out));

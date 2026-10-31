@@ -124,8 +124,9 @@ export class World {
     for (const { key, rooms, ops } of levelsWithDoors) {
       for (const r of rooms) {
         if (!r.door || r.kind === 'elevator') continue;
-        // 見学モード(?tour): 施錠扉も開けられる。ただし契約で「開かない」と決まっている扉(sealed: 地下の鉄扉)は除く
-        const operable = ops.has(r.id) || (!!this.tour && !r.door.sealed && !r.door.auto);
+        // P3b-3: 見学モード(?tour)でも開くのは通常プレイで開く扉だけ(内装のない部屋の扉は開けない＝無の空間を見せない。DESIGN §2.3)。
+        //  以前は見学モードで施錠扉も全部開けられた
+        const operable = ops.has(r.id);
         const d = {
           roomId: r.id, level: key, kind: r.door.auto ? 'auto' : 'swing', unit: r.kind === 'unit', steel: !!r.door.steel,
           operable, sign: doorSign(r), openAngle: operable ? 1.75 : 0, angle: 0, target: 0, open01: 0,
@@ -364,7 +365,7 @@ export class World {
         const u = p.userData || {};
         if (u.n2_kind === 'evdoor' || u.n2_kind === 'closetdoor' || u.n2_kind === 'lockerdoor') return true;
         if (u.n2_kind === 'winsash' && u.n2_operable) return true;
-        if ((u.n2_kind === 'door' || u.n2_kind === 'autodoor') && (u.n2_operable || this._tourDoor(u))) return true;
+        if ((u.n2_kind === 'door' || u.n2_kind === 'autodoor') && u.n2_operable) return true;
       }
       return false;
     };
@@ -401,7 +402,7 @@ export class World {
     rec.binds = [];   // P3b: 掃き出し窓の障子・クローゼットの折戸・ロッカーの扉(rooms.js が状態に結び付ける)
     rec.group.traverse((o) => {
       const u = o.userData;
-      if (u.n2_kind === 'door' && (u.n2_operable || this._tourDoor(u))) {
+      if (u.n2_kind === 'door' && u.n2_operable) {
         const d = this.doorById.get(String(u.n2_room));
         if (d) { d.node = o; o.rotation.y = d.sign * d.angle; }
       } else if (u.n2_kind === 'autodoor' && u.n2_operable) {
@@ -417,13 +418,6 @@ export class World {
     });
     if (this.onBind) this.onBind(level, rec.binds);
     for (const d of this.doors) if (d.level === level && d.kind === 'auto') this._applyAuto(d);
-  }
-
-  // 見学モードで動かす扉板(GLB では動かない扉として書き出されたもの)
-  _tourDoor(u) {
-    if (!this.tour || u.n2_kind !== 'door') return false;
-    const d = this.doorById.get(String(u.n2_room));
-    return !!(d && d.operable);
   }
 
   _applyAuto(d) {
