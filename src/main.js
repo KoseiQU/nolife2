@@ -29,6 +29,7 @@ import { Hud } from './hud.js';
 import { Rooms } from './rooms.js';
 import { HUD_TEXT } from './hud_text.js';
 import { storyDecor, setLiveDrip } from './story_doors.js';
+import { Exterior, EXT_U } from './exterior.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -67,9 +68,29 @@ export const LOOK = {
   probeGain: 1.0,     // 風除室の静的環境(キューブカメラ)の映り込みの倍率(材質ごとの値は manifest.envProbe.intensity)
   // 透過(transmission)の背景を描く解像度。1 だと風除室を見ている間 GPU が約 +8ms(内蔵ブラウザの計測)、0.5 で約 +2〜3ms
   transmissionScale: 0.5,
-  // P3b: 仮の夜空(P3c で本番に差し替え)。露出 4.5 で見るので、ごく暗い色
+  // P3b: 仮の夜空(外観 build/exterior.glb が読めるまでの間だけ。読めたら ext_sky に差し替え)。露出 4.5 で見るので、ごく暗い色
   skyTop: '#010103', skyHorizon: '#06080e', skyGround: '#020203',
   mirrorEnv: 0.012,
+  // P3c: 外観・外環境(src/exterior.js)。値は線形(露出 4.5 の前)。月明かりと空の明るさは外観・外環境の材質だけに効く
+  ext: {
+    far: 3000,                         // カメラの遠クリップ(遠景の山並みは 2400m)
+    moon: [0.060, 0.066, 0.085],       // 月(南西・曇り越し)の照度
+    sky: [0.048, 0.056, 0.072],        // 空(上向きの面)
+    ground: [0.004, 0.0037, 0.0034],   // 照り返し(下向きの面)
+    fogColor: [0.0024, 0.0027, 0.0035],// 外の霧の色(夜の森の霞。空の地平線より少し暗い)
+    fogDensity: 0.0021,                // 外の霧(FogExp2 と同じ式。500m で 6 割)
+    skyGain: 1.0,                      // 空の明るさの倍率
+    treeLight: [0.045, 0.052, 0.062],  // 中景の木(板)の明るさ
+    ridgeBase: [0.0012, 0.0014, 0.0018],
+    cityGlow: [0.0014, 0.0009, 0.0004],
+    cityGain: 2.2, cityBody: [0.0010, 0.0011, 0.0014],
+    winGlow: [1.0, 0.72, 0.45], winGlowGain: 0.9,   // カーテン越しの灯り
+    corrGlow: 0.035, lobbyGlow: 1.1, lampGlow: 3.0,
+    poolPole: [0.05, 0.038, 0.024], poolPorch: [0.05, 0.04, 0.028], poolPilotis: [0.03, 0.024, 0.016],
+    windowCull: 4.0,                   // 入れる部屋の扉からこの距離までは、開いた扉越しに窓が見えるかもしれないので外を描く
+    gtaoDivOutdoor: 3,                 // 屋外の GTAO の解像度(1/3。屋内は 1/2)
+    glassOutdoorOpacity: 0.22,         // 敷地にいる間の風除室のガラス(透過の再描画をやめ、半透明にする)
+  },
 };
 
 const errBox = document.getElementById('err');
@@ -110,7 +131,7 @@ scene.background = new THREE.Color(0x000000);
 scene.fog = new THREE.FogExp2(LOOK.fogColor, LOOK.fogDensity);
 const ambientFloor = new THREE.HemisphereLight(LOOK.ambientSky, LOOK.ambientGround, LOOK.ambientFloor);
 scene.add(ambientFloor);
-const camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.05, 60);
+const camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.05, LOOK.ext.far);   // P3c: 遠景(山並み・街)まで
 scene.add(camera);
 
 // ---------------------------------------------------------------- post
@@ -125,8 +146,19 @@ gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.6, thickness: 1.2, s
 gtao.updatePdMaterial({ samples: 8 });
 // GTAO は半解像度で計算して全解像度へ合成(全解像度だと 1080p で約5ms→半分で約1.5ms)
 const gtaoSetSize = gtao.setSize.bind(gtao);
-gtao.setSize = (w, h) => gtaoSetSize(Math.max(1, w >> 1), Math.max(1, h >> 1));
+let gtaoDiv = 2;   // P3c: 屋外では 1/3 解像度(updateOutdoorQuality)
+gtao.setSize = (w, h) => gtaoSetSize(Math.max(1, Math.round(w / gtaoDiv)), Math.max(1, Math.round(h / gtaoDiv)));
 composer.addPass(gtao);
+// P3c: GTAO の法線パスから遠景・中景の木(アルファの板)を外す(四角く AO が乗るため。遠くの AO は見えないので省いて軽くする)
+{
+  const gtaoRender = gtao.render.bind(gtao);
+  gtao.render = (...a) => {
+    const ex = exterior && exterior.ready && exterior.shown;
+    if (ex) exterior.gtaoBegin();
+    gtaoRender(...a);
+    if (ex) exterior.gtaoEnd();
+  };
+}
 const bloom = new UnrealBloomPass(new THREE.Vector2(16, 16), LOOK.bloomStrength, LOOK.bloomRadius, LOOK.bloomThreshold);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
@@ -182,6 +214,8 @@ await Promise.all(LEVELS.map(async (lv) => { manifests[lv] = await getJSON(`./bu
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK, tour: TOUR });
+// P3c: 外観・外環境(建物の後に読む。?noext で読まない)
+const exterior = new Exterior({ scene, renderer, camera, world, look: LOOK, envTex });
 let rooms = null;   // P3b: 入れる部屋の仕掛け(下で作る)
 let playerLevel = region.level;          // 階のキー(1..7 / 'RB')。開始は 4F
 const floorY = levelY(region.level);     // 4F(410・覗き穴・チェックポイントの階)
@@ -525,6 +559,7 @@ function updateVisibility() {
 }
 // P3b: 風の音の場所(屋上A / バルコニー / 屋内)
 function outdoorKind() {
+  if (playerLevel === 'G') return 'balcony';   // P3c: 敷地(地上の風は弱め)
   if (typeof playerLevel !== 'number') return null;
   const f = building.floors.find((ff) => ff.level === playerLevel);
   const p = player.pos;
@@ -533,6 +568,7 @@ function outdoorKind() {
 }
 // P3b: バルコニー・屋上A にいる(吹きさらしなので上下の階も見える)。開いた窓の前(室内)からも外が見える
 function outdoorsHere() {
+  if (playerLevel === 'G') return true;   // P3c: 敷地
   if (typeof playerLevel !== 'number') return false;
   const f = building.floors.find((ff) => ff.level === playerLevel);
   const p = player.pos;
@@ -588,6 +624,88 @@ function updateDrips(dt) {
   DRIP.count++;
 }
 
+// ---------------------------------------------------------------- P3c: 敷地への出入り・外を描くか・外の霧
+// 正面玄関の線(外側の自動ドア)を越えたら 1F ⇔ 敷地 'G' を切り替える(床の高さは同じ。当たりだけ差し替わる)
+function updatePortal() {
+  const S = building.site;
+  if (!S) return;
+  const P = S.portal, p = player.pos;
+  if (p.x < P.x0 || p.x > P.x1) return;
+  if (playerLevel === 1 && p.z > P.z + 0.02) setPlayerLevel('G');
+  else if (playerLevel === 'G' && p.z < P.z - 0.02) setPlayerLevel(1);
+}
+// 外を描くか: 屋外(敷地・屋上・バルコニー・階段)では常に。屋内は「窓のある部屋の中で窓が視野にある」「1F のロビー・風除室から南を見る」
+// 「入れる部屋の開いた扉の近く」だけ(屋内の奥＝廊下の途中などでは外観・外環境を描かない)
+const _frustum = new THREE.Frustum(), _pm = new THREE.Matrix4(), _box = new THREE.Box3();
+const ROOM_WINDOWS = new Map();   // level → [{ rect(部屋＋バルコニー), box(窓), door }]
+for (const f of building.floors) {
+  if (f.level > 7) continue;
+  const list = [];
+  for (const r of f.rooms) {
+    if (!(r.door && r.door.enterable && r.window)) continue;
+    const w = r.window, y0 = levelY(f.level);
+    const [wx, wz] = w.pos;
+    const hw = w.width / 2;
+    const box = w.axis === 'z' ? new THREE.Box3(new THREE.Vector3(wx - 0.2, y0, wz - hw), new THREE.Vector3(wx + 0.2, y0 + 2.1, wz + hw))
+      : new THREE.Box3(new THREE.Vector3(wx - hw, y0, wz - 0.2), new THREE.Vector3(wx + hw, y0 + 2.1, wz + 0.2));
+    list.push({ id: r.id, rect: r.rect, bal: r.balcony ? r.balcony.rect : null, box, door: r.door.pos });
+  }
+  ROOM_WINDOWS.set(f.level, list);
+}
+const ENTRANCE_VIEW = { rect: [14.0, 20.3, 8.0, 7.8], box: new THREE.Box3(new THREE.Vector3(15.6, 0, 28.0), new THREE.Vector3(19.6, 2.4, 28.3)) };
+const inRect = (x, z, r, m = 0) => x > r[0] - m && x < r[0] + r[2] + m && z > r[1] - m && z < r[1] + r[3] + m;
+function wantExterior() {
+  if (playerLevel === 'G' || playerLevel === 'RB') return true;
+  if (stairs.busy || stairs.inStairArea(player.pos.x, player.pos.z) || outdoorsHere()) return true;
+  if (typeof playerLevel !== 'number') return false;
+  camera.updateMatrixWorld();
+  _pm.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  _frustum.setFromProjectionMatrix(_pm);
+  const p = player.pos;
+  if (playerLevel === 1 && inRect(p.x, p.z, ENTRANCE_VIEW.rect) && _frustum.intersectsBox(ENTRANCE_VIEW.box)) return true;
+  for (const w of ROOM_WINDOWS.get(playerLevel) || []) {
+    const inside = inRect(p.x, p.z, w.rect) || (w.bal && inRect(p.x, p.z, w.bal));
+    const nearDoor = Math.hypot(p.x - w.door[0], p.z - w.door[1]) < LOOK.ext.windowCull && world.doorById.get(w.id)?.angle > 0.2;
+    if ((inside || nearDoor) && _frustum.intersectsBox(w.box)) return true;
+  }
+  return false;
+}
+// 外の霧: 屋外にいる間は scene.fog を外観と同じ薄い霧へ(本物の階の外壁・バルコニーが外観と同じ見え方になる)。屋内は従来の濃さ
+const FOG_IN = new THREE.Color(LOOK.fogColor), FOG_OUT = new THREE.Color().setRGB(...LOOK.ext.fogColor, THREE.LinearSRGBColorSpace);
+let outdoorMix = 0;
+function updateOutdoorLook(dt) {
+  const out = playerLevel === 'G' || playerLevel === 'RB' || outdoorsHere() || !!stairs.inStairArea(player.pos.x, player.pos.z) || stairs.busy;
+  outdoorMix += ((out && exterior.ready ? 1 : 0) - outdoorMix) * Math.min(1, dt * 2.5);
+  scene.fog.density = LOOK.fogDensity + (LOOK.ext.fogDensity - LOOK.fogDensity) * outdoorMix;
+  scene.fog.color.copy(FOG_IN).lerp(FOG_OUT, outdoorMix);
+  if (exterior.ready) {
+    exterior.show(wantExterior());
+    exterior.update(dt, camera);
+  }
+  updateOutdoorQuality(out && exterior.ready);
+}
+// 屋外の描画負荷(計測: 敷地では外観・外環境が加わる分を、GTAO の解像度と風除室のガラスの透過で取り返す。docs/p3c/NOTES.md)
+//  - GTAO: 屋外は 1/3 解像度(遠くの AO は見えない)
+//  - 風除室の物理ガラス(transmission)は「背景をもう一度描く」ので、敷地にいる間は外観・森まで2回描くことになる → 敷地では半透明に切り替える
+let outdoorQ = false;
+function updateOutdoorQuality(on) {
+  if (on !== outdoorQ) {
+    outdoorQ = on;
+    gtaoDiv = on ? LOOK.ext.gtaoDivOutdoor : 2;
+    resize();
+  }
+  const glassOut = playerLevel === 'G';
+  for (const rec of world.floors.values()) {
+    for (const m of rec.mats) {
+      if (!m.userData.physGlass || m.userData.glassOut === glassOut) continue;
+      m.userData.glassOut = glassOut;
+      if (glassOut) { m.userData.tr = m.transmission; m.transmission = 0; m.transparent = true; m.opacity = LOOK.ext.glassOutdoorOpacity; m.depthWrite = false; }
+      else { m.transmission = m.userData.tr ?? LOOK.glass.transmission; m.transparent = false; m.opacity = 1; m.depthWrite = true; }
+      m.needsUpdate = true;
+    }
+  }
+}
+
 // ---------------------------------------------------------------- loop
 const frameTimes = []; // [timestamp, frameMs, cpuMs]
 let last = performance.now();
@@ -595,6 +713,7 @@ let simTime = 0;
 function step(dt) {
   simTime += dt;
   player.update(dt);
+  updatePortal();
   stairs.update(dt);
   rooms.update(dt, playerLevel);
   rooms.updateWind(dt, outdoorKind());
@@ -610,6 +729,7 @@ function step(dt) {
   elevator.update(dt);
   enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit;
   updateVisibility();
+  updateOutdoorLook(dt);
   if (!TOUR) enemyAudio.update(dt);
   updateDrips(dt);
   updateDeath(dt);
@@ -638,6 +758,9 @@ movie.pass.enabled = true; movie.mist.points.visible = true;
 render();
 movie.pass.enabled = false; movie.mist.points.visible = false;
 requestAnimationFrame(frame);
+// P3c: 建物の後に外観・外環境を読む(読み込み中・失敗しても遊べる)
+//  ?test=building は 8 番(外環境のロード前後の負荷)で自分で読むので、ここでは読まない
+const exteriorLoad = PARAMS.has('noext') || PARAMS.get('test') === 'building' ? null : exterior.load().catch((e) => { console.error('exterior load failed', e); return null; });
 
 // ---------------------------------------------------------------- debug hook
 function stats() {
@@ -654,6 +777,7 @@ function stats() {
     render: { ...renderer.info.render },
     memory: { ...renderer.info.memory },
     programs: renderer.info.programs?.length,
+    exterior: exterior.stats(),
   };
 }
 window.__n2 = {
@@ -667,6 +791,9 @@ window.__n2 = {
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
+  exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
+  loadExterior: () => (exterior.ready ? Promise.resolve(exterior) : (window.__n2._extLoad ||= exterior.load())),
+  get exteriorLoad() { return exteriorLoad; },
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
   peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },
@@ -714,8 +841,9 @@ if (TOUR) {
   document.body.appendChild(tag);
   const fl = PARAMS.get('floor');
   if (fl) {
-    const key = fl === 'RB' || fl === 'B1' ? fl : Math.min(7, Math.max(1, parseInt(fl, 10) || 4));
+    const key = fl === 'RB' || fl === 'B1' || fl === 'G' ? fl : Math.min(7, Math.max(1, parseInt(fl, 10) || 4));
     if (key === 'RB') await window.__n2.teleport('RB', ...building.roofB.spawn, -Math.PI / 2);
+    else if (fl === 'G') await window.__n2.teleport('G', ...building.site.spawn, 0);   // P3c: エントランス前(建物を向く)
     else if (key === 'B1') await window.__n2.teleport('B1', ...building.basement.spawn, Math.PI / 2);
     else await window.__n2.teleport(key, 6.9, 20.7, Math.PI);   // EV ホール前で EV を向く
   }

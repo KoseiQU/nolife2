@@ -5,18 +5,20 @@
 //  - 見た目: 階ごとの build/floor_N.glb ＋ floor_N_lightmap.webp ＋ manifest。プレイヤーの階 ±1 だけ読み、他は解放する。
 //    テクスチャは GLB に入っていないので、manifest.materials の対応表で build/tex の共有ファイルを貼る(全階で使い回し)。
 //  - 扉: 全階の扉の状態(角度・施錠・当たり)を常駐。GLB の扉板は読み込まれた時に結び付ける(解放しても状態は残る)。
-// 階のキー: 1..7 と 'RB'(屋上B = 7F の屋根。見た目は 7F の GLB に入っている)と 'B1'(P3a-2: 地下の踊り場。見た目は 1F の GLB)。
+// 階のキー: 1..7 と 'RB'(屋上B = 7F の屋根。見た目は 7F の GLB に入っている)と 'B1'(P3a-2: 地下の踊り場。見た目は 1F の GLB)と
+//  'G'(P3c: 1F の外の敷地。床の高さは 1F と同じ。見た目は 1F の GLB と外観 build/exterior.glb)。
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { floorWallBoxes, GEOM, evOpeningCenter, doorWidth } from './walls.js';
 import { decorateStoryDoors, updateStoryDoors } from './story_doors.js';
+import { extShade } from './exterior.js';
 
 export const FH = GEOM.FLOOR_H;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7];
-export const levelY = (k) => (k === 'RB' ? 7 : k === 'B1' ? -1 : k - 1) * FH;
-export const glbLevel = (k) => (k === 'RB' ? 7 : k === 'B1' ? 1 : k);
+export const levelY = (k) => (k === 'RB' ? 7 : k === 'B1' ? -1 : k === 'G' ? 0 : k - 1) * FH;
+export const glbLevel = (k) => (k === 'RB' ? 7 : k === 'B1' || k === 'G' ? 1 : k);
 export const FACING_N = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
 
 const box = (minX, minZ, maxX, maxZ, kind, roomId = null, y0 = 0, y1 = GEOM.CEIL_H) => ({ minX, maxX, minZ, maxZ, y0, y1, kind, roomId, disabled: false });
@@ -37,6 +39,11 @@ export function buildLevelCollisions(building, key) {
     const R = building.roofB;
     for (const b of floorWallBoxes({ rooms: [], footprint: R.footprint, fillWalls: [] })) push(box(b.cx - b.w / 2, b.cz - b.d / 2, b.cx + b.w / 2, b.cz + b.d / 2, 'wall'));
     for (const o of R.obstacles) { const [x, z, w, d] = o.rect; push(box(x, z, x + w, z + d, 'solid', o.id)); }
+  } else if (key === 'G') {
+    // P3c: 敷地(柵・擁壁・建物の外壁＝外周、正面玄関の扉＝perimDoor、車・ラック・植え込みなどの箱)
+    const S = building.site;
+    for (const b of floorWallBoxes({ rooms: [], footprint: S.footprint, perimOpenings: S.perimOpenings, fillWalls: [] })) push(box(b.cx - b.w / 2, b.cz - b.d / 2, b.cx + b.w / 2, b.cz + b.d / 2, b.kind, b.kind === 'perimDoor' ? 'ENTRANCE_OUT' : null));
+    for (const o of S.obstacles) { const [x, z, w, d] = o.rect; push(box(x, z, x + w, z + d, 'solid', o.id)); }
   } else if (key === 'B1') {
     // P3a-2: 地下の踊り場(階段の箱の4壁＋施錠扉のブロッカ)
     const B = building.basement;
@@ -112,7 +119,7 @@ export class World {
   constructor(ctx) {
     Object.assign(this, ctx);
     this.maxAniso = this.renderer.capabilities.getMaxAnisotropy();
-    this.keys = [...LEVELS, 'RB', 'B1'];
+    this.keys = [...LEVELS, 'RB', 'B1', 'G'];
     this.cols = new Map(this.keys.map((k) => [k, buildLevelCollisions(this.building, k)]));
     this.floors = new Map();       // level → { state:'loading'|'ready', promise, group, lightMap, mats:Set, geoms:[] }
     this.texCache = new Map();
@@ -139,7 +146,28 @@ export class World {
         this.doorById.set(r.id, d);
       }
     }
+    // P3c: 正面玄関の外側の自動ドア(1F の perimDoor と敷地 'G' の perimDoor の両方を当たりに持つ。どちらの側からでも近づくと開く)
+    if (this.building.site) {
+      const f1 = this.building.floors.find((f) => f.level === 1);
+      const po = f1.perimOpenings[0];
+      const d = {
+        roomId: 'ENTRANCE_OUT', level: 1, alsoLevel: 'G', kind: 'auto', unit: false, steel: false, operable: true, sign: 1, openAngle: 1.75,
+        angle: 0, target: 0, open01: 0, locked: false, speedMul: 1, rattle: 0, node: null, leaves: [], sealed: false, tryable: false,
+        pos: po.pos, facing: 'S', width: po.width,
+        collision: this.cols.get(1).find((c) => c.kind === 'perimDoor') || null,
+        collision2: this.cols.get('G').find((c) => c.kind === 'perimDoor') || null,
+      };
+      this.doors.push(d);
+      this.doorById.set(d.roomId, d);
+    }
     this.visible = new Set();
+    this.exteriorReady = false;   // P3c: 外観(build/exterior.glb)が読めたら、階の GLB の「他の階の外壁の塊」と仮の地面を隠す
+  }
+
+  // P3c: 外観が読めた/外れた。階の GLB の他の階の塊(MX_Mass の自分の階以外)と仮の地面(MX_Ground)の出し入れ
+  setExteriorReady(on) {
+    this.exteriorReady = on;
+    for (const rec of this.floors.values()) for (const m of rec.extOther || []) m.visible = !on;
   }
 
   collisions(key) { return this.cols.get(key); }
@@ -275,6 +303,7 @@ export class World {
       }
       o.material = phys.get(src.name);
     });
+    this._splitMassing(root, man, rec);
     root.traverse((o) => {
       if (!o.isMesh) return;
       const kind = o.userData.n2_kind || o.parent?.userData.n2_kind || '';
@@ -311,6 +340,7 @@ export class World {
         if (m.name === 'MR_Mirror') m.envMapIntensity = L.mirrorEnv ?? 0.012;   // 夜の暗い部屋の鏡(共通の環境は明るすぎる)
         if (m.name === 'MX_WinGlass') { m.color.setRGB(0.1, 0.115, 0.125); m.opacity = 0.12; m.envMapIntensity = L.glassEnv * 0.5; m.roughness = 0.08; }   // 掃き出し窓のガラス(夜は暗く、映り込みだけ)
         if (m.name === 'MX_Bars') { m.alphaTest = 0.5; m.side = THREE.DoubleSide; m.transparent = false; }   // P3b: バルコニーの格子(透過テクスチャ)
+        if (m.name === 'MX_Mass') extShade(m, { fog: false });   // P3c: 外の塊は外観と同じ月明かり(霧は scene のまま)
         m.userData.n2Emissive = m.emissiveIntensity;   // 倍率を掛ける前(EV のカゴの照明を点ける時に使う)
         if (L.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= L.emissiveScale[m.name];
         m.needsUpdate = true;
@@ -323,6 +353,49 @@ export class World {
       return new THREE.Box3().setFromObject(n).getCenter(new THREE.Vector3());
     })();
     this._merge(root, rec);
+    rec.extOther = [];
+    root.traverse((o) => { if (o.isMesh && o.material.userData.extOther) rec.extOther.push(o); });
+    for (const m of rec.extOther) m.visible = !this.exteriorReady;
+  }
+
+  // P3c: 外の塊(build_rooms.build_massing)を「この階の帯の壁」と「他の階の塊・屋根・仮の地面」に分ける。後者は外観が読めたら隠す
+  _splitMassing(root, man, rec) {
+    const y0 = (man.level - 1) * FH, y1 = y0 + FH;
+    const nodes = [];
+    root.traverse((o) => { if (o.isMesh && (o.userData.n2_kind === 'massing' || o.parent?.userData.n2_kind === 'massing')) nodes.push(o); });
+    let otherMat = null;
+    for (const o of nodes) {
+      if (o.material.name === 'MX_Ground') {
+        o.material = o.material.clone(); o.material.userData.extOther = true; continue;
+      }
+      if (o.material.name !== 'MX_Mass') continue;
+      const g = o.geometry, pos = g.attributes.position, idx = g.index;
+      if (!idx) continue;
+      const own = [], other = [];
+      const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
+      o.updateMatrixWorld(true);
+      for (let t = 0; t < idx.count; t += 3) {
+        a.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(o.matrixWorld);
+        b.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(o.matrixWorld);
+        c.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(o.matrixWorld);
+        n.subVectors(b, a).cross(c.clone().sub(a)).normalize();
+        const cy = (a.y + b.y + c.y) / 3;
+        const tri = [idx.getX(t), idx.getX(t + 1), idx.getX(t + 2)];
+        if (Math.abs(n.y) < 0.3 && cy > y0 + 0.01 && cy < y1 - 0.01) own.push(...tri); else other.push(...tri);
+      }
+      if (!other.length) continue;
+      if (!otherMat) { otherMat = o.material.clone(); otherMat.userData.extOther = true; }
+      if (own.length) {
+        g.setIndex(own);
+        const g2 = g.clone(); g2.setIndex(other);
+        const m2 = new THREE.Mesh(g2, otherMat);
+        m2.position.copy(o.position); m2.quaternion.copy(o.quaternion); m2.scale.copy(o.scale);
+        m2.userData = { ...o.userData };
+        o.parent.add(m2);
+      } else {
+        o.material = otherMat;
+      }
+    }
   }
 
   // P3a-2: 風除室の静的環境(キューブカメラ1回＋PMREM)。この階の GLB だけを一時シーンに置き、ガラスを隠して
@@ -435,11 +508,12 @@ export class World {
     const SPEED = 2.4;
     for (const d of this.doors) {
       if (d.kind === 'auto') {
-        const near = movers.some((m) => m.level === d.level && Math.hypot(m.x - d.pos[0], m.z - d.pos[1]) < 1.7);
+        const near = movers.some((m) => (m.level === d.level || (d.alsoLevel && m.level === d.alsoLevel)) && Math.hypot(m.x - d.pos[0], m.z - d.pos[1]) < 1.7);
         const want = near && !d.locked ? 1 : 0;
         const nv = d.open01 + Math.sign(want - d.open01) * Math.min(Math.abs(want - d.open01), dt / 1.1);
         if (nv !== d.open01) { d.open01 = nv; this._applyAuto(d); }
         if (d.collision) d.collision.disabled = d.open01 > 0.85;
+        if (d.collision2) d.collision2.disabled = d.open01 > 0.85;
         d.angle = d.open01 * 1.75; d.target = want * 1.75;
         continue;
       }
