@@ -46,6 +46,8 @@ export class Player {
     this._moveRatio = 0;
     this._t = 0;
     this.onUse = null;      // E キー(扉)のコールバック。main.js が設定
+    this.onKey = null;      // 押された瞬間のキー(e.code)ごとに呼ぶ。main.js が設定(L 施錠・P 覗き穴など)
+    this.frozen = false;    // 死亡演出・覗き穴の間は移動とカメラ更新を止める(キー状態の追跡は続ける)
     this._buildFlashlight();
     this._bindKeys();
   }
@@ -114,6 +116,11 @@ export class Player {
   update(dt) {
     dt = Math.min(dt, 0.05);
     this._t += dt;
+    if (this.frozen) {
+      if (this.onKey) for (const c of this._justPressed) this.onKey(c);
+      this._justPressed.clear();
+      return;
+    }
     const fwd = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
     const str = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
     const run = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && !this.crouch;
@@ -139,6 +146,7 @@ export class Player {
     const bob = Math.abs(Math.sin(this._walkPhase * 0.5)) * PLAYER.bobAmp * this._moveRatio * 2 - PLAYER.bobAmp * this._moveRatio;
     this._applyCamera(bob);
 
+    if (this.onKey) for (const c of this._justPressed) this.onKey(c);
     if (this._justPressed.has('KeyE') && this.onUse) this.onUse();
     this._updateFlashlight(dt);
     this._justPressed.clear();

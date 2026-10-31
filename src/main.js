@@ -17,6 +17,12 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Player } from './player.js';
 import { buildCollisions } from './p0_region.js';
 import { GEOM } from './walls.js';
+import { Enemy } from './enemy.js';
+import { EnemyAI } from './enemy_ai.js';
+import { EnemyAudio } from './enemy_audio.js';
+import { Peephole } from './peephole.js';
+
+const PARAMS = new URLSearchParams(location.search);
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -215,6 +221,8 @@ gltf.scene.traverse((o) => {
     sign: o.userData.n2_open_sign || 1,
     openAngle: o.userData.n2_open_angle || 0,
     angle: 0, target: 0,
+    locked: false,          // P2b: 内側から施錠(L)。管理人は鍵で開ける
+    speedMul: 1,            // 管理人が押し開けるときは速い
     collision: collisions.find((c) => c.kind === 'door' && c.roomId === roomId) || null,
   });
 });
@@ -234,10 +242,32 @@ function useNearestDoor() {
     best = d; bestD = dist;
   }
   if (!best) return null;
-  if (best.operable) best.target = best.target > 0 ? 0 : best.openAngle;
-  else best.rattle = 0.25;   // 施錠: ノブだけ鳴る(音は後フェーズ)。ごく小さく揺らす
+  if (best.operable && !(best.locked && best.target === 0)) {
+    best.target = best.target > 0 ? 0 : best.openAngle;
+    best.speedMul = 1;
+    if (ai) ai.noise(best.node.position.x, best.node.position.z, 9.0);   // 扉の開閉音(聴覚 9m)
+  } else best.rattle = 0.25;   // 施錠: ノブだけ鳴る。ごく小さく揺らす
   return best.roomId;
 }
+function nearestOperableDoor(maxD = 1.6) {
+  const p = player.object.position;
+  let best = null, bd = maxD;
+  for (const d of doors) {
+    if (!d.operable || !d.collision) continue;
+    const c = d.collision;
+    const dist = Math.hypot((c.minX + c.maxX) / 2 - p.x, (c.minZ + c.maxZ) / 2 - p.z);
+    if (dist < bd) { bd = dist; best = d; }
+  }
+  return best;
+}
+// 扉 API(AI・デバッグ用)
+const doorApi = {
+  get: (id) => doors.find((d) => d.roomId === String(id)) || null,
+  isOpen: (id) => { const d = doorApi.get(id); return !!(d && d.collision && d.collision.disabled); },
+  open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable) { d.target = d.openAngle; d.speedMul = speed; } },
+  close: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable) { d.target = 0; d.speedMul = speed; } },
+  setLocked: (id, v) => { const d = doorApi.get(id); if (d) d.locked = !!v; },
+};
 function updateDoors(dt) {
   for (const d of doors) {
     if (d.operable) {
@@ -245,7 +275,7 @@ function updateDoors(dt) {
       if (Math.abs(delta) > 1e-4) {
         // 開け始めは重く、途中で滑らかに(ドアクローザー感)
         const k = 0.35 + 0.65 * Math.min(1, Math.abs(d.angle) / 0.4);
-        d.angle += Math.sign(delta) * Math.min(Math.abs(delta), DOOR_SPEED * k * dt);
+        d.angle += Math.sign(delta) * Math.min(Math.abs(delta), DOOR_SPEED * k * (d.speedMul || 1) * dt);
       }
       d.node.rotation.y = d.sign * d.angle;
       if (d.collision) d.collision.disabled = d.angle > 0.25;
@@ -258,8 +288,145 @@ function updateDoors(dt) {
 
 // ---------------------------------------------------------------- player
 const player = new Player(camera, renderer.domElement, { collisions, floorY });
-player.onUse = useNearestDoor;
+player.onUse = onUseKey;
 player.setPose(region.spawn.x, region.spawn.z, region.spawn.yaw, -0.03);
+
+// ---------------------------------------------------------------- enemy (P2b)
+// 常夜灯(manifest.lamps)・非常口サイン・窓の位置に「敵だけに効く」弱い光を置く(enemy.js のシェーダ注入)
+const mstDoor = doors.find((d) => d.roomId === 'MST4');
+const enemy = new Enemy(scene, {
+  floorY, collisions,
+  lamps: manifest.lamps || [],
+  exitLamps: mstDoor ? [[mstDoor.node.position.x + 0.1, floorY + 2.15, mstDoor.collision ? (mstDoor.collision.minZ + mstDoor.collision.maxZ) / 2 : 21.2]] : [],
+  windowLamps: region.window ? [[region.window.x, floorY + region.window.sill + region.window.h / 2, region.window.z + 0.15]] : [],
+});
+await enemy.load();
+// 扉の情報(AI の立ち位置): 廊下側の法線とノブの向き(manifest の蝶番位置から)
+const FACING_N = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
+const doorInfo = [];
+for (const d of doors) {
+  const room = building.floors.find((f) => f.level === region.level).rooms.find((r) => r.id === d.roomId);
+  if (!room || !room.door) continue;
+  const m = (manifest.doors || []).find((md) => md.id === d.roomId);
+  const [px, pz] = room.door.pos;
+  const n = FACING_N[room.door.facing];
+  let knob = [-n[1], n[0]];
+  if (m && m.hinge) { const hx = m.hinge[0], hz = m.hinge[2]; const s2 = Math.sign((px - hx) * knob[0] + (pz - hz) * knob[1]) || 1; knob = [knob[0] * s2, knob[1] * s2]; }
+  doorInfo.push({ roomId: d.roomId, pos: [px, pz], normal: n, knob });
+}
+const enemyAudio = new EnemyAudio(camera, enemy);
+const resumeAudio = () => enemyAudio.resume();
+window.addEventListener('pointerdown', resumeAudio);
+window.addEventListener('keydown', resumeAudio);
+const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
+const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管理人(EV ホール、北を向く)
+const ai = new EnemyAI({ enemy, audio: enemyAudio, player, collisions, doors: doorApi, doorInfo, floorY, onKill: () => startDeath() });
+if (PARAMS.has('noai')) ai.setState('SCRIPTED');
+else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+
+// ---------------------------------------------------------------- peephole (P2b)
+const door410 = doors.find((d) => d.roomId === '410');
+const lens = (() => {
+  const c = door410.collision;
+  const z = (c.minZ + c.maxZ) / 2;
+  const rc = new THREE.Raycaster(new THREE.Vector3(c.minX - 0.4, floorY + 1.48, z), new THREE.Vector3(1, 0, 0), 0, 1);
+  door410.node.updateMatrixWorld(true);
+  const hit = rc.intersectObject(door410.node, true)[0];
+  return { x: (hit ? hit.point.x : c.minX) - 0.015, z, yaw: Math.PI / 2 };
+})();
+const peephole = new Peephole({ camera, player, floorY, lens });
+composer.insertPass(peephole.pass, composer.passes.indexOf(grainPass));
+let pendingE = null;   // E の長押し判定 {t, held}
+function canPeep() {
+  const p = player.object.position;
+  if (door410.angle > 0.03) return false;
+  if (!(p.x > 7.86 && p.z > 5.8 && p.z < 8.7)) return false;   // 410 の室内
+  const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
+  const dx = lens.x - p.x, dz = lens.z - p.z, dist = Math.hypot(dx, dz);
+  return dist < 1.6 && (dx * fwd.x + dz * fwd.z) / dist > 0.5;
+}
+function onUseKey() {
+  if (canPeep()) { pendingE = { t: 0, held: false }; return null; }   // 短押し=扉、長押し=覗き穴(離した時に決まる)
+  return useNearestDoor();
+}
+player.onKey = (code) => {
+  if (death) return;
+  if (code === 'KeyL') {
+    const d = nearestOperableDoor();
+    if (d && d.angle < 0.02) {
+      d.locked = !d.locked;
+      enemyAudio.play('lock', new THREE.Vector3((d.collision.minX + d.collision.maxX) / 2, floorY + 1.0, (d.collision.minZ + d.collision.maxZ) / 2), 0.5);
+      ai.noise(d.node.position.x, d.node.position.z, 5.0);
+    }
+  }
+  if (code === 'KeyP' && canPeep()) peephole.set(true);
+};
+function updatePeepInput(dt) {
+  if (pendingE) {
+    if (player.keys.has('KeyE')) {
+      pendingE.t += dt;
+      if (!pendingE.held && pendingE.t >= 0.35) { pendingE.held = true; peephole.set(true); }
+    } else {
+      if (pendingE.held) peephole.set(false); else useNearestDoor();
+      pendingE = null;
+    }
+  }
+  if (peephole.active && !pendingE && !player.keys.has('KeyP') && !peephole.forced) peephole.set(false);
+  const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+  peephole.update(size.x, size.y);
+}
+
+// ---------------------------------------------------------------- death / checkpoint (P2b)
+const overlay = document.createElement('div');
+overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;background:#000;opacity:0;display:flex;align-items:center;justify-content:center;';
+const flash = document.createElement('div');
+flash.style.cssText = 'position:fixed;inset:0;pointer-events:none;background:#8a0000;opacity:0;mix-blend-mode:normal;';
+const caption = document.createElement('div');
+caption.textContent = '見つかった';
+caption.style.cssText = 'color:#b9b2a8;font:500 22px/1 "Hiragino Mincho ProN","Yu Mincho",serif;letter-spacing:.5em;opacity:0;transition:none;';
+overlay.appendChild(caption);
+document.body.append(flash, overlay);
+let death = null;   // { t, respawned }
+const DEATH = { flash: 0.18, toBlack: 1.0, hold: 3.0, fadeIn: 1.0 };
+function startDeath() {
+  if (death) return;
+  death = { t: 0, respawned: false };
+  if (peephole.active) { peephole.forced = false; peephole.set(false); }
+  pendingE = null;
+  player.frozen = true;
+}
+function updateDeath(dt) {
+  if (!death) return;
+  death.t += dt;
+  const t = death.t;
+  flash.style.opacity = String(t < DEATH.flash ? 0.85 : Math.max(0, 0.85 - (t - DEATH.flash) * 2.5));
+  const respawnAt = DEATH.toBlack + DEATH.hold;
+  let black;
+  if (t < respawnAt) black = Math.min(1, Math.max(0, (t - DEATH.flash * 0.5) / (DEATH.toBlack - DEATH.flash * 0.5)));
+  else black = Math.max(0, 1 - (t - respawnAt) / DEATH.fadeIn);
+  overlay.style.opacity = String(black);
+  caption.style.opacity = String(t > DEATH.toBlack && t < respawnAt ? Math.min(1, (t - DEATH.toBlack) * 2) : Math.max(0, 1 - (t - respawnAt) * 3));
+  // 襲われた瞬間: 視界が沈む(カメラを少し下げて傾ける)
+  if (t < DEATH.toBlack) {
+    const k = Math.min(1, t / 0.5);
+    player.object.position.y = floorY + PLAYER_EYE - 0.5 * k * k;
+    player.object.rotation.z = 0.35 * k;
+  }
+  if (!death.respawned && t >= respawnAt) {
+    death.respawned = true;
+    door410.angle = 0; door410.target = 0; door410.locked = false; door410.speedMul = 1;
+    if (door410.collision) door410.collision.disabled = false;
+    player.object.rotation.z = 0;
+    player.crouch = false;
+    player.setPose(CHECKPOINT.x, CHECKPOINT.z, CHECKPOINT.yaw, 0);
+    player.frozen = false;
+    ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+    deathCount++;
+  }
+  if (t >= respawnAt + DEATH.fadeIn) { death = null; overlay.style.opacity = '0'; flash.style.opacity = '0'; caption.style.opacity = '0'; }
+}
+let deathCount = 0;
+const PLAYER_EYE = 1.62;
 renderer.domElement.addEventListener('click', () => { if (!player.isLocked()) player.lock(); });
 player.controls.addEventListener('lock', () => document.body.classList.add('locked'));
 player.controls.addEventListener('unlock', () => document.body.classList.remove('locked'));
@@ -272,7 +439,14 @@ let simTime = 0;
 function step(dt) {
   simTime += dt;
   player.update(dt);
+  updatePeepInput(dt);
+  camera.updateMatrixWorld();
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+  ai.update(dt);
+  enemy.update(dt, camera);
   updateDoors(dt);
+  enemyAudio.update(dt);
+  updateDeath(dt);
   grainPass.uniforms.time.value = simTime;
 }
 function render() { renderer.info.reset(); composer.render(); }
@@ -307,6 +481,27 @@ function stats() {
 }
 window.__n2 = {
   THREE, scene, camera, renderer, player, composer, doors, collisions, manifest, LOOK,
+  enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME,
+  // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
+  pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
+  peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },
+  deathState: () => (death ? { t: +death.t.toFixed(2), respawned: death.respawned } : null),
+  deaths: () => deathCount,
+  enemy: {
+    place(x, z, yaw = 0) { enemy.place(x, z, yaw); return ai.stats(); },
+    setState(s) {
+      if (s === 'ATTACK' || s === 'CHASE' || s === 'ALERT') ai.lastKnown = { x: player.pos.x, z: player.pos.z };
+      ai.uninterruptible = false;
+      ai.setState(s, { force: true, log: true, react: s === 'ALERT' });
+      return ai.stats();
+    },
+    play(name) { ai.setState('SCRIPTED', { force: true }); enemy.play(name, { restart: true }); return name; },
+    face(name, v) { enemy.setFace(name, v, true); return { ...enemy.face }; },
+    goto(x, z) { ai.setState('SCRIPTED', { force: true, goto: { x, z } }); return ai.stats(); },
+    flashlight(on) { enemy.setFlashlight(on); },
+    stats() { return { ...ai.stats(), clipSpeed: enemy.clipSpeed, bounceDistance: enemy.bounceDistance, cutoff: enemyAudio.cutoff }; },
+    events: () => ai.events,
+  },
   passes: { gtao, bloom, smaa, grain: grainPass },
   stats,
   step, render,
@@ -322,3 +517,5 @@ window.__n2 = {
   setExposure(v) { renderer.toneMappingExposure = v; },
   setLightmapGain(g) { for (const m of seenMats) m.lightMapIntensity = manifest.lightmap.intensity * g; },
 };
+window.__N2 = window.__n2;
+if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) => m.run(window.__N2)).catch(showErr);
