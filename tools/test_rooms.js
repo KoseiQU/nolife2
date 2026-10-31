@@ -1,6 +1,7 @@
 // test_rooms.js — P3b 居室とバルコニー・屋上の決定的テスト(ブラウザ内)。http://localhost:8001/?test=rooms で自動実行。
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。キーは keydown/keyup をペアで送る。結果: window.__N2.testResult
-//  1) 410 の窓→バルコニー→台→屋上A→401 のバルコニー→401 の室内(roofA=true)。窓は外からも開く
+//  1) 410 の窓→バルコニー→台→屋上A→(401 側は固定の隔て板で越えられない)→410 の台へ戻って乗り越える→410 の室内(roofA=true)
+//     P3b-3: 屋上への動線は 410 のみ(DESIGN §2.3)。401 の北端では「乗り越える」が出ず、E でも乗り越えず、南へ押しても屋上A から出ない
 //     P3b-2: 410 の台は室外機。E → 室外機に乗る(目線が天板の分だけ上がる・まだ隔て板の手前)→ 越える → 屋上に降りる、の順を軌跡で確かめる。
 //     1b) 逆向き: 屋上A → 隔て板を越えて室外機に降りる → 410 のバルコニー → 窓 → 410 の室内
 //  2) roofA=false では台を乗り越えられない(「乗り越えられない」・隔て板を押しても抜けない)
@@ -73,7 +74,7 @@ export async function run(N) {
   const quietAI = () => { N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4); N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 19.5, Math.PI); };
   quietAI();
 
-  await T('1_410_window_balcony_roofA_401', async () => {
+  await T('1_410_roofA_401_blocked_back_to_410', async () => {
     N.flags.roofA = true;
     const w = room('410').r.window;
     await N.teleport(4, 13.1, 7.2, -Math.PI / 2);
@@ -90,24 +91,32 @@ export async function run(N) {
     const vault = traceVault();
     const onRoof = N.player.pos.z < 5.75 && N.level === 4;
     const roofP = pos();
-    // 屋上A を西へ(室外機を避けて z=4.9)→ 401 のバルコニーの北端の前
+    // 屋上A を西へ(室外機を避けて z=4.9)→ 401 のバルコニーの北端(固定の隔て板)の前
     const r1 = walkTo(13.0, 4.9, 400) && walkTo(0.4, 4.9, 1200) && walkTo(-0.5, 5.3, 300);
     face(-0.5, 6.3); N.pump(DT, 2, false);
-    const gate401Hint = N.hudState().hint;
-    tap('KeyE');
-    let t = 0; while (N.rooms.state().vault && t < 5) { N.pump(DT, 1, false); t += DT; }
-    const on401Balcony = rid() === '401' && N.player.pos.x < -0.05;
-    const w401 = room('401').r.window;
-    walkTo(-0.5, (w401.open[0] + w401.open[1]) / 2, 400);
-    face(0.5, (w401.open[0] + w401.open[1]) / 2); N.pump(DT, 2, false);
-    const winOutHint = N.hudState().hint;
-    tap('KeyE'); N.pump(DT, 70, false);
-    const open401 = N.rooms.isWindowOpen('401');
-    walkTo(1.2, (w401.open[0] + w401.open[1]) / 2, 400);
-    const in401 = rid() === '401' && N.player.pos.x > 0.2;
+    const at401Hint = N.hudState().hint;
+    const target401 = N.hudState().kind;
+    const rv0 = N.rooms.events.length;
+    tap('KeyE'); N.pump(DT, 30, false);
+    const vault401 = N.rooms.events.slice(rv0).some((e) => /vault/.test(e.ev)) || !!N.rooms.state().vault;
+    // 南(401 のバルコニー)へ押し込んでも隔て板を抜けない
+    walkTo(-0.5, 6.8, 180);
+    const pushedZ = N.player.pos.z;
+    const stillRoof = pushedZ < 5.8 && rid() !== '401';
+    // 410 の台へ戻る → 隔て板を越えて室外機に降りる → バルコニー → (開いたままの)窓 → 410 の室内
+    const back = walkTo(0.4, 4.9, 300) && walkTo(13.0, 4.9, 1200) && walkTo(14.3, 5.1, 300);
+    face(14.3, 5.8); N.pump(DT, 2, false);
+    const backHint = N.hudState().hint;
+    const vaultBack = traceVault(false);
+    const onBal2 = rid() === '410' && N.player.pos.z > 6.4;
+    const inRoom = walkTo(14.3, (w.open[0] + w.open[1]) / 2, 400) && walkTo(12.6, 7.25, 400) && rid() === '410' && N.player.pos.x < 13.7;
+    N.rooms.setWindow('410', false); N.pump(DT, 70, false);
     const pass = winHint.includes('窓を開ける') && open410 && toBalcony && onBalcony && gateHint.includes('乗り越える') && vault.ok && onRoof && r1
-      && gate401Hint.includes('乗り越える') && on401Balcony && winOutHint.includes('窓を開ける') && open401 && in401;
-    return { pass, winHint, open410, onBalcony, gateHint, vault410: vault, onRoof, roofP, crossedRoof: r1, gate401Hint, on401Balcony, winOutHint, open401, in401, end: pos(), events: N.rooms.events.filter((e) => /vault|window/.test(e.ev)).slice(-6) };
+      && !at401Hint.includes('乗り越え') && !vault401 && stillRoof
+      && back && backHint.includes('乗り越える') && vaultBack.ok && onBal2 && inRoom;
+    return { pass, winHint, open410, onBalcony, gateHint, vault410: vault, onRoof, roofP, crossedRoof: r1,
+      at401: { hint: at401Hint, target: target401, vaultStarted: vault401, pushedSouthZ: +pushedZ.toFixed(2), stillOnRoof: stillRoof },
+      backTo410: { walked: back, hint: backHint, vault: vaultBack, onBalcony: onBal2, inRoom }, end: pos() };
   });
 
   await T('1b_roofA_back_to_410', async () => {
