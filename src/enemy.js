@@ -19,6 +19,9 @@ export const ENEMY = {
   // meta.json(P2a)のハンマーのオフセット(mixamorig:RightHand のローカル)
   hammerPos: [0.006118, 0.098233, 0.025449],
   hammerQuat: [0.005073, 0.000799, 0.778998, 0.627005],
+  // P2d(§3.4.1 ハンマーの持ち方): P2a の向きは柄が小指側から出て頭が後ろ下に垂れていた。
+  // ハンマー自身の X 軸(頭の長さ方向)まわりに 180° 回し、柄を親指側へ・頭を前(振り上げで上)にする
+  hammerFlipAxis: [1, 0, 0],
   fade: 0.3,                       // 既定のクロスフェード秒
   flashlight: {
     angle: THREE.MathUtils.degToRad(25),
@@ -66,6 +69,7 @@ export class Enemy {
     this._prevPos = new THREE.Vector3();
     this.speed = 0;                // 実移動速度(足音・アニメの判定用。AI が設定)
     this.faceFill = 0;             // 襲撃ムービーの顔の補助光(0 = 消灯)
+    this.lean = 0;                 // 上体を前へ倒す角度(rad)。スコープを覗き込む時など(mixer の後に背骨へ足す)
     this.ready = false;
   }
 
@@ -107,6 +111,7 @@ export class Enemy {
     const hammer = h.scene.children[0] || h.scene;
     hammer.position.fromArray(ENEMY.hammerPos);
     hammer.quaternion.fromArray(ENEMY.hammerQuat);
+    if (ENEMY.hammerFlipAxis) hammer.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3().fromArray(ENEMY.hammerFlipAxis), Math.PI));
     hammer.scale.set(1, 1, 1);
     hammer.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; patchEnemyMaterial(o.material, this.uniforms); } });
     this.bones.rhand.add(hammer);
@@ -270,6 +275,7 @@ export class Enemy {
 
     this.root.rotation.set(0, this.yaw, 0);
     this.root.updateMatrixWorld(true);
+    if (this.lean > 1e-4) this._applyLean();
     this._updateFlashlight(dt);
     this._updateFootsteps(dt);
     if (camera) this._updateLightUniforms(camera);
@@ -305,6 +311,22 @@ export class Enemy {
     fl.group.updateMatrixWorld(true);
     fl.target.position.copy(hand).addScaledVector(this._dir, 5);
     fl.target.updateMatrixWorld();
+  }
+
+  // 背骨(Spine)を本体の右軸まわりに前へ倒す(世界空間の回転を骨のローカルへ換算して掛ける)
+  _applyLean() {
+    const f = this.forward(_v1);
+    const right = _v2.set(f.z, 0, -f.x).normalize();        // fwd × up の逆向き=前へ倒す軸
+    // 上体を前へ倒し、首で同じだけ起こして顔は正面(覗き込む先)を向いたままにする
+    for (const [name, ang] of [['mixamorigSpine', this.lean], ['mixamorigNeck', -this.lean * 0.9]]) {
+      const bone = this.model.getObjectByName(name);
+      if (!bone) continue;
+      const rWorld = _q1.setFromAxisAngle(right, ang);
+      const pWorld = bone.parent.getWorldQuaternion(new THREE.Quaternion());
+      // q_local' = pWorld^-1 * rWorld * pWorld * q_local
+      bone.quaternion.copy(pWorld.clone().invert().multiply(rWorld).multiply(pWorld).multiply(bone.quaternion));
+      bone.updateMatrixWorld(true);
+    }
   }
 
   _updateFootsteps(dt) {
@@ -362,6 +384,9 @@ export class Enemy {
       u.n2LampColor.value[i].set(ENEMY.flashlight.color).multiplyScalar(k);
       u.n2LampRange.value[i] = B.range;
       this.bounceDistance = dist;
+      // 近い面に当たっている時は光量を d² で絞る(1m 先の壁が白く飛んで bloom で画面全体が霞むのを防ぐ。
+      // 2.5m より遠くは元の強さ=光の筋と床の円は従来どおり)
+      fl.light.intensity = ENEMY.flashlight.intensity * THREE.MathUtils.clamp((dist / 2.5) ** 2, 0.15, 1);
       // 光の筋は最初に当たる面で終える(床や扉を突き抜けた先が霞まないように)。角度は保ったまま全体を縮める
       const k2 = THREE.MathUtils.clamp((dist + 0.15) / ENEMY.flashlight.beamLength, 0.05, 1);
       fl.beam.scale.setScalar(k2);
