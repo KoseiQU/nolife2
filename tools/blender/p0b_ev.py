@@ -254,12 +254,13 @@ def build_hall(ctx, col, doors, ev_info):
     """EVホール周辺: 下がり梁・電球色ダウンライト・非常口サイン(鉄扉の上の梁に取付)。"""
     MB = ctx.MeshBuilder
     B = ctx.BASE_Y; H = ctx.CEIL_H
-    stair = next((d for d in doors if d['kind'] == 'stair'), None)
+    stair = next((d for d in doors if d['kind'] == 'stair' and str(d['id']).startswith('MST')), None)
     ev = next((d for d in doors if d['kind'] == 'elevator'), None)
     beam = MB('HallBeams')
     nokeep = lambda k, c, n: k != '+y'
     # 廊下→ホールの境に横断する下がり梁(廊下の両壁の間)
-    junction = next(a['rect'] for a in ctx.REGION['air'] if a['id'] == 'junction')
+    # P3a: 全階版(build_floor.py)は ctx.HALL_RECT を持つ。P0(build_scene.py)は p0_region の junction
+    junction = getattr(ctx, 'HALL_RECT', None) or next(a['rect'] for a in ctx.REGION['air'] if a['id'] == 'junction')
     jz = junction[1]
     beam.box((6.06, B + H - BEAM_H, jz - 0.15), (7.74, B + H, jz + 0.15), 'M_Wall', keep=nokeep)
     # 鉄扉の壁に沿った下がり梁(非常口サインの取付面)

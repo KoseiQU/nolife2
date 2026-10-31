@@ -10,3 +10,10 @@ tools/blender/__pycache__/
 build/enemy/
 build/enemy_cache/
 build/blender_user/
+
+# P3a: 階ごとのビルド中間物(tools/build.sh で再生成)。ライトマップは WebP(build/floor_N_lightmap.webp)だけをコミット
+build/floor_*_scene.blend
+build/floor_*_baked.blend
+build/floor_*_lightmap.png
+build/_denoise_tmp.exr
+build/logs/

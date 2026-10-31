@@ -20,3 +20,7 @@
 | docs/enemy-candidates/p1b/*.jpg（P1b のレンダ） | 自作（tools/build_enemy_final.sh） | 上記各アセットのライセンスに従う（CC-BY 分は帰属表示が必要: Elvaerwyn） | 2026-10-31 |
 | build/enemy/07_*: 歯・舌（teeth_base, tongue01。色の黄ばみ・間引きの改変あり） | MakeHuman system assets（上記と同じパック） | CC0 1.0 | 2026-10-31 |
 | build/enemy/hammer.fbx / hammer.glb・build/enemy/tex/07_hammer_*（凶器のハンマー。形・テクスチャとも自作） | 自作（tools/blender/enemy_p1b.py `make_hammer`。実在製品の形・ロゴは模していない） | 自作（CC0扱い） | 2026-10-31 |
+| build/tex/{wall_cloth,ceiling_tile,door_wood}_{albedo,normal,roughness}.jpg（P3a 実行時テクスチャ。上記 ambientCG / Poly Haven の CC0 スキャンを 1024px（粗さ 512px）へ縮小・JPEG 化。GLB には埋め込まず全階で共有） | 上記と同じ（tools/make_textures.py が assets/textures から縮小） | CC0 1.0 | 2026-11-01 |
+| build/tex/{floor_sheet_*,wire_glass,ev_plate,car_stone,exit_sign,exit_sign_sq,ev_display}.*（P0/P0b の自作テクスチャを実行時用に保存し直したもの。ev_display は階数 1〜8 のアトラス） | 自作（tools/blender/n2tex.py・tools/make_textures.py） | 自作（CC0扱い） | 2026-11-01 |
+| build/tex/{stone_floor,stone_wall,carpet,diamond,concrete}_*.jpg・mailbox.jpg（P3a: 1F ロビーの石目タイル・壁タイル・シアターのカーペット・外階段の縞鋼板・外壁のコンクリート・集合ポスト/宅配BOX の面） | 自作（tools/make_textures.py が numpy/PIL で描く。実写や実在製品の写しではない） | 自作（CC0扱い） | 2026-11-01 |
+| build/tex/room_plates.png・ev_car_panel.png（P3a: 号室プレート 104 室のアトラス・EV カゴの行き先ボタン盤。数字は Blender 同梱の Inter で描画） | 自作（tools/make_textures.py）。フォント: Blender 5.2 同梱 datafiles/fonts/Inter.woff2（https://github.com/rsms/inter） | 画像は自作（CC0扱い）／フォントは SIL OFL 1.1 | 2026-11-01 |

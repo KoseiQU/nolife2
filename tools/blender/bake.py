@@ -18,7 +18,7 @@ sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
 ARGS = parse_args({'size': '2048', 'samples': '1024', 'device': 'GPU',
-                   'out': 'build/p0_lightmap.png', 'blend_out': 'build/p0_baked.blend'})
+                   'out': 'build/p0_lightmap.png', 'blend_out': 'build/p0_baked.blend', 'info': 'build/p0_bake_info.json'})
 SIZE = int(ARGS['size'])
 SAMPLES = int(ARGS['samples'])
 IMG_NAME = 'P0_Lightmap'
@@ -70,7 +70,8 @@ def prepare(scene):
     # オブジェクト毎のベイクは1個ごとに数秒の準備コストが掛かる(102個で数分)。
     # → 拡散板(照明に寄与させない設定のもの)以外を複製して1つに結合した「代理」を焼き、元は render から隠す。
     #   第2UV(Lightmap)は全メッシュ共通のアトラスなので、代理に焼いても結果は同じ画像になる。
-    src = [o for o in meshes if o.get('n2_kind') != 'lampcover']
+    # P3a: ベイク専用の遮蔽(n2_bake_only)は焼き込み先にしない(影だけ落とす)
+    src = [o for o in meshes if o.get('n2_kind') != 'lampcover' and not o.get('n2_bake_only')]
     for o in scene.objects:
         o.select_set(False)
     copies = []
@@ -234,7 +235,7 @@ def main():
                 lightMapIntensity=float(np.pi * scale),
                 lum=dict(p50=p50, p99=p99, p999=p999, max=mx),
                 coverage=float((lum > 1e-6).mean()))
-    with open(os.path.join(ROOT, 'build', 'p0_bake_info.json'), 'w') as f:
+    with open(os.path.join(ROOT, ARGS['info']), 'w') as f:
         json.dump(info, f, indent=2)
     log(f'saved {png}  scale={scale:.5f} p50={p50:.5f} p99={p99:.5f} max={mx:.4f} denoised={info["denoised"]}')
 

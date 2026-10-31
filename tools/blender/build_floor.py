@@ -1,0 +1,1438 @@
+# build_floor.py — P3a: building.json の1階ぶん(floor.shell)を外殻として生成し .blend に保存する。
+#
+# 実行: Blender -b --factory-startup -P tools/blender/build_floor.py -- --level 4 [--out build/floor_4_scene.blend]
+#
+# P0 の build_scene.py(4F の1区間)を全階・全区間に広げたもの。規則は同じ:
+#   - 壁は data/building.json → walls.js と同じ箱(本ファイルの floor_wall_boxes が Python 移植)から、
+#     floor.shell.air(歩ける/見える空気の矩形)に接する箱だけを選んで接触部へ切り詰め、空気に面した面だけ張る。
+#     衝突は JS 側が同じ walls.js から作るので、見た目と当たりのズレは tools/check_glb.mjs が数値で検査する。
+#   - 第1UV "UVMap" = 実寸平面投影(タイル)、第2UV "Lightmap" = 階ごとに1枚のアトラス(smart_project で一括)。
+#   - テクスチャは build/tex/(tools/make_textures.py)を参照するが GLB には埋め込まない(export.py が NONE で書き出し、
+#     材質→テクスチャの対応は manifest.materials に書く)。
+# 7F は屋上B(building.roofB: 7F の上の屋根)も同じ .blend に含める(DESIGN §2.3 追記)。
+
+import bpy, bmesh, json, math, os, sys
+from mathutils import Vector
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, HERE)
+from n2common import parse_args, log  # noqa: E402
+import p0b_ev  # noqa: E402
+import n2tex  # noqa: E402
+
+ARGS = parse_args({'level': '4', 'out': ''})
+LEVEL = int(ARGS['level'])
+OUT = ARGS['out'] or f'build/floor_{LEVEL}_scene.blend'
+BUILDING = json.load(open(os.path.join(ROOT, 'data', 'building.json')))
+FLOOR = next(f for f in BUILDING['floors'] if f['level'] == LEVEL)
+SHELL = FLOOR['shell']
+GEO = BUILDING['meta']['geom']
+FLOOR_H = GEO['floorH']        # 2.9
+CEIL_H = GEO['ceilH']          # 2.4
+WALL_T = 0.12
+DOOR_W = 0.9
+DOOR_H = 2.0
+HEAD_H = 0.04
+JAMB = 0.035
+SILL_H = 0.015
+LEAF_T = 0.04
+EV_ALCOVE_W = 1.0
+EV_ALCOVE_D = 0.27
+EV_OPEN_SHIFT = 0.2
+BASE_Y = (LEVEL - 1) * FLOOR_H
+NIGHT_LIGHT_SPACING = 6.5
+TEX = os.path.join(ROOT, 'build', 'tex')
+HALL_RECT = SHELL['hall']
+REGION = {'air': SHELL['air']}
+STAIRS = {s['id']: s for s in BUILDING['stairs']}
+ROOFB = BUILDING['roofB'] if LEVEL == 7 else None
+MAX_LEVEL = 7
+PLATES = json.load(open(os.path.join(TEX, 'room_plates.json')))
+CAR_PANEL = json.load(open(os.path.join(TEX, 'ev_car_panel.json')))
+
+INDOOR_KINDS = {'corridor', 'hall', 'alcove', 'lobby', 'theater', 'room', 'room410'}
+FULL_H_KINDS = {'stair', 'well', 'outdoor', 'roof'}
+
+
+# ---------------------------------------------------------------------------
+# 空気のゾーン(床の高さ・見える高さ付き)
+# ---------------------------------------------------------------------------
+def make_zones():
+    zs = []
+    for a in SHELL['air']:
+        h = FLOOR_H if a['kind'] in FULL_H_KINDS else CEIL_H
+        zs.append(dict(a, y0=BASE_Y, y1=BASE_Y + h, set='floor', outdoor=a['kind'] == 'outdoor' or a.get('outdoor', False)))
+    if ROOFB:
+        for a in ROOFB['air']:
+            y = ROOFB['y']
+            h = FLOOR_H if a['kind'] in ('well', 'outdoor') else 2.0
+            zs.append(dict(a, y0=y, y1=y + h, set='roof', outdoor=True))
+    return zs
+
+ZONES = make_zones()
+
+
+def zone_at(x, z, y=None, sets=('floor', 'roof')):
+    for zn in ZONES:
+        if zn['set'] not in sets:
+            continue
+        x0, z0, w, d = zn['rect']
+        if x0 - 1e-6 <= x <= x0 + w + 1e-6 and z0 - 1e-6 <= z <= z0 + d + 1e-6:
+            if y is None or zn['y0'] + 0.001 < y < zn['y1'] - 0.001:
+                return zn
+    return None
+
+
+def in_air(x, z, y=None):
+    """p0b_ev 互換: 床の高さの空気(屋内・屋外)に入っているか。"""
+    return zone_at(x, z, y, sets=('floor',)) is not None
+
+
+def in_footprint(x, z, rects, skip=None):
+    for r in rects:
+        if skip is not None and r == skip:
+            continue
+        x0, z0, w, d = r
+        if x0 + 1e-6 < x < x0 + w - 1e-6 and z0 + 1e-6 < z < z0 + d - 1e-6:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# walls.js の Python 移植(floorWallBoxes。P3a の door.width 対応込み)
+# ---------------------------------------------------------------------------
+def cut_intervals(lo, hi, gaps):
+    ivs = [(lo, hi)]
+    for g in gaps:
+        gl, gh = g[0] - g[1] / 2, g[0] + g[1] / 2
+        nxt = []
+        for a, b in ivs:
+            if gh <= a or gl >= b:
+                nxt.append((a, b)); continue
+            if gl > a: nxt.append((a, gl))
+            if gh < b: nxt.append((gh, b))
+        ivs = nxt
+    return [(a, b) for a, b in ivs if b - a > 0.02]
+
+def h_wall(boxes, lo, hi, z, gaps, ext=0.0):
+    for a, b in cut_intervals(lo, hi, gaps):
+        boxes.append(dict(cx=(a + b) / 2, cz=z, w=b - a + 2 * ext, d=WALL_T, kind='wall'))
+
+def v_wall(boxes, lo, hi, x, gaps, ext=0.0):
+    for a, b in cut_intervals(lo, hi, gaps):
+        boxes.append(dict(cx=x, cz=(a + b) / 2, w=WALL_T, d=b - a + 2 * ext, kind='wall'))
+
+def door_width(room):
+    return (room.get('door') or {}).get('width') or DOOR_W
+
+def side_gaps(room, side):
+    gaps = []
+    horiz = side in ('N', 'S')
+    door = room.get('door')
+    if door and door['facing'] == side:
+        gaps.append((door['pos'][0] if horiz else door['pos'][1], door_width(room)))
+    for o in room.get('openings', []):
+        if o['side'] == side:
+            gaps.append((o['pos'][0] if horiz else o['pos'][1], o.get('width', DOOR_W)))
+    return gaps
+
+def ev_opening_center(room):
+    px, pz = room['door']['pos']
+    k = EV_OPEN_SHIFT
+    return {'N': (px + k, pz), 'S': (px - k, pz), 'W': (px, pz - k)}.get(room['door']['facing'], (px, pz + k))
+
+def elevator_blocks(room):
+    x, z, w, d = room['rect']
+    def box(x0, z0, x1, z1, part):
+        return dict(cx=(x0 + x1) / 2, cz=(z0 + z1) / 2, w=x1 - x0, d=z1 - z0, kind='solid', part=part, roomId=room['id'])
+    AW, AD = EV_ALCOVE_W, EV_ALCOVE_D
+    px, pz = ev_opening_center(room)
+    return [box(x, z + AD, x + w, z + d, 'evBack'), box(x, z, px - AW / 2, z + AD, 'evSide'), box(px + AW / 2, z, x + w, z + AD, 'evSide')]
+
+def floor_wall_boxes(floor):
+    boxes = []
+    for room in floor.get('rooms', []):
+        x, z, w, d = room['rect']
+        if room['kind'] == 'elevator':
+            boxes.extend(elevator_blocks(room)); continue
+        h_wall(boxes, x, x + w, z, side_gaps(room, 'N'))
+        h_wall(boxes, x, x + w, z + d, side_gaps(room, 'S'))
+        v_wall(boxes, z, z + d, x, side_gaps(room, 'W'))
+        v_wall(boxes, z, z + d, x + w, side_gaps(room, 'E'))
+    rects = floor.get('footprint', [])
+    opens = floor.get('perimOpenings', [])
+    D, T = 0.02, WALL_T
+    for i, (rx, rz, rw, rd) in enumerate(rects):
+        def cov_h(zs):
+            return [(ox + ow / 2, ow) for j, (ox, oz, ow, od) in enumerate(rects) if j != i and oz - 1e-9 <= zs <= oz + od + 1e-9]
+        def cov_v(xs):
+            return [(oz + od / 2, od) for j, (ox, oz, ow, od) in enumerate(rects) if j != i and ox - 1e-9 <= xs <= ox + ow + 1e-9]
+        def op_h(zc, f):
+            return [(o['pos'][0], o['width']) for o in opens if o['facing'] == f and abs(o['pos'][1] - zc) < 0.05]
+        def op_v(xc, f):
+            return [(o['pos'][1], o['width']) for o in opens if o['facing'] == f and abs(o['pos'][0] - xc) < 0.05]
+        h_wall(boxes, rx, rx + rw, rz - T / 2, cov_h(rz - D) + op_h(rz, 'N'), T / 2)
+        h_wall(boxes, rx, rx + rw, rz + rd + T / 2, cov_h(rz + rd + D) + op_h(rz + rd, 'S'), T / 2)
+        v_wall(boxes, rz, rz + rd, rx - T / 2, cov_v(rx - D) + op_v(rx, 'W'), T / 2)
+        v_wall(boxes, rz, rz + rd, rx + rw + T / 2, cov_v(rx + rw + D) + op_v(rx + rw, 'E'), T / 2)
+    for o in opens:
+        horiz = o['facing'] in ('N', 'S')
+        boxes.append(dict(cx=o['pos'][0], cz=o['pos'][1], w=o['width'] if horiz else T, d=T if horiz else o['width'], kind='perimDoor'))
+    return boxes
+
+
+def merge_collinear(boxes):
+    """同じ線上で重なる/接する壁箱を1本へ(面の重なり=Zファイトを防ぐ)。'solid' はそのまま。"""
+    groups, out = {}, []
+    for b in boxes:
+        if b['kind'] != 'wall':
+            out.append(b); continue
+        if abs(b['d'] - WALL_T) < 1e-6 and b['w'] > b['d']:
+            key = ('h', round(b['cz'], 4)); lo, hi = b['cx'] - b['w'] / 2, b['cx'] + b['w'] / 2
+        else:
+            key = ('v', round(b['cx'], 4)); lo, hi = b['cz'] - b['d'] / 2, b['cz'] + b['d'] / 2
+        groups.setdefault(key, []).append((lo, hi))
+    for (o, c), ivs in groups.items():
+        ivs.sort()
+        cur = list(ivs[0])
+        merged = []
+        for lo, hi in ivs[1:]:
+            if lo <= cur[1] + 1e-4:
+                cur[1] = max(cur[1], hi)
+            else:
+                merged.append(cur); cur = [lo, hi]
+        merged.append(cur)
+        for lo, hi in merged:
+            if o == 'h':
+                out.append(dict(cx=(lo + hi) / 2, cz=c, w=hi - lo, d=WALL_T, kind='wall'))
+            else:
+                out.append(dict(cx=c, cz=(lo + hi) / 2, w=WALL_T, d=hi - lo, kind='wall'))
+    return out
+
+
+def box_minmax(b):
+    return b['cx'] - b['w'] / 2, b['cz'] - b['d'] / 2, b['cx'] + b['w'] / 2, b['cz'] + b['d'] / 2
+
+PAD = 0.07
+
+def select_boxes(boxes, zones, min_area=0.008):
+    """空気(PAD 膨張)との接触面積が min_area 超の壁/塊を選び、接触部の外接箱に切り詰める(P0 と同じ規則)。"""
+    out, seen = [], set()
+    for b in boxes:
+        if b['kind'] not in ('wall', 'solid'):
+            continue
+        bx0, bz0, bx1, bz1 = box_minmax(b)
+        area, ux0, uz0, ux1, uz1 = 0.0, 1e9, 1e9, -1e9, -1e9
+        for zn in zones:
+            ax0, az0, w, d = zn['rect']; ax1, az1 = ax0 + w, az0 + d
+            ix0, iz0 = max(bx0, ax0 - PAD), max(bz0, az0 - PAD)
+            ix1, iz1 = min(bx1, ax1 + PAD), min(bz1, az1 + PAD)
+            if ix1 - ix0 <= 1e-9 or iz1 - iz0 <= 1e-9:
+                continue
+            area += (ix1 - ix0) * (iz1 - iz0)
+            ux0, uz0, ux1, uz1 = min(ux0, ix0), min(uz0, iz0), max(ux1, ix1), max(uz1, iz1)
+        if area <= min_area:
+            continue
+        key = (round(ux0, 4), round(uz0, 4), round(ux1, 4), round(uz1, 4))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(dict(min=(ux0, uz0), max=(ux1, uz1), kind=b['kind'], part=b.get('part'), roomId=b.get('roomId')))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# メッシュ生成ヘルパ(build_scene.py と同じ。ゲーム座標で書き Blender 座標へ)
+# ---------------------------------------------------------------------------
+def g2b(x, y, z):
+    return Vector((x, -z, y))
+
+MATS = {}
+TEX_SIZE = {}
+MAT_TEX = {}      # 材質名 → 実行時テクスチャ(manifest.materials)
+BAKE_ONLY = []    # ベイクの遮蔽にだけ使い、書き出さないオブジェクト
+
+
+class MeshBuilder:
+    def __init__(self, name, origin=(0.0, 0.0, 0.0)):
+        self.name = name
+        self.origin = origin
+        self.bm = bmesh.new()
+        self.uv = self.bm.loops.layers.uv.new('UVMap')
+        self.mat_index = {}
+        self.mat_list = []
+
+    def _mi(self, mat):
+        if mat not in self.mat_index:
+            self.mat_index[mat] = len(self.mat_list)
+            self.mat_list.append(mat)
+        return self.mat_index[mat]
+
+    def quad(self, pts, normal, mat):
+        ox, oy, oz = self.origin
+        vs = [self.bm.verts.new(g2b(p[0] - ox, p[1] - oy, p[2] - oz)) for p in pts]
+        f = self.bm.faces.new(vs)
+        f.material_index = self._mi(mat)
+        size, rot = TEX_SIZE.get(mat, (1.0, False))
+        nx, ny, nz = normal
+        for loop, p in zip(f.loops, pts):
+            x, y, z = p
+            if abs(ny) > 0.5:
+                u, v = x, -z if ny > 0 else z
+            else:
+                rx, rz = nz, -nx
+                u, v = x * rx + z * rz, y
+            if rot:
+                u, v = v, u
+            loop[self.uv].uv = (u / size, v / size)
+        return f
+
+    def poly(self, pts, normal, mat):
+        """任意の凸多角形(法線は向きを強制)。"""
+        f = self.quad(pts, normal, mat)
+        orient(f, normal)
+        return f
+
+    def box(self, mn, mx, mat, keep=None, mats=None):
+        x0, y0, z0 = mn; x1, y1, z1 = mx
+        faces = {
+            '+x': ([(x1, y0, z1), (x1, y0, z0), (x1, y1, z0), (x1, y1, z1)], (1, 0, 0)),
+            '-x': ([(x0, y0, z0), (x0, y0, z1), (x0, y1, z1), (x0, y1, z0)], (-1, 0, 0)),
+            '+z': ([(x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)], (0, 0, 1)),
+            '-z': ([(x1, y0, z0), (x0, y0, z0), (x0, y1, z0), (x1, y1, z0)], (0, 0, -1)),
+            '+y': ([(x0, y1, z1), (x1, y1, z1), (x1, y1, z0), (x0, y1, z0)], (0, 1, 0)),
+            '-y': ([(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1)], (0, -1, 0)),
+        }
+        made = 0
+        for key, (pts, n) in faces.items():
+            c = tuple(sum(p[i] for p in pts) / 4 for i in range(3))
+            if keep is not None and not keep(key, c, n):
+                continue
+            self.quad(pts, n, (mats or {}).get(key, mat))
+            made += 1
+        return made
+
+    def finish(self, collection, props=None, bake_only=False):
+        if len(self.bm.faces) == 0:
+            self.bm.free(); return None
+        bmesh.ops.remove_doubles(self.bm, verts=self.bm.verts, dist=1e-5)
+        me = bpy.data.meshes.new(self.name)
+        self.bm.to_mesh(me)
+        self.bm.free()
+        for m in self.mat_list:
+            me.materials.append(MATS[m])
+        ob = bpy.data.objects.new(self.name, me)
+        ob.location = g2b(*self.origin)
+        collection.objects.link(ob)
+        for k, v in (props or {}).items():
+            ob[k] = v
+        if bake_only:
+            ob['n2_bake_only'] = 1
+            BAKE_ONLY.append(ob)
+        return ob
+
+
+def orient(f, n_game):
+    nb = (n_game[0], -n_game[2], n_game[1])
+    f.normal_update()
+    if f.normal.x * nb[0] + f.normal.y * nb[1] + f.normal.z * nb[2] < 0:
+        f.normal_flip()
+    return f
+
+
+def set_uv(f, mb, uvs):
+    for loop, uv in zip(f.loops, uvs):
+        loop[mb.uv].uv = uv
+
+
+# ---------------------------------------------------------------------------
+# マテリアル(テクスチャは build/tex の実行時ファイル)
+# ---------------------------------------------------------------------------
+def rel(path):
+    return os.path.relpath(path, ROOT).replace(os.sep, '/')
+
+def tex(name):
+    return os.path.join(TEX, name)
+
+def load_img(path, non_color):
+    img = bpy.data.images.load(path, check_existing=True)
+    img.colorspace_settings.name = 'Non-Color' if non_color else 'sRGB'
+    return img
+
+def pbr_material(name, tex=None, size=1.0, rot=False, base=(0.8, 0.8, 0.8), rough=0.6,
+                 metal=0.0, emit=None, emit_strength=0.0, emit_tex=None, normal_strength=1.0, files=None, alpha=None):
+    """build_scene.pbr_material と同じ。files={albedo,roughness,normal}(任意の部分集合)を build/tex から。"""
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes.get('Principled BSDF')
+    bsdf.inputs['Base Color'].default_value = (*base, 1.0)
+    bsdf.inputs['Roughness'].default_value = rough
+    bsdf.inputs['Metallic'].default_value = metal
+    uvn = nt.nodes.new('ShaderNodeUVMap'); uvn.uv_map = 'UVMap'; uvn.location = (-900, 0)
+    rec = {}
+    files = files or {}
+    if 'albedo' in files:
+        a = nt.nodes.new('ShaderNodeTexImage'); a.image = load_img(files['albedo'], False)
+        nt.links.new(uvn.outputs['UV'], a.inputs['Vector']); nt.links.new(a.outputs['Color'], bsdf.inputs['Base Color'])
+        rec['map'] = rel(files['albedo'])
+    if 'roughness' in files:
+        r = nt.nodes.new('ShaderNodeTexImage'); r.image = load_img(files['roughness'], True)
+        nt.links.new(uvn.outputs['UV'], r.inputs['Vector']); nt.links.new(r.outputs['Color'], bsdf.inputs['Roughness'])
+        rec['roughnessMap'] = rel(files['roughness'])
+    if 'normal' in files:
+        n = nt.nodes.new('ShaderNodeTexImage'); n.image = load_img(files['normal'], True)
+        nt.links.new(uvn.outputs['UV'], n.inputs['Vector'])
+        nm = nt.nodes.new('ShaderNodeNormalMap'); nm.uv_map = 'UVMap'; nm.name = 'N2_NormalMap'
+        nm.inputs['Strength'].default_value = normal_strength
+        nt.links.new(n.outputs['Color'], nm.inputs['Color']); nt.links.new(nm.outputs['Normal'], bsdf.inputs['Normal'])
+        rec['normalMap'] = rel(files['normal']); rec['normalScale'] = normal_strength
+    if emit is not None:
+        bsdf.inputs['Emission Color'].default_value = (*emit, 1.0)
+        bsdf.inputs['Emission Strength'].default_value = emit_strength
+    if emit_tex is not None:
+        e = nt.nodes.new('ShaderNodeTexImage'); e.image = emit_tex
+        nt.links.new(uvn.outputs['UV'], e.inputs['Vector'])
+        nt.links.new(e.outputs['Color'], bsdf.inputs['Emission Color'])
+        nt.links.new(e.outputs['Color'], bsdf.inputs['Base Color'])
+        bsdf.inputs['Emission Strength'].default_value = emit_strength
+        rec['map'] = rec['emissiveMap'] = rel(bpy.path.abspath(emit_tex.filepath))
+    if alpha is not None:
+        bsdf.inputs['Alpha'].default_value = alpha
+        rec['opacity'] = alpha
+    MATS[name] = m
+    TEX_SIZE[name] = (size, rot)
+    if rec:
+        MAT_TEX[name] = rec
+    return m
+
+
+def _set_base_tex(mat, img):
+    nt = mat.node_tree
+    bsdf = nt.nodes.get('Principled BSDF')
+    uvn = next(n for n in nt.nodes if n.type == 'UVMAP')
+    t = nt.nodes.new('ShaderNodeTexImage'); t.image = img
+    nt.links.new(uvn.outputs['UV'], t.inputs['Vector'])
+    nt.links.new(t.outputs['Color'], bsdf.inputs['Base Color'])
+    MAT_TEX.setdefault(mat.name, {})['map'] = rel(bpy.path.abspath(img.filepath))
+
+
+def tex_files(prefix, normal=True, rough=True):
+    f = {'albedo': tex(f'{prefix}_albedo.jpg')}
+    if normal: f['normal'] = tex(f'{prefix}_normal.jpg')
+    if rough: f['roughness'] = tex(f'{prefix}_roughness.jpg')
+    return f
+
+
+# p0b_ev が n2tex.save_png で作る画像は、実行時テクスチャ(build/tex)を読む形に差し替える
+_P0B_TEX = {'wire_glass': 'wire_glass.png', 'ev_display': 'ev_display.png', 'ev_plate': 'ev_plate.png',
+            'car_stone': 'car_stone.jpg', 'exit_sign_sq': 'exit_sign_sq.png'}
+def _load_runtime_png(bpy_, root, name, arr):
+    img = bpy.data.images.load(tex(_P0B_TEX[name]), check_existing=True)
+    img.colorspace_settings.name = 'sRGB'
+    return img
+n2tex.save_png = _load_runtime_png
+
+
+def build_materials():
+    pbr_material('M_Wall', files=tex_files('wall_cloth'), size=1.0, rough=0.85)
+    pbr_material('M_Ceiling', files=tex_files('ceiling_tile'), size=3.0, rough=0.9)
+    pbr_material('M_Floor', files=tex_files('floor_sheet'), size=1.0, rough=0.7, normal_strength=0.6)
+    pbr_material('M_DoorWood', files=tex_files('door_wood'), size=1.0, rot=True, rough=0.5)
+    pbr_material('M_Frame', base=(0.11, 0.10, 0.09), rough=0.45)
+    pbr_material('M_Baseboard', base=(0.035, 0.035, 0.035), rough=0.55)
+    pbr_material('M_Handle', base=(0.75, 0.74, 0.72), rough=0.28, metal=1.0)
+    pbr_material('M_SteelDoor', base=(0.33, 0.34, 0.35), rough=0.5)
+    pbr_material('M_Stainless', base=(0.55, 0.55, 0.55), rough=0.5, metal=1.0)
+    pbr_material('M_Plastic', base=(0.72, 0.72, 0.70), rough=0.5)
+    pbr_material('M_Void', base=(0.0, 0.0, 0.0), rough=1.0)
+    pbr_material('M_LampCover', base=(0.9, 0.92, 0.95), rough=0.4, emit=(0.74, 0.84, 1.0), emit_strength=6.0)
+    pbr_material('M_ExitSign', size=1.0, rough=0.4, emit_tex=load_img(tex('exit_sign.png'), False), emit_strength=3.0)
+    pbr_material('M_Window', base=(0.05, 0.06, 0.08), rough=0.2, emit=(0.45, 0.55, 0.85), emit_strength=0.35)
+    pbr_material('M_Button', base=(0.1, 0.1, 0.1), rough=0.4, emit=(1.0, 0.55, 0.15), emit_strength=1.5)
+    p0b_ev.build_materials(sys.modules[__name__])
+    # P3a で追加
+    pbr_material('M_Stone', files=tex_files('stone_floor', rough=False), size=1.2, rough=0.32, normal_strength=0.5)
+    pbr_material('M_StoneWall', files=tex_files('stone_wall', rough=False), size=1.2, rough=0.55, normal_strength=0.5)
+    pbr_material('M_Carpet', files=tex_files('carpet', rough=False), size=1.0, rough=0.95)
+    pbr_material('M_DarkWall', base=(0.075, 0.075, 0.08), rough=0.85)
+    pbr_material('M_DarkCeil', base=(0.13, 0.125, 0.12), rough=0.75)
+    pbr_material('M_ExtWall', files=tex_files('concrete', rough=False), size=2.0, rough=0.9)
+    pbr_material('M_PaintWall', base=(0.58, 0.58, 0.56), rough=0.8)
+    pbr_material('M_Deck', files=tex_files('diamond', rough=False), size=0.3, rough=0.5, metal=0.5)
+    pbr_material('M_SteelStruct', base=(0.27, 0.27, 0.26), rough=0.6)
+    pbr_material('M_Rail', base=(0.36, 0.36, 0.35), rough=0.45, metal=0.3)
+    pbr_material('M_RoofSheet', base=(0.30, 0.32, 0.30), rough=0.85)
+    pbr_material('M_GlassClear', base=(0.85, 0.9, 0.92), rough=0.05, alpha=0.12)
+    pbr_material('M_Backdrop', base=(0.0, 0.0, 0.0), rough=1.0, emit=(0.12, 0.16, 0.26), emit_strength=0.6)
+    pbr_material('M_Mailbox', base=(1, 1, 1), rough=0.45, metal=0.2)
+    _set_base_tex(MATS['M_Mailbox'], load_img(tex('mailbox.jpg'), False))
+    pbr_material('M_RoomPlate', base=(1, 1, 1), rough=0.35, metal=0.4)
+    _set_base_tex(MATS['M_RoomPlate'], load_img(tex('room_plates.png'), False))
+    pbr_material('M_CarPanel', base=(1, 1, 1), rough=0.35, metal=0.6)
+    _set_base_tex(MATS['M_CarPanel'], load_img(tex('ev_car_panel.png'), False))
+    pbr_material('M_Screen', base=(0.55, 0.55, 0.55), rough=0.9)
+    pbr_material('M_BracketCover', base=(0.95, 0.9, 0.8), rough=0.4, emit=(1.0, 0.78, 0.52), emit_strength=6.0)
+    pbr_material('M_Machine', base=(0.40, 0.41, 0.40), rough=0.6)
+    # p0b の材質の実行時テクスチャ(n2tex.save_png を差し替え済みなので画像は build/tex を指す)
+    for n in ('M_WireGlass', 'M_WireGlassOut', 'M_EVDisplay', 'M_EVPlate', 'M_CarStone', 'M_ExitSignSq'):
+        m = MATS[n]
+        for node in m.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image:
+                MAT_TEX.setdefault(n, {})['map'] = rel(bpy.path.abspath(node.image.filepath))
+                if n in ('M_EVDisplay', 'M_ExitSignSq'):
+                    MAT_TEX[n]['emissiveMap'] = MAT_TEX[n]['map']
+
+
+# 空気の種類 → 床・壁・天井の材質
+def wall_mat(kind):
+    return {'lobby': 'M_StoneWall', 'theater': 'M_DarkWall', 'stair': 'M_PaintWall', 'well': 'M_PaintWall',
+            'outdoor': 'M_ExtWall', 'roof': 'M_ExtWall'}.get(kind, 'M_Wall')
+
+def floor_mat(kind):
+    return {'lobby': 'M_Stone', 'theater': 'M_Carpet', 'stair': 'M_Floor'}.get(kind, 'M_Floor')
+
+def ceil_mat(kind):
+    return {'lobby': 'M_DarkCeil', 'theater': 'M_DarkCeil'}.get(kind, 'M_Ceiling')
+
+
+# ---------------------------------------------------------------------------
+# 扉
+# ---------------------------------------------------------------------------
+FACING_OUT = {'N': (0, -1), 'S': (0, 1), 'E': (1, 0), 'W': (-1, 0)}
+
+def floor_doors():
+    out = []
+    ops = set(SHELL['operable'])
+    for room in FLOOR['rooms']:
+        dr = room.get('door')
+        if not dr:
+            continue
+        px, pz = dr['pos']
+        horiz = dr['facing'] in ('N', 'S')
+        dw = door_width(room)
+        if horiz:
+            gmin, gmax = (px - dw / 2, pz - WALL_T / 2), (px + dw / 2, pz + WALL_T / 2)
+        else:
+            gmin, gmax = (px - WALL_T / 2, pz - dw / 2), (px + WALL_T / 2, pz + dw / 2)
+        fx, fz = FACING_OUT[dr['facing']]
+        outside = in_air(px + fx * 0.1, pz + fz * 0.1)
+        inside = in_air(px - fx * 0.1, pz - fz * 0.1)
+        if not (outside or inside):
+            continue
+        out.append(dict(room=room, id=room['id'], kind=room['kind'], pos=(px, pz), facing=dr['facing'], width=dw,
+                        horiz=horiz, gap_min=gmin, gap_max=gmax, steel=bool(dr.get('steel')), glass=bool(dr.get('glass')),
+                        auto=bool(dr.get('auto')), common=bool(dr.get('common')), unit=room['kind'] == 'unit',
+                        operable=room['id'] in ops, inside_visible=bool(inside)))
+    return out
+
+
+def doorway_contains(x, z, doors):
+    for dd in doors:
+        (x0, z0), (x1, z1) = dd['gap_min'], dd['gap_max']
+        if x0 - 1e-6 <= x <= x1 + 1e-6 and z0 - 1e-6 <= z <= z1 + 1e-6:
+            return True
+    return False
+
+
+def build_door(dd, col):
+    """扉枠+垂れ壁+扉板(ヒンジ原点)。P0 build_scene.build_door を全種類へ(居室=号室プレート・覗き穴、施錠扉は室内側の面なし)。"""
+    px, pz = dd['pos']
+    (gx0, gz0), (gx1, gz1) = dd['gap_min'], dd['gap_max']
+    y0 = BASE_Y
+    facing = dd['facing']
+    fx, fz = FACING_OUT[facing]
+    rid = dd['id']
+    if dd['kind'] == 'elevator':
+        info = p0b_ev.build_elevator(sys.modules[__name__], dd, col)
+        fix_ev_display(rid)
+        build_car_panel(dd)
+        return info
+    if dd['auto']:
+        return build_auto_door(dd, col, operable=True)
+    fr = MeshBuilder(f'DoorFrame_{rid}')
+    FM = 'M_SteelFrameP' if dd['steel'] else 'M_Frame'
+    lin = MeshBuilder(f'Lintel_{rid}')
+    zin = zone_at(px - fx * 0.2, pz - fz * 0.2)
+    top_in = (zin['y1'] - BASE_Y) if zin else CEIL_H
+    zout = zone_at(px + fx * 0.2, pz + fz * 0.2)
+    top = max(top_in, (zout['y1'] - BASE_Y) if zout else CEIL_H)
+    lin.box((gx0, y0 + DOOR_H + HEAD_H, gz0), (gx1, y0 + top, gz1), 'M_Wall',
+            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03) is not None)
+    # 垂れ壁の材質を面ごとの空気に合わせる
+    lin_ob = lin.finish(col, {'n2_kind': 'lintel', 'n2_room': rid})
+    if lin_ob:
+        retint_by_zone(lin_ob)
+    if dd['horiz']:
+        fr.box((gx0, y0, gz0), (gx0 + JAMB, y0 + DOOR_H, gz1), FM)
+        fr.box((gx1 - JAMB, y0, gz0), (gx1, y0 + DOOR_H, gz1), FM)
+    else:
+        fr.box((gx0, y0, gz0), (gx1, y0 + DOOR_H, gz0 + JAMB), FM)
+        fr.box((gx0, y0, gz1 - JAMB), (gx1, y0 + DOOR_H, gz1), FM)
+    fr.box((gx0, y0 + DOOR_H, gz0), (gx1, y0 + DOOR_H + HEAD_H, gz1), FM)
+    fr.box((gx0, y0, gz0), (gx1, y0 + SILL_H, gz1), 'M_SUS' if dd['steel'] else FM)
+    t, cw = 0.012, 0.04
+    sides = [1] + ([-1] if dd['inside_visible'] else [])
+    for side in sides:
+        sx, sz = fx * side, fz * side
+        if dd['horiz']:
+            zf = gz1 if sz > 0 else gz0
+            zz = (zf, zf + t) if sz > 0 else (zf - t, zf)
+            fr.box((gx0 - cw, y0, zz[0]), (gx0, y0 + DOOR_H + HEAD_H + cw, zz[1]), FM)
+            fr.box((gx1, y0, zz[0]), (gx1 + cw, y0 + DOOR_H + HEAD_H + cw, zz[1]), FM)
+            fr.box((gx0, y0 + DOOR_H + HEAD_H, zz[0]), (gx1, y0 + DOOR_H + HEAD_H + cw, zz[1]), FM)
+        else:
+            xf = gx1 if sx > 0 else gx0
+            xx = (xf, xf + t) if sx > 0 else (xf - t, xf)
+            fr.box((xx[0], y0, gz0 - cw), (xx[1], y0 + DOOR_H + HEAD_H + cw, gz0), FM)
+            fr.box((xx[0], y0, gz1), (xx[1], y0 + DOOR_H + HEAD_H + cw, gz1 + cw), FM)
+            fr.box((xx[0], y0 + DOOR_H + HEAD_H, gz0), (xx[1], y0 + DOOR_H + HEAD_H + cw, gz1), FM)
+    fr.finish(col, {'n2_kind': 'doorframe', 'n2_room': rid})
+
+    leaf_w = dd['width'] - 2 * JAMB
+    leaf_h = DOOR_H - SILL_H - 0.005
+    ly0 = y0 + SILL_H + 0.003
+    room_dir = (-fx, -fz)
+    if dd['horiz']:
+        zc = pz + room_dir[1] * 0.02
+        hinge = (px - dd['width'] / 2 + JAMB, ly0, zc + room_dir[1] * LEAF_T / 2)
+        lmin, lmax = (hinge[0], ly0, zc - LEAF_T / 2), (hinge[0] + leaf_w, ly0 + leaf_h, zc + LEAF_T / 2)
+    else:
+        xc = px + room_dir[0] * 0.02
+        hinge = (xc + room_dir[0] * LEAF_T / 2, ly0, pz - dd['width'] / 2 + JAMB)
+        lmin, lmax = (xc - LEAF_T / 2, ly0, hinge[2]), (xc + LEAF_T / 2, ly0 + leaf_h, hinge[2] + leaf_w)
+    leaf = MeshBuilder(f'DoorLeaf_{rid}', origin=hinge)
+    leaf_mat = 'M_SteelDoorP' if dd['steel'] else 'M_DoorWood'
+    # 施錠扉(中が作られていない部屋)は室内側の面を張らない(ライトマップの節約)
+    room_face = {('+z' if room_dir[1] > 0 else '-z') if dd['horiz'] else ('+x' if room_dir[0] > 0 else '-x')}
+    lkeep = None if dd['inside_visible'] else (lambda k, c, n: k not in room_face)
+    if dd['steel'] and not dd['horiz']:
+        wz_c = lmin[2] + leaf_w * 0.45
+        wz0, wz1 = wz_c - 0.065, wz_c + 0.065
+        wy0, wy1 = ly0 + 0.30, ly0 + 1.80
+        leaf.box(lmin, (lmax[0], wy0, lmax[2]), leaf_mat, keep=lkeep)
+        leaf.box((lmin[0], wy1, lmin[2]), lmax, leaf_mat, keep=lkeep)
+        leaf.box((lmin[0], wy0, lmin[2]), (lmax[0], wy1, wz0), leaf_mat, keep=lkeep)
+        leaf.box((lmin[0], wy0, wz1), (lmax[0], wy1, lmax[2]), leaf_mat, keep=lkeep)
+        xc_ = (lmin[0] + lmax[0]) / 2
+        leaf.box((xc_ - 0.003, wy0, wz0), (xc_ + 0.003, wy1, wz1), 'M_WireGlassOut')
+        # ドアクローザーは扉が部屋(階段)側へ開くので、廊下の反対=階段室側… 写真では廊下(ホール)側に付く
+        face_ = lmax[0] if fx > 0 else lmin[0]
+        xx_ = (face_, face_ + 0.055) if fx > 0 else (face_ - 0.055, face_)
+        leaf.box((xx_[0], ly0 + leaf_h - 0.11, lmin[2] + 0.05), (xx_[1], ly0 + leaf_h - 0.05, lmin[2] + 0.33), 'M_Closer')
+        xa_ = (face_, face_ + 0.03) if fx > 0 else (face_ - 0.03, face_)
+        leaf.box((xa_[0], ly0 + leaf_h - 0.05, lmin[2] + 0.28), (xa_[1], ly0 + leaf_h - 0.02, lmin[2] + 0.46), 'M_Closer')
+    else:
+        leaf.box(lmin, lmax, leaf_mat, keep=lkeep)
+    hy = ly0 + 0.95
+    for side in sides:
+        sx, sz = fx * side, fz * side
+        if dd['horiz']:
+            face = (lmax[2] if sz > 0 else lmin[2])
+            hx = lmax[0] - 0.07
+            leaf.box((hx - 0.03, hy - 0.06, face if sz > 0 else face - 0.012), (hx + 0.03, hy + 0.06, face + 0.012 if sz > 0 else face), 'M_Handle')
+            zz = (face + 0.012, face + 0.06) if sz > 0 else (face - 0.06, face - 0.012)
+            leaf.box((hx - 0.012, hy - 0.012, min(zz)), (hx + 0.012, hy + 0.012, max(zz)), 'M_Handle')
+            zl = (face + 0.045, face + 0.07) if sz > 0 else (face - 0.07, face - 0.045)
+            leaf.box((hx - 0.13, hy - 0.011, min(zl)), (hx + 0.012, hy + 0.011, max(zl)), 'M_Handle')
+        else:
+            face = (lmax[0] if sx > 0 else lmin[0])
+            hz = lmax[2] - 0.07
+            rx = (face, face + 0.012) if sx > 0 else (face - 0.012, face)
+            leaf.box((min(rx), hy - 0.06, hz - 0.03), (max(rx), hy + 0.06, hz + 0.03), 'M_Handle')
+            xx = (face + 0.012, face + 0.06) if sx > 0 else (face - 0.06, face - 0.012)
+            leaf.box((min(xx), hy - 0.012, hz - 0.012), (max(xx), hy + 0.012, hz + 0.012), 'M_Handle')
+            xl = (face + 0.045, face + 0.07) if sx > 0 else (face - 0.07, face - 0.045)
+            leaf.box((min(xl), hy - 0.011, hz - 0.13), (max(xl), hy + 0.011, hz + 0.012), 'M_Handle')
+        if side == 1 and dd['unit']:
+            # ドアスコープ(廊下側・高さ1.45m・中央)と号室プレート(目の高さの上。アトラスの UV)
+            if dd['horiz']:
+                face = lmax[2] if fz > 0 else lmin[2]
+                cx = (lmin[0] + lmax[0]) / 2
+                zz = (face, face + 0.01) if fz > 0 else (face - 0.01, face)
+                leaf.box((cx - 0.012, y0 + 1.44, min(zz)), (cx + 0.012, y0 + 1.464, max(zz)), 'M_Handle')
+            else:
+                face = lmax[0] if fx > 0 else lmin[0]
+                cz = (lmin[2] + lmax[2]) / 2
+                xx = (face, face + 0.01) if fx > 0 else (face - 0.01, face)
+                leaf.box((min(xx), y0 + 1.44, cz - 0.012), (max(xx), y0 + 1.464, cz + 0.012), 'M_Handle')
+            plate_on_leaf(leaf, dd, lmin, lmax, rid)
+    if dd['horiz']:
+        sign = 1.0 if room_dir[1] < 0 else -1.0
+    else:
+        sign = 1.0 if room_dir[0] > 0 else -1.0
+    props = {'n2_kind': 'door', 'n2_room': rid, 'n2_operable': 1 if dd['operable'] else 0,
+             'n2_open_sign': sign, 'n2_open_angle': 1.75 if dd['operable'] else 0.0}
+    leaf.finish(col, props)
+    return dict(id=rid, kind=dd['kind'], hinge=hinge, operable=dd['operable'], sign=sign)
+
+
+def plate_on_leaf(leaf, dd, lmin, lmax, rid):
+    """号室プレート(13×6.5cm)を扉板の廊下側・高さ 1.62m に。UV はアトラス(room_plates.json)。"""
+    if rid not in PLATES:
+        return
+    u0, v0, u1, v1 = PLATES[rid]
+    fx, fz = FACING_OUT[dd['facing']]
+    y0, y1 = BASE_Y + 1.585, BASE_Y + 1.65
+    hw = 0.065
+    if dd['horiz']:
+        face = (lmax[2] + 0.004) if fz > 0 else (lmin[2] - 0.004)
+        cx = (lmin[0] + lmax[0]) / 2
+        # 見る人の右 = up × n。n=(0,0,fz) → right = (fz, 0, 0)
+        r = (fz, 0)
+        pts = [(cx - r[0] * hw, y0, face), (cx + r[0] * hw, y0, face), (cx + r[0] * hw, y1, face), (cx - r[0] * hw, y1, face)]
+    else:
+        face = (lmax[0] + 0.004) if fx > 0 else (lmin[0] - 0.004)
+        cz = (lmin[2] + lmax[2]) / 2
+        r = (0, -fx)
+        pts = [(face, y0, cz - r[1] * hw), (face, y0, cz + r[1] * hw), (face, y1, cz + r[1] * hw), (face, y1, cz - r[1] * hw)]
+    f = leaf.quad(pts, (fx, 0, fz), 'M_RoomPlate')
+    orient(f, (fx, 0, fz))
+    set_uv(f, leaf, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)])
+
+
+def retint_by_zone(ob):
+    """オブジェクトの各面の材質を、面の外側の空気の種類(ロビー=石・シアター=暗い壁…)に合わせる。"""
+    me = ob.data
+    names = [m.name for m in me.materials]
+    if 'M_Wall' not in names:
+        return
+    mw = ob.matrix_world
+    for poly in me.polygons:
+        if me.materials[poly.material_index].name != 'M_Wall':
+            continue
+        c = mw @ poly.center
+        n = (mw.to_3x3() @ poly.normal).normalized()
+        gx, gy, gz = c.x + n.x * 0.03, c.z + n.z * 0.03, -(c.y + n.y * 0.03)
+        zn = zone_at(gx, gz, gy)
+        if not zn:
+            continue
+        want = wall_mat(zn['kind'])
+        if want == 'M_Wall':
+            continue
+        if want not in names:
+            me.materials.append(MATS[want]); names.append(want)
+        poly.material_index = names.index(want)
+
+
+def build_auto_door(dd, col, operable):
+    """風除室の自動ドア(DESIGN §2.3: 透明ガラス2枚が左右反対方向へ開く)。ステンレスの方立・無目＋ガラス扉2枚(左右別メッシュ)。"""
+    px, pz = dd['pos']
+    w = dd['width']
+    rid = dd['id']
+    y0 = BASE_Y
+    H = 2.25
+    fr = MeshBuilder(f'AutoDoorFrame_{rid}')
+    t = 0.05
+    # 無目(扉の上の横材)と、その上のガラス欄間を壁の高さまで
+    fr.box((px - w / 2 - 0.06, y0 + H, pz - t), (px + w / 2 + 0.06, y0 + H + 0.12, pz + t), 'M_Stainless')
+    fr.box((px - w / 2 - 0.06, y0, pz - t), (px - w / 2, y0 + H, pz + t), 'M_Stainless')
+    fr.box((px + w / 2, y0, pz - t), (px + w / 2 + 0.06, y0 + H, pz + t), 'M_Stainless')
+    fr.finish(col, {'n2_kind': 'autoframe', 'n2_room': rid})
+    tr = MeshBuilder(f'AutoDoorTransom_{rid}')
+    tr.quad([(px - w / 2, y0 + H + 0.12, pz), (px + w / 2, y0 + H + 0.12, pz), (px + w / 2, y0 + CEIL_H, pz), (px - w / 2, y0 + CEIL_H, pz)], (0, 0, 1), 'M_GlassClear')
+    tr.finish(col, {'n2_kind': 'glass', 'n2_room': rid})
+    for side, sgn in (('L', -1), ('R', 1)):
+        mb = MeshBuilder(f'AutoDoor_{side}_{rid}')
+        xa, xb = (px - w / 2, px) if sgn < 0 else (px, px + w / 2)
+        g = 0.006
+        # 枠なしガラス＋上下の金物
+        mb.box((xa + 0.01, y0 + 0.03, pz - g), (xb - 0.01, y0 + H - 0.02, pz + g), 'M_GlassClear')
+        mb.box((xa + 0.01, y0 + 0.01, pz - 0.012), (xb - 0.01, y0 + 0.07, pz + 0.012), 'M_Stainless')
+        mb.box((xa + 0.01, y0 + H - 0.08, pz - 0.012), (xb - 0.01, y0 + H - 0.02, pz + 0.012), 'M_Stainless')
+        mb.finish(col, {'n2_kind': 'autodoor', 'n2_room': rid, 'n2_side': side, 'n2_slide': [float(sgn), 0.0, 0.0],
+                        'n2_slide_dist': w / 2 - 0.02, 'n2_operable': 1 if operable else 0})
+    return dict(id=rid, kind='auto', operable=operable)
+
+
+def build_glass_partition(x0, x1, z, col, name):
+    """風除室・正面玄関の自動ドアの左右の固定ガラス(ステンレスの方立)。"""
+    y0 = BASE_Y
+    mb = MeshBuilder(name)
+    gl = MeshBuilder(name + '_glass')
+    n = max(1, round((x1 - x0) / 1.0))
+    for i in range(n + 1):
+        x = x0 + (x1 - x0) * i / n
+        mb.box((x - 0.025, y0, z - 0.04), (x + 0.025, y0 + CEIL_H, z + 0.04), 'M_Stainless')
+    mb.box((x0, y0, z - 0.04), (x1, y0 + 0.05, z + 0.04), 'M_Stainless')
+    gl.quad([(x0, y0 + 0.05, z), (x1, y0 + 0.05, z), (x1, y0 + CEIL_H, z), (x0, y0 + CEIL_H, z)], (0, 0, 1), 'M_GlassClear')
+    mb.finish(col, {'n2_kind': 'glassframe'})
+    gl.finish(col, {'n2_kind': 'glass'})
+
+
+# ---------------------------------------------------------------------------
+# EV(p0b_ev を使う)＋階数表示のアトラス・カゴの行き先ボタン
+# ---------------------------------------------------------------------------
+EV_BUTTONS = []
+
+def fix_ev_display(rid):
+    ob = bpy.data.objects.get(f'EVCallDisplay_{rid}')
+    if not ob:
+        return
+    uv = ob.data.uv_layers['UVMap']
+    for l in uv.data:
+        u, v = l.uv
+        l.uv = ((LEVEL - 1 + u) / 8.0, v)
+
+
+def build_car_panel(dd):
+    """カゴの左袖の操作盤(p0b の SUS 箱)の室内側の面に行き先ボタンの板。ボタンの世界座標を manifest へ。"""
+    L = p0b_ev.Local(dd['pos'], dd['facing'], BASE_Y)
+    cu, d0 = 0.78, 0.42
+    u = -cu + 0.0125
+    pd0, pd1, py0, py1 = d0 + 0.08, d0 + 0.28, 0.86, 1.56
+    mb = MeshBuilder(f'EVCarPanel_{dd["id"]}')
+    f = L.quad_side(mb, u, py0, py1, pd0, pd1, +1, 'M_CarPanel')
+    # 見る人(左壁を向く)の右 = 扉側(-d)。テクスチャの u は扉側へ増える
+    uvs = []
+    for loop in f.loops:
+        co = loop.vert.co   # Blender 座標(x, -z, y)
+        gx, gy, gz = co.x, co.z, -co.y
+        dd_ = (gx - L.px) * L.fx + (gz - L.pz) * L.fz
+        yy = gy - BASE_Y
+        uvs.append(((pd1 - dd_) / (pd1 - pd0), (yy - py0) / (py1 - py0)))
+    set_uv(f, mb, uvs)
+    mb.finish(bpy.data.collections['P3a'], {'n2_kind': 'evcarpanel', 'n2_room': dd['id']})
+    for k, (tu, tv) in CAR_PANEL['buttons'].items():
+        d_ = pd1 - tu * (pd1 - pd0)
+        y_ = py1 - tv * (py1 - py0)
+        EV_BUTTONS.append(dict(floor=int(k), pos=[round(v, 4) for v in L.w(u + 0.005, y_, d_)]))
+
+
+# ---------------------------------------------------------------------------
+# 灯具・窓・非常口
+# ---------------------------------------------------------------------------
+def night_light_positions():
+    path = FLOOR['corridor']['path']
+    out, acc = [], 0.0
+    for i in range(len(path) - 1):
+        ax, az = path[i]; bx, bz = path[i + 1]
+        seg = math.hypot(bx - ax, bz - az)
+        if seg <= 0:
+            continue
+        t = (NIGHT_LIGHT_SPACING - acc) / seg
+        while t <= 1:
+            out.append((ax + (bx - ax) * t, az + (bz - az) * t))
+            t += NIGHT_LIGHT_SPACING / seg
+        acc = (acc + seg) % NIGHT_LIGHT_SPACING
+    # 同じ点(往復のパス)を除く
+    uniq = []
+    for p in out:
+        if all(math.hypot(p[0] - q[0], p[1] - q[1]) > 1.0 for q in uniq):
+            uniq.append(p)
+    return uniq
+
+
+def no_bake_emitter(ob):
+    for k in ('visible_diffuse', 'visible_glossy', 'visible_transmission', 'visible_volume_scatter', 'visible_shadow'):
+        setattr(ob, k, False)
+
+
+def build_night_light(i, x, z, col):
+    y = BASE_Y + CEIL_H
+    hs, hh = 0.13, 0.035
+    h = MeshBuilder(f'Lamp_{i}_housing')
+    h.box((x - hs, y - hh, z - hs), (x + hs, y, z + hs), 'M_Plastic', keep=lambda k, c, n: k != '+y' and k != '-y')
+    h.finish(col, {'n2_kind': 'lamp'})
+    cv = MeshBuilder(f'Lamp_{i}_cover')
+    s = hs - 0.015
+    cv.quad([(x - s, y - hh - 0.002, z - s), (x + s, y - hh - 0.002, z - s), (x + s, y - hh - 0.002, z + s), (x - s, y - hh - 0.002, z + s)], (0, -1, 0), 'M_LampCover')
+    cv.box((x - hs, y - hh, z - hs), (x + hs, y - hh + 0.001, z + hs), 'M_Plastic', keep=lambda k, c, n: k == '+y')
+    no_bake_emitter(cv.finish(col, {'n2_kind': 'lampcover', 'n2_lamp': i}))
+    ld = bpy.data.lights.new(f'NightLight_{i}', 'AREA')
+    ld.shape = 'SQUARE'; ld.size = 2 * s
+    ld.energy = float(ARGS.get('lamp_w', 1.6))
+    ld.color = (0.74, 0.84, 1.0)
+    lo = bpy.data.objects.new(f'NightLight_{i}', ld)
+    lo.location = g2b(x, y - hh - 0.006, z)
+    col.objects.link(lo)
+
+
+def build_downlight(name, x, z, col, energy=1.4, y=None):
+    y = (BASE_Y + CEIL_H - 0.002) if y is None else y
+    trim = MeshBuilder(name + '_trim'); disc = MeshBuilder(name + '_lens')
+    n = 20
+    ro = [(x + 0.068 * math.cos(2 * math.pi * i / n), y, z + 0.068 * math.sin(2 * math.pi * i / n)) for i in range(n)]
+    ri = [(x + 0.05 * math.cos(2 * math.pi * i / n), y - 0.001, z + 0.05 * math.sin(2 * math.pi * i / n)) for i in range(n)]
+    for i in range(n):
+        j = (i + 1) % n
+        trim.quad([ro[i], ro[j], ri[j], ri[i]], (0, -1, 0), 'M_DownlightTrim')
+    disc.quad(ri, (0, -1, 0), 'M_Downlight')
+    for mbx in (trim, disc):
+        for face in mbx.bm.faces:
+            orient(face, (0, -1, 0))
+    trim.finish(col, {'n2_kind': 'downlight'})
+    no_bake_emitter(disc.finish(col, {'n2_kind': 'lampcover'}))
+    ld = bpy.data.lights.new(name, 'AREA')
+    ld.shape = 'DISK'; ld.size = 0.10; ld.energy = energy; ld.color = (1.0, 0.80, 0.60)
+    lo = bpy.data.objects.new(name, ld)
+    lo.location = g2b(x, y - 0.004, z)
+    col.objects.link(lo)
+    return (x, z)
+
+
+def build_bracket(name, x, z, y, facing, col, energy=9.0, light_only=False):
+    """屋外・階段室の壁付け灯(ブラケット)。facing=灯具が向く方向(壁から離れる向き)。"""
+    nx, nz = FACING_OUT[{'N': 'N', 'S': 'S', 'E': 'E', 'W': 'W'}[facing]]
+    if not light_only:
+        mb = MeshBuilder(name + '_body'); cv = MeshBuilder(name + '_cover')
+        w, h, dp = 0.11, 0.17, 0.09
+        ax, az = (x, z)
+        if nx != 0:
+            x0, x1 = sorted((ax, ax + nx * dp)); z0, z1 = az - w / 2, az + w / 2
+        else:
+            z0, z1 = sorted((az, az + nz * dp)); x0, x1 = ax - w / 2, ax + w / 2
+        mb.box((x0, y - h / 2, z0), (x1, y - h / 2 + 0.02, z1), 'M_SteelStruct')
+        mb.box((x0, y + h / 2 - 0.02, z0), (x1, y + h / 2, z1), 'M_SteelStruct')
+        mb.finish(bpy.data.collections['P3a'], {'n2_kind': 'bracket'})
+        cv.box((x0 + 0.004, y - h / 2 + 0.02, z0 + 0.004), (x1 - 0.004, y + h / 2 - 0.02, z1 - 0.004), 'M_BracketCover',
+               keep=lambda k, c, n: (n[0] * -nx + n[2] * -nz) < 0.5)
+        no_bake_emitter(cv.finish(bpy.data.collections['P3a'], {'n2_kind': 'lampcover'}))
+    ld = bpy.data.lights.new(name, 'POINT')
+    ld.shadow_soft_size = 0.05; ld.energy = energy; ld.color = (1.0, 0.76, 0.50)
+    lo = bpy.data.objects.new(name, ld)
+    lo.location = g2b(x + nx * 0.06, y, z + nz * 0.06)
+    col.objects.link(lo)
+    return [x + nx * 0.06, y, z + nz * 0.06]
+
+
+def build_window(w, i, col):
+    x, z = w['pos']
+    nx, nz = FACING_OUT[w['facing']]   # 室内側への法線
+    y0 = BASE_Y + w['sill']; y1 = y0 + w['h']
+    hw = w['w'] / 2
+    fr = MeshBuilder(f'Window_{i}_frame')
+    gl = MeshBuilder(f'Window_{i}_glass')
+    f, t = 0.035, 0.03
+    if nz != 0:
+        zz = z + nz * 0.06    # 壁の室内側の面(walls の箱の半分の厚み)
+        za, zb = sorted((zz, zz + nz * t))
+        fr.box((x - hw - f, y0 - f, za), (x - hw, y1 + f, zb), 'M_Stainless')
+        fr.box((x + hw, y0 - f, za), (x + hw + f, y1 + f, zb), 'M_Stainless')
+        fr.box((x - hw, y1, za), (x + hw, y1 + f, zb), 'M_Stainless')
+        fr.box((x - hw, y0 - f, min(za, za + nz * 0.03)), (x + hw, y0, max(zb, zb + nz * 0.03)), 'M_Stainless')
+        fr.box((x - hw, (y0 + y1) / 2 - 0.012, za), (x + hw, (y0 + y1) / 2 + 0.012, zb), 'M_Stainless')
+        g = zz + nz * 0.005
+        q = gl.quad([(x - hw, y0, g), (x + hw, y0, g), (x + hw, y1, g), (x - hw, y1, g)], (0, 0, nz), 'M_Window')
+        orient(q, (0, 0, nz))
+    else:
+        xx = x + nx * 0.06
+        xa, xb = sorted((xx, xx + nx * t))
+        fr.box((xa, y0 - f, z - hw - f), (xb, y1 + f, z - hw), 'M_Stainless')
+        fr.box((xa, y0 - f, z + hw), (xb, y1 + f, z + hw + f), 'M_Stainless')
+        fr.box((xa, y1, z - hw), (xb, y1 + f, z + hw), 'M_Stainless')
+        fr.box((min(xa, xa + nx * 0.03), y0 - f, z - hw), (max(xb, xb + nx * 0.03), y0, z + hw), 'M_Stainless')
+        fr.box((xa, (y0 + y1) / 2 - 0.012, z - hw), (xb, (y0 + y1) / 2 + 0.012, z + hw), 'M_Stainless')
+        g = xx + nx * 0.005
+        q = gl.quad([(g, y0, z - hw), (g, y0, z + hw), (g, y1, z + hw), (g, y1, z - hw)], (nx, 0, 0), 'M_Window')
+        orient(q, (nx, 0, 0))
+    fr.finish(col, {'n2_kind': 'window'})
+    gl.finish(col, {'n2_kind': 'windowglass'})
+    return [x + nx * 0.2, y0 + w['h'] / 2, z + nz * 0.2]
+
+
+def build_exit_sign(i, x, z, nrm, col, above=2.06):
+    """非常口サイン(内照式・正方形)。(x,z)=扉の中心(壁の芯)、nrm=サインが向く方向。壁の面から出す。"""
+    nx, nz = nrm
+    B = BASE_Y
+    w2, y0s, y1s, t = 0.16, B + above, B + above + 0.30, 0.07
+    body = MeshBuilder(f'ExitSign_{i}_body'); face = MeshBuilder(f'ExitSign_{i}_face')
+    wf = WALL_T / 2
+    if nx != 0:
+        sx = x + nx * wf
+        xa, xb = sorted((sx, sx + nx * t))
+        body.box((xa, y0s, z - w2), (xb, y1s, z + w2), 'M_Plastic', keep=lambda k, c, n: n[0] * nx < 0.5)
+        xs = sx + nx * (t + 0.001)
+        pts = [(xs, y0s + 0.012, z - w2 + 0.012), (xs, y0s + 0.012, z + w2 - 0.012), (xs, y1s - 0.012, z + w2 - 0.012), (xs, y1s - 0.012, z - w2 + 0.012)]
+        fq = orient(face.quad(pts, (nx, 0, 0), 'M_ExitSignSq'), (nx, 0, 0))
+        rgt = (0, -nx)   # 見る人の右(z 方向の符号)
+        uvs = [((0 if rgt[1] > 0 else 1), 0), ((1 if rgt[1] > 0 else 0), 0), ((1 if rgt[1] > 0 else 0), 1), ((0 if rgt[1] > 0 else 1), 1)]
+    else:
+        sz = z + nz * wf
+        za, zb = sorted((sz, sz + nz * t))
+        body.box((x - w2, y0s, za), (x + w2, y1s, zb), 'M_Plastic', keep=lambda k, c, n: n[2] * nz < 0.5)
+        zs = sz + nz * (t + 0.001)
+        pts = [(x - w2 + 0.012, y0s + 0.012, zs), (x + w2 - 0.012, y0s + 0.012, zs), (x + w2 - 0.012, y1s - 0.012, zs), (x - w2 + 0.012, y1s - 0.012, zs)]
+        fq = orient(face.quad(pts, (0, 0, nz), 'M_ExitSignSq'), (0, 0, nz))
+        rgt = (nz, 0)
+        uvs = [((0 if rgt[0] > 0 else 1), 0), ((1 if rgt[0] > 0 else 0), 0), ((1 if rgt[0] > 0 else 0), 1), ((0 if rgt[0] > 0 else 1), 1)]
+    # 頂点順に合わせて UV を割り当て(面の頂点のゲーム座標から計算)
+    lp = []
+    for loop in fq.loops:
+        co = loop.vert.co
+        gx, gy, gz = co.x, co.z, -co.y
+        along = (gx * rgt[0] + gz * rgt[1])
+        lp.append((along, gy))
+    amin = min(a for a, _ in lp); amax = max(a for a, _ in lp)
+    set_uv(fq, face, [((a - amin) / (amax - amin), 1.0 if yy > (y0s + y1s) / 2 else 0.0) for a, yy in lp])
+    body.finish(col, {'n2_kind': 'exitsign'})
+    face.finish(col, {'n2_kind': 'exitsign_face'})
+    return [x + nx * 0.2, (y0s + y1s) / 2, z + nz * 0.2]
+
+
+# ---------------------------------------------------------------------------
+# 手すり(縦格子)
+# ---------------------------------------------------------------------------
+def railing(mb, a, b, h=1.1, spacing=0.12, bar=0.018, mat='M_Rail'):
+    """a=(x,y,z), b=(x,y,z) の線(床の高さ)に沿った縦格子の手すり。傾斜(階段)も可。"""
+    ax, ay, az = a; bx, by, bz = b
+    L = math.hypot(bx - ax, bz - az)
+    if L < 0.05:
+        return
+    n = max(1, int(L / spacing))
+    hb = bar / 2
+    for i in range(n + 1):
+        t = i / n
+        x, y, z = ax + (bx - ax) * t, ay + (by - ay) * t, az + (bz - az) * t
+        mb.box((x - hb, y + 0.04, z - hb), (x + hb, y + h - 0.02, z + hb), mat, keep=lambda k, c, nn: k not in ('+y', '-y'))
+    # 笠木と下桟(傾斜は 4 点の帯で)
+    for (yy, th) in ((h, 0.045), (0.06, 0.03)):
+        ux, uz = (bx - ax) / L, (bz - az) / L
+        px, pz = -uz * th / 2, ux * th / 2
+        p = [(ax + px, ay + yy, az + pz), (bx + px, by + yy, bz + pz), (bx - px, by + yy, bz - pz), (ax - px, ay + yy, az - pz)]
+        top = [(q[0], q[1] + 0.008, q[2]) for q in p]
+        mb.poly(top, (0, 1, 0), mat)
+        mb.poly(p, (0, -1, 0), mat)
+        for (q0, q1) in ((p[0], p[1]), (p[3], p[2])):
+            side = [q0, q1, (q1[0], q1[1] + 0.008, q1[2]), (q0[0], q0[1] + 0.008, q0[2])]
+            sn = (px / (th / 2), 0, pz / (th / 2)) if q0 is p[0] else (-px / (th / 2), 0, -pz / (th / 2))
+            mb.poly(side, sn, mat)
+
+
+# ---------------------------------------------------------------------------
+# 階段(外階段=鉄骨・縞鋼板 / 北階段=屋内)
+# ---------------------------------------------------------------------------
+def stair_world(st, s, c, y):
+    """階段の局所(流れ方向 s・横方向 c)→ ゲーム(x, y, z)。"""
+    return (s, y, c) if st['geom']['axis'] == 'x' else (c, y, s)
+
+
+def stair_box(mb, st, s0, s1, c0, c1, y0, y1, mat, keep=None):
+    a = stair_world(st, min(s0, s1), min(c0, c1), y0)
+    b = stair_world(st, max(s0, s1), max(c0, c1), y1)
+    mb.box((min(a[0], b[0]), y0, min(a[2], b[2])), (max(a[0], b[0]), y1, max(a[2], b[2])), mat, keep=keep)
+
+
+def build_flight(mb, st, lane, s_from, s_to, y_from, mat_tread, mat_str):
+    """1折れ分(踏面 treads 枚)。s_from(高さ y_from)から s_to(高さ y_from+rise)へ。"""
+    g = st['geom']
+    n = g['treads']; rise = g['rise']; h = rise / (n + 1)
+    c0, c1 = lane
+    ds = (s_to - s_from) / n
+    for i in range(1, n + 1):
+        sa = s_from + ds * (i - 1); sb = s_from + ds * i
+        ytop = y_from + h * i
+        stair_box(mb, st, sa, sb, c0 + 0.02, c1 - 0.02, ytop - 0.035, ytop, mat_tread)
+    # ささら桁(側板・両側)
+    for c in (c0, c1):
+        p0 = stair_world(st, s_from, c, y_from - 0.28); p1 = stair_world(st, s_to, c, y_from + rise - 0.28)
+        p2 = stair_world(st, s_to, c, y_from + rise + 0.02); p3 = stair_world(st, s_from, c, y_from + 0.02)
+        nrm = (0, 0, 1) if g['axis'] == 'x' else (1, 0, 0)
+        mb.poly([p0, p1, p2, p3], nrm, mat_str)
+        mb.poly([p3, p2, p1, p0], (-nrm[0], 0, -nrm[2]), mat_str)
+        # 桁の下端(見上げ)
+        q0 = stair_world(st, s_from, c - 0.006, y_from - 0.28); q1 = stair_world(st, s_to, c - 0.006, y_from + rise - 0.28)
+        q2 = stair_world(st, s_to, c + 0.006, y_from + rise - 0.28); q3 = stair_world(st, s_from, c + 0.006, y_from - 0.28)
+        mb.poly([q0, q1, q2, q3], (0, -1, 0), mat_str)
+
+
+def build_external_stair(col):
+    """外階段(main)の、この階の踊り場から1つ上の踊り場までの鉄骨。7F は屋上B の踊り場まで。屋上B の踊り場も 7F に含める。"""
+    st = STAIRS['main']; g = st['geom']
+    x0, z0, w, d = st['pos'] + st['size']
+    lx0, lz0, lw, ld = g['landing']
+    mx0, mz0, mw, md = g['mid']
+    up, dn = g['lanes']['up'], g['lanes']['down']
+    rise = g['rise']
+    mb = MeshBuilder('ExtStair_steel'); dk = MeshBuilder('ExtStair_deck'); rl = MeshBuilder('ExtStair_rail')
+    levels = [(LEVEL, BASE_Y)]
+    if LEVEL == MAX_LEVEL and ROOFB:
+        levels.append(('RB', ROOFB['y']))
+    for lvkey, by in levels:
+        # 踊り場(縞鋼板の床・下面は鉄)
+        dk.box((lx0, by - 0.04, lz0), (lx0 + lw, by, lz0 + ld), 'M_Deck', keep=lambda k, c, n: k == '+y')
+        mb.box((lx0, by - 0.20, lz0), (lx0 + lw, by - 0.04, lz0 + ld), 'M_SteelStruct', keep=lambda k, c, n: k != '+y')
+        # 踊り場の外側の手すり(西 x=2.6、建物の無い北側)
+        railing(rl, (lx0 + 0.03, by, lz0 + 0.03), (lx0 + 0.03, by, lz0 + ld), h=1.1)
+        behind_n = in_footprint(lx0 + lw / 2, lz0 - 0.3, FLOOR['footprint'], skip=[x0, z0, w, d]) and lvkey != 'RB'
+        if not behind_n:
+            railing(rl, (lx0 + 0.03, by, lz0 + 0.03), (lx0 + lw, by, lz0 + 0.03), h=1.1)
+    top = LEVEL == MAX_LEVEL and not ROOFB
+    if not top:
+        # 上り: 西レーン(踊り場→中間踊り場)、続けて東レーン(中間踊り場→上の階の踊り場)
+        build_flight(dk, st, up, lz0 + ld, mz0, BASE_Y, 'M_Deck', 'M_SteelStruct')
+        dk.box((mx0, BASE_Y + rise - 0.04, mz0), (mx0 + mw, BASE_Y + rise, mz0 + md), 'M_Deck', keep=lambda k, c, n: k == '+y')
+        mb.box((mx0, BASE_Y + rise - 0.20, mz0), (mx0 + mw, BASE_Y + rise - 0.04, mz0 + md), 'M_SteelStruct', keep=lambda k, c, n: k != '+y')
+        build_flight(dk, st, dn, mz0, lz0 + ld, BASE_Y + rise, 'M_Deck', 'M_SteelStruct')
+        # 手すり: 上りの外側(西)・中間踊り場の外周・2本のレーンの間
+        yb = BASE_Y
+        railing(rl, (up[0] + 0.03, yb + 0.18, lz0 + ld), (up[0] + 0.03, yb + rise + 0.18, mz0), h=0.95)
+        railing(rl, (mx0 + 0.03, yb + rise, mz0), (mx0 + 0.03, yb + rise, mz0 + md - 0.03), h=1.1)
+        railing(rl, (mx0 + 0.03, yb + rise, mz0 + md - 0.03), (mx0 + mw, yb + rise, mz0 + md - 0.03), h=1.1)
+        if not in_footprint(mx0 + mw + 0.3, mz0 + md - 0.2, FLOOR['footprint']):
+            railing(rl, (mx0 + mw - 0.03, yb + rise, mz0 + md - 0.4), (mx0 + mw - 0.03, yb + rise, mz0 + md - 0.03), h=1.1)
+        cmid = (up[1] + dn[0]) / 2
+        railing(rl, (cmid, yb + 0.18, lz0 + ld), (cmid, yb + rise + 0.18, mz0), h=0.95)
+        railing(rl, (cmid, yb + 2 * rise + 0.18, lz0 + ld), (cmid, yb + rise + 0.18, mz0), h=0.95)
+    if LEVEL == 1:
+        # 地上: 東レーンの下(下り口)は地面。門扉代わりの低い手すりで塞ぐ(外構は P3c)
+        dk.box((x0, -0.02, lz0 + ld), (x0 + w, 0.0, z0 + d), 'M_ExtWall', keep=lambda k, c, n: k == '+y')
+        railing(rl, (dn[0], 0.0, lz0 + ld + 0.3), (dn[1], 0.0, lz0 + ld + 0.3), h=1.1)
+    # 柱(H形鋼の代わりに角柱)。階高いっぱい
+    ytop = BASE_Y + FLOOR_H + (FLOOR_H if (LEVEL == MAX_LEVEL and ROOFB) else 0)
+    for (cx, cz) in ((x0 + 0.08, z0 + 0.08), (x0 + 0.08, z0 + d - 0.08), (x0 + w - 0.08, z0 + d - 0.08)):
+        mb.box((cx - 0.075, BASE_Y - 0.2, cz - 0.075), (cx + 0.075, ytop, cz + 0.075), 'M_SteelStruct', keep=lambda k, c, n: k not in ('+y', '-y'))
+    mb.finish(col, {'n2_kind': 'stair_steel'})
+    dk.finish(col, {'n2_kind': 'stair_deck'})
+    rl.finish(col, {'n2_kind': 'rail'})
+    # ベイク専用の遮蔽: 上の階の踊り場の床(この階の踊り場の天井になる)
+    if LEVEL < MAX_LEVEL or ROOFB:
+        oc = MeshBuilder('Occ_upper_landing')
+        yy = BASE_Y + FLOOR_H
+        oc.box((lx0, yy - 0.20, lz0), (lx0 + lw, yy, lz0 + ld), 'M_SteelStruct')
+        oc.finish(col, {'n2_kind': 'occluder'}, bake_only=True)
+
+
+def build_north_stair(col):
+    st = STAIRS['north']; g = st['geom']
+    x0, z0, w, d = st['pos'] + st['size']
+    lx0, lz0, lw, ld = g['landing']
+    mx0, mz0, mw, md = g['mid']
+    up, dn = g['lanes']['up'], g['lanes']['down']
+    rise = g['rise']
+    top = LEVEL == st['levels'][1]
+    dk = MeshBuilder('NorthStair_steps'); rl = MeshBuilder('NorthStair_rail'); wl = MeshBuilder('NorthStair_slab')
+    if not top:
+        build_flight(dk, st, up, lx0 + lw, mx0, BASE_Y, 'M_Floor', 'M_PaintWall')
+        dk.box((mx0, BASE_Y + rise - 0.04, mz0), (mx0 + mw, BASE_Y + rise, mz0 + md), 'M_Floor', keep=lambda k, c, n: k == '+y')
+        wl.box((mx0, BASE_Y + rise - 0.22, mz0), (mx0 + mw, BASE_Y + rise - 0.04, mz0 + md), 'M_PaintWall', keep=lambda k, c, n: k != '+y')
+        build_flight(dk, st, dn, mx0, lx0 + lw, BASE_Y + rise, 'M_Floor', 'M_PaintWall')
+        cmid = (up[0] + dn[1]) / 2
+        railing(rl, (lx0 + lw, BASE_Y + 0.18, cmid), (mx0, BASE_Y + rise + 0.18, cmid), h=0.9, mat='M_Stainless')
+        railing(rl, (lx0 + lw, BASE_Y + 2 * rise + 0.18, cmid), (mx0, BASE_Y + rise + 0.18, cmid), h=0.9, mat='M_Stainless')
+    else:
+        # 最上階: 上りのレーンの上は吹き抜け → 踊り場の縁に手すり、階段室に天井
+        railing(rl, (lx0 + lw, BASE_Y, up[0]), (lx0 + lw, BASE_Y, up[1]), h=1.1, mat='M_Stainless')
+        wl.quad([(x0, BASE_Y + FLOOR_H - 0.2, z0), (x0 + w, BASE_Y + FLOOR_H - 0.2, z0), (x0 + w, BASE_Y + FLOOR_H - 0.2, z0 + d), (x0, BASE_Y + FLOOR_H - 0.2, z0 + d)], (0, -1, 0), 'M_PaintWall')
+    if LEVEL == st['levels'][0]:
+        # 1F: 吹き抜けの底(下りレーンの下は床)
+        dk.quad([(lx0 + lw, BASE_Y, z0 + d), (x0 + w, BASE_Y, z0 + d), (x0 + w, BASE_Y, z0), (lx0 + lw, BASE_Y, z0)], (0, 1, 0), 'M_Floor')
+    else:
+        # 2F・3F: 踊り場の床スラブの見付け(吹き抜け側の縁)
+        wl.box((lx0 + lw - 0.02, BASE_Y - 0.22, z0), (lx0 + lw, BASE_Y, z0 + d), 'M_PaintWall', keep=lambda k, c, n: k == '+x')
+    for mbx, kind in ((dk, 'stair_deck'), (rl, 'rail'), (wl, 'stair_slab')):
+        mbx.finish(col, {'n2_kind': kind})
+
+
+# ---------------------------------------------------------------------------
+# 屋上B(7F のみ)
+# ---------------------------------------------------------------------------
+def build_roof(col):
+    R = ROOFB
+    y = R['y']
+    boxes = floor_wall_boxes({'rooms': [], 'footprint': R['footprint']})
+    roof_zones = [z for z in ZONES if z['set'] == 'roof']
+    sel = select_boxes(merge_collinear(boxes), roof_zones)
+    par = MeshBuilder('Roof_parapet'); rl = MeshBuilder('Roof_rail'); fl = MeshBuilder('Roof_floor'); ob = MeshBuilder('Roof_boxes')
+    st = STAIRS['main']
+    mst = st['pos'] + st['size']
+    for w in sel:
+        (x0, z0), (x1, z1) = w['min'], w['max']
+        # パラペット: 屋根に面する箱は腰壁(0.75m)＋上に手すり、踊り場・吹き抜けに面するなら手すりだけ
+        cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
+        zn = None
+        for (dx, dz) in ((0.2, 0), (-0.2, 0), (0, 0.2), (0, -0.2)):
+            zz = zone_at(cx + dx, cz + dz, y + 0.5, sets=('roof',))
+            if zz:
+                zn = zz; break
+        if zn is None:
+            continue
+        if zn['kind'] == 'roof':
+            par.box((x0, y, z0), (x1, y + R['parapetH'], z1), 'M_ExtWall', keep=lambda k, c, n: k != '-y',
+                    mats={'+y': 'M_ExtWall'})
+            ln = (x1 - x0) >= (z1 - z0)
+            if ln:
+                railing(rl, (x0, y + R['parapetH'] - 0.04, cz), (x1, y + R['parapetH'] - 0.04, cz), h=R['railH'] - R['parapetH'] + 0.05, spacing=0.3, bar=0.02)
+            else:
+                railing(rl, (cx, y + R['parapetH'] - 0.04, z0), (cx, y + R['parapetH'] - 0.04, z1), h=R['railH'] - R['parapetH'] + 0.05, spacing=0.3, bar=0.02)
+    # 屋根面(防水シート)
+    for a in R['air']:
+        if a['kind'] != 'roof':
+            continue
+        x0, z0, w, d = a['rect']
+        fl.quad([(x0, y, z0 + d), (x0 + w, y, z0 + d), (x0 + w, y, z0), (x0, y, z0)], (0, 1, 0), 'M_RoofSheet')
+    # 機械室・受水槽・点検口・室外機
+    for o in R['obstacles']:
+        x0, z0, w, d = o['rect']
+        mat = 'M_Machine' if o['id'].startswith('ac_') else 'M_ExtWall'
+        ob.box((x0, y, z0), (x0 + w, y + o['h'], z0 + d), mat, keep=lambda k, c, n: k != '-y')
+        if o['id'].startswith('ac_'):
+            # 室外機のファン(暗い円の代わりの四角い格子面)
+            ob.box((x0 + 0.1, y + 0.12, z0 - 0.005), (x0 + w - 0.25, y + 0.62, z0), 'M_Frame', keep=lambda k, c, n: k == '-z')
+    for mbx, kind in ((par, 'parapet'), (rl, 'rail'), (fl, 'roof'), (ob, 'roofbox')):
+        mbx.finish(col, {'n2_kind': kind})
+    # 機械室の扉の上と受水槽の脇の灯り(屋上の灯具は2つだけ。月明かりは P3c)
+    tank = next(o for o in R['obstacles'] if o['id'] == 'water_tank')
+    build_bracket('RoofLight2', tank['rect'][0] - 0.0, tank['rect'][1] + tank['rect'][3] / 2, y + 1.7, 'W', col, energy=8.0)
+    return build_bracket('RoofLight', 6.0 + 1.8 + 0.0, 23.0, y + 2.2, 'E', col, energy=10.0)
+
+
+# ---------------------------------------------------------------------------
+# 1F の追加(集合ポスト・受付窓・外の背景・シアターのスクリーン)
+# ---------------------------------------------------------------------------
+def build_1f_extras(col):
+    mb = MeshBuilder('Mailboxes')
+    for p in FLOOR.get('props', []):
+        if p['kind'] != 'mailboxes':
+            continue
+        x, _, z = p['pos']; dp, h, wd = p['size']
+        x0, x1, z0, z1 = x + 0.06, x + 0.06 + dp, z, z + wd
+        mb.box((x0, BASE_Y, z0), (x1, BASE_Y + h, z1), 'M_Stainless', keep=lambda k, c, n: k not in ('+x', '-x', '-y'))
+        f = mb.quad([(x1, BASE_Y, z1), (x1, BASE_Y, z0), (x1, BASE_Y + h, z0), (x1, BASE_Y + h, z1)], (1, 0, 0), 'M_Mailbox')
+        orient(f, (1, 0, 0))
+        set_uv(f, mb, [(0, 0), (1, 0), (1, 1), (0, 1)])
+    mb.finish(col, {'n2_kind': 'mailboxes'})
+    rooms = {r['id']: r for r in FLOOR['rooms']}
+    ent = rooms.get('ENTRANCE'); off = rooms.get('OFFICE'); th = rooms.get('THEATER')
+    if ent:
+        ex0, ez0, ew, ed = ent['rect']
+        # 受付の小窓(風除室の東壁=管理室)
+        rw = MeshBuilder('OfficeWindow')
+        xw = ex0 + ew - 0.06
+        zc = ez0 + ed / 2
+        rw.box((xw - 0.02, BASE_Y + 0.95, zc - 0.32), (xw, BASE_Y + 1.40, zc + 0.32), 'M_Stainless', keep=lambda k, c, n: k == '-x')
+        g = rw.quad([(xw - 0.025, BASE_Y + 0.99, zc + 0.28), (xw - 0.025, BASE_Y + 0.99, zc - 0.28), (xw - 0.025, BASE_Y + 1.36, zc - 0.28), (xw - 0.025, BASE_Y + 1.36, zc + 0.28)], (-1, 0, 0), 'M_Window')
+        orient(g, (-1, 0, 0))
+        rw.box((xw - 0.22, BASE_Y + 0.93, zc - 0.34), (xw - 0.02, BASE_Y + 0.96, zc + 0.34), 'M_Stainless')
+        rw.finish(col, {'n2_kind': 'officewindow'})
+        # 正面玄関の外側(夜の街路の暗い明かり。外観は P3c)
+        bd = MeshBuilder('EntranceBackdrop')
+        zb = ez0 + ed + 1.6
+        q = bd.quad([(ex0 - 1.0, BASE_Y, zb), (ex0 + ew + 1.0, BASE_Y, zb), (ex0 + ew + 1.0, BASE_Y + 3.0, zb), (ex0 - 1.0, BASE_Y + 3.0, zb)], (0, 0, -1), 'M_Backdrop')
+        orient(q, (0, 0, -1))
+        bd.quad([(ex0 - 1.0, BASE_Y - 0.01, ez0 + ed + 0.06), (ex0 + ew + 1.0, BASE_Y - 0.01, ez0 + ed + 0.06), (ex0 + ew + 1.0, BASE_Y - 0.01, zb), (ex0 - 1.0, BASE_Y - 0.01, zb)], (0, 1, 0), 'M_Stone')
+        bd.finish(col, {'n2_kind': 'backdrop'})
+        # 外側の自動ドア(夜間は閉)・内外の固定ガラス
+        out = dict(id='ENTRANCE_OUT', pos=(ex0 + ew / 2, ez0 + ed), width=FLOOR['perimOpenings'][0]['width'])
+        build_auto_door(out, col, operable=False)
+        dw = ent['door']['width']
+        for zline, nm in ((ez0, 'Inner'), (ez0 + ed, 'Outer')):
+            build_glass_partition(ex0 + 0.07, ex0 + ew / 2 - dw / 2 - 0.06, zline, col, f'Glass{nm}_W')
+            build_glass_partition(ex0 + ew / 2 + dw / 2 + 0.06, ex0 + ew - 0.07, zline, col, f'Glass{nm}_E')
+    if th:
+        tx0, tz0, tw, td = th['rect']
+        sc = MeshBuilder('TheaterScreen')
+        zs = tz0 + td - 0.07
+        q = sc.quad([(tx0 + 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 2.2, zs), (tx0 + 1.0, BASE_Y + 2.2, zs)], (0, 0, -1), 'M_Screen')
+        orient(q, (0, 0, -1))
+        sc.finish(col, {'n2_kind': 'screen'})
+
+
+# ---------------------------------------------------------------------------
+# 生成
+# ---------------------------------------------------------------------------
+def build():
+    for ob in list(bpy.data.objects):
+        bpy.data.objects.remove(ob, do_unlink=True)
+    scene = bpy.context.scene
+    col = bpy.data.collections.new('P3a')
+    scene.collection.children.link(col)
+    build_materials()
+
+    doors = floor_doors()
+    log(f'L{LEVEL}: doors {len(doors)}')
+    floor_zones = [z for z in ZONES if z['set'] == 'floor']
+    raw = floor_wall_boxes(FLOOR)
+    walls = select_boxes(merge_collinear(raw), floor_zones)
+    log(f'wall boxes selected: {len(walls)}')
+    y0 = BASE_Y
+    stair_rect = STAIRS['main']['pos'] + STAIRS['main']['size']
+    ent = next((r for r in FLOOR['rooms'] if r['id'] == 'ENTRANCE'), None)
+    glass_lines = []
+    if ent:
+        ex0, ez0, ew, ed = ent['rect']
+        glass_lines = [ez0, ez0 + ed]
+
+    def face_zone(c, n):
+        sx, sy, sz = c[0] + n[0] * 0.03, c[1], c[2] + n[2] * 0.03
+        return zone_at(sx, sz, sy, sets=('floor',))
+
+    wall_rows = []
+    for i, w in enumerate(walls):
+        (x0, z0), (x1, z1) = w['min'], w['max']
+        mb = MeshBuilder(f'Wall_{i:03d}')
+        ev = next((d for d in doors if d['kind'] == 'elevator' and d['id'] == w.get('roomId')), None)
+        is_glass = ent and (x1 - x0) > (z1 - z0) and any(abs((z0 + z1) / 2 - gz) < 0.1 for gz in glass_lines) \
+            and ent['rect'][0] - 0.1 <= (x0 + x1) / 2 <= ent['rect'][0] + ent['rect'][2] + 0.1
+        if is_glass:
+            continue   # 風除室の内外のガラス面(build_1f_extras の固定ガラス)
+        faces = (('+x', (1, 0, 0)), ('-x', (-1, 0, 0)), ('+z', (0, 0, 1)), ('-z', (0, 0, -1)))
+        n_faces = 0
+        skip_key = None
+        if ev and w.get('part') == 'evBack':
+            fwd = p0b_ev.FACE[ev['facing']][0]          # シャフトの奥への向き。扉の面(開口付き)は p0b が張る
+            skip_key = {(0, 1): '-z', (0, -1): '+z', (1, 0): '-x', (-1, 0): '+x'}[tuple(fwd)]
+        for key, n in faces:
+            if key == skip_key:
+                continue
+            if key[1] == 'x':
+                fx_ = x1 if key[0] == '+' else x0
+                seg_lo, seg_hi = z0, z1
+            else:
+                fz_ = z1 if key[0] == '+' else z0
+                seg_lo, seg_hi = x0, x1
+            # 面を 0.25m ごとに分けて、空気の種類と(屋外なら)建物の壁か手すりかを判定
+            L = seg_hi - seg_lo
+            nseg = max(1, int(math.ceil(L / 0.25)))
+            runs = []
+            for k in range(nseg):
+                a = seg_lo + L * k / nseg; b = seg_lo + L * (k + 1) / nseg
+                m_ = (a + b) / 2
+                c = (fx_, y0 + 1.0, m_) if key[1] == 'x' else (m_, y0 + 1.0, fz_)
+                zn = face_zone(c, n)
+                if zn is None:
+                    if doorway_contains(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, doors):
+                        runs.append((a, b, 'door', CEIL_H)); continue
+                    runs.append((a, b, None, 0)); continue
+                h = zn['y1'] - BASE_Y
+                mat = wall_mat(zn['kind'])
+                if zn['outdoor']:
+                    th = (x1 - x0) if key[1] == 'x' else (z1 - z0)
+                    bc = (c[0] - n[0] * (th + 0.08), c[2] - n[2] * (th + 0.08))
+                    if not in_footprint(bc[0], bc[1], FLOOR['footprint'], skip=stair_rect):
+                        runs.append((a, b, None, 0)); continue   # 建物の無い側=手すり(階段の生成側で作る)
+                    mat = 'M_ExtWall'
+                runs.append((a, b, mat, h))
+            # 同じ材質・高さの連続区間をまとめて面にする
+            merged = []
+            for r in runs:
+                if merged and merged[-1][2] == r[2] and abs(merged[-1][3] - r[3]) < 1e-6:
+                    merged[-1] = (merged[-1][0], r[1], r[2], r[3])
+                else:
+                    merged.append(r)
+            for a, b, mat, h in merged:
+                if mat is None:
+                    continue
+                if mat == 'door':
+                    mat, h = 'M_Wall', DOOR_H + HEAD_H
+                if key[1] == 'x':
+                    pts = [(fx_, y0, b), (fx_, y0, a), (fx_, y0 + h, a), (fx_, y0 + h, b)] if key[0] == '+' else [(fx_, y0, a), (fx_, y0, b), (fx_, y0 + h, b), (fx_, y0 + h, a)]
+                else:
+                    pts = [(a, y0, fz_), (b, y0, fz_), (b, y0 + h, fz_), (a, y0 + h, fz_)] if key[0] == '+' else [(b, y0, fz_), (a, y0, fz_), (a, y0 + h, fz_), (b, y0 + h, fz_)]
+                orient(mb.quad(pts, n, mat), n)
+                n_faces += 1
+                # 幅木(屋内の長い面)
+                if mat in ('M_Wall', 'M_StoneWall', 'M_DarkWall', 'M_PaintWall') and (b - a) > 0.2 and w['kind'] != 'solid':
+                    t, hh = 0.012, 0.06
+                    if key[1] == 'x':
+                        xa, xb = (fx_, fx_ + t) if key[0] == '+' else (fx_ - t, fx_)
+                        mb.box((xa, y0, a), (xb, y0 + hh, b), 'M_Baseboard', keep=lambda k, c, nn: nn == n or k == '+y')
+                    else:
+                        za, zb = (fz_, fz_ + t) if key[0] == '+' else (fz_ - t, fz_)
+                        mb.box((a, y0, za), (b, y0 + hh, zb), 'M_Baseboard', keep=lambda k, c, nn: nn == n or k == '+y')
+        if ev and w.get('part') == 'evBack':
+            p0b_ev.ev_back_face_with_opening(sys.modules[__name__], mb, w, ev)
+        ob = mb.finish(col, {'n2_kind': 'wall', 'n2_box': json.dumps([x0, z0, x1, z1])})
+        wall_rows.append((i, n_faces))
+
+    # --- 床・天井(空気ごと) ---
+    fl = MeshBuilder('Floor'); ce = MeshBuilder('Ceiling')
+    for zn in floor_zones:
+        x0, z0, w, d = zn['rect']; x1, z1 = x0 + w, z0 + d
+        k = zn['kind']
+        if k in ('well', 'outdoor'):
+            continue        # 外階段の床と吹き抜けは階段の生成側
+        fl.quad([(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)], (0, 1, 0), floor_mat(k))
+        if k != 'stair':
+            yc = y0 + CEIL_H
+            ce.quad([(x0, yc, z0), (x1, yc, z0), (x1, yc, z1), (x0, yc, z1)], (0, -1, 0), ceil_mat(k))
+    fl.finish(col, {'n2_kind': 'floor'}); ce.finish(col, {'n2_kind': 'ceiling'})
+
+    cap = MeshBuilder('Void_Caps')
+    for c in SHELL['caps']:
+        x = c['x']
+        cap.quad([(x, y0, c['z0']), (x, y0, c['z1']), (x, y0 + CEIL_H, c['z1']), (x, y0 + CEIL_H, c['z0'])], (-1, 0, 0), 'M_Void')
+    cap.finish(col, {'n2_kind': 'void'})
+
+    door_info = [build_door(dd, col) for dd in doors]
+
+    lamps = [p for p in night_light_positions() if zone_at(p[0], p[1], y0 + 1.0, sets=('floor',)) and zone_at(p[0], p[1], y0 + 1.0)['kind'] in INDOOR_KINDS]
+    for i, (lx, lz) in enumerate(lamps):
+        build_night_light(i, lx, lz, col)
+    p0b_ev.build_hall(sys.modules[__name__], col, doors, door_info)
+    windows = [build_window(w, i, col) for i, w in enumerate(SHELL['windows'])]
+    downs, brackets = [], []
+    for i, l in enumerate(SHELL['lights']):
+        if l['kind'] == 'down':
+            downs.append(build_downlight(f'Down_{i}', l['pos'][0], l['pos'][1], col, energy=1.8))
+        elif l['kind'] == 'bracket':
+            brackets.append(build_bracket(f'Bracket_{i}', l['pos'][0], l['pos'][1], BASE_Y + l['y'], l['facing'], col))
+    # 隣の階の外階段・北階段の灯り(ベイクにだけ効く。階段の上下で明るさが繋がるように)
+    for dl in (-1, 1):
+        lv = LEVEL + dl
+        if 1 <= lv <= MAX_LEVEL:
+            by = (lv - 1) * FLOOR_H
+            build_bracket(f'BracketAdj_{lv}', 6.0 - 0.06, 20.6, by + 2.3, 'W', col, light_only=True)
+            if lv <= 3 and LEVEL <= 3:
+                build_bracket(f'BracketAdjN_{lv}', 8.6, 0.06, by + 2.3, 'S', col, light_only=True)
+    exits = []
+    rooms = {r['id']: r for r in FLOOR['rooms']}
+    for i, e in enumerate(SHELL['exits']):
+        r = rooms[e['room']]
+        fx, fz = FACING_OUT[r['door']['facing']]
+        nrm = (-fx, -fz) if e.get('inside') else (fx, fz)
+        exits.append(build_exit_sign(i, r['door']['pos'][0], r['door']['pos'][1], nrm, col))
+    build_external_stair(col)
+    if LEVEL <= STAIRS['north']['levels'][1]:
+        build_north_stair(col)
+    if LEVEL == 1:
+        build_1f_extras(col)
+    roof_light = build_roof(col) if ROOFB else None
+
+    world = bpy.data.worlds.new('N2_Night')
+    world.use_nodes = True
+    bg = world.node_tree.nodes.get('Background')
+    sky = float(ARGS.get('sky', 0.03))
+    bg.inputs['Color'].default_value = (0.55, 0.65, 1.0, 1)     # 曇った夜空の弱い青(屋外の踊り場・屋上にだけ届く)
+    bg.inputs['Strength'].default_value = sky
+    scene.world = world
+
+    meta = dict(level=LEVEL, baseY=BASE_Y, ceilH=CEIL_H, doors=door_info, lamps=lamps, walls=len(walls),
+                windows=windows, downlights=downs, brackets=brackets + ([roof_light] if roof_light else []), exits=exits,
+                evButtons=EV_BUTTONS, materials=MAT_TEX)
+    scene['n2_meta'] = json.dumps(meta)
+    return col
+
+
+def lightmap_uvs(col):
+    meshes = [o for o in col.objects if o.type == 'MESH' and not o.get('n2_bake_only')]
+    for o in meshes:
+        uvl = o.data.uv_layers.new(name='Lightmap')
+        o.data.uv_layers.active = uvl
+    vl = bpy.context.view_layer
+    vl.update()
+    for o in bpy.context.scene.objects:
+        o.select_set(False)
+    for o in meshes:
+        o.select_set(True)
+    vl.objects.active = meshes[0]
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.mesh.select_all(action='SELECT')
+    bpy.ops.uv.smart_project(angle_limit=math.radians(60), island_margin=0.0, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+    bpy.ops.uv.pack_islands(rotate=True, margin_method='FRACTION', margin=float(ARGS.get('uv_margin', 0.003)))
+    bpy.ops.object.mode_set(mode='OBJECT')
+    for o in meshes:
+        o.data.uv_layers.active = o.data.uv_layers['UVMap']
+        o.data.uv_layers['UVMap'].active_render = True
+    log(f'lightmap UV: {len(meshes)} meshes packed')
+
+
+if __name__ == '__main__':
+    col = build()
+    lightmap_uvs(col)
+    out = os.path.join(ROOT, OUT)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    bpy.ops.wm.save_as_mainfile(filepath=out, compress=True)
+    nm = sum(1 for o in col.objects if o.type == 'MESH')
+    log(f'saved {out} ({nm} meshes)')
