@@ -12,7 +12,9 @@
 //   7) P3a-2: 1F に地下への階段(段が B1 の床まで下りる・B1 の施錠扉)。B1 の当たりが閉じている
 //   8) P3b: 入れる部屋(内装の壁の面が部屋の矩形の内側の面にある・家具・クローゼットの折戸/ロッカーの扉・掃き出し窓の障子)、
 //      バルコニー(床・手すり・隔て板)、4F の屋上A。2枚目のライトマップ(部屋の組)が存在し 2048px 以下
-//  最後に追加アセットの合計(GLB＋ライトマップ2種＋build/tex)を表示し、35MB(DESIGN §2.3、2026-11-01 に 25→35MB)を超えたら失敗。
+//   9) P3c: 外観・外環境 build/exterior.glb(ノードの顔ぶれ・ライトマップの UV なし・テクスチャ非埋め込み・階の帯の高さと「建物の中に面が無い」・
+//      外構の当たりの箱ごとに見た目がある・敷地の中の地形は外構の面の下・木の配置ファイルの件数と敷地の中に木が無い・灯りの点いた窓は施錠の空室)
+//  最後に追加アセットの合計(GLB＋ライトマップ2種＋build/tex＋外観)を表示し、35MB(DESIGN §2.3、2026-11-01 に 25→35MB)を超えたら失敗。
 // 実行: node tools/check_glb.mjs [--floor 4] [--verbose]   失敗時は非0終了。
 
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
@@ -420,6 +422,133 @@ for (const r of rows) {
   console.log(`F${r.floor}: GLB ${r.glbMB}MB tris ${r.tris} prims ${r.prims} | lightmap ${r.lightmap} + rooms ${r.lightmap2} (${r.rooms} rooms, wall faces ${r.roomWallFaces} max ${r.roomWallMaxCm}cm) | wall faces ${r.wallFaces} max ${r.faceVsBoxMaxCm}cm | edge probes ${r.edgeProbes} (no-face ${r.invisibleWallProbes}) | flood ${r.flood.reached}${r.floodRoofB ? ' RB ' + r.floodRoofB.reached : ''} | unit doors ${r.unitDoors} plates ${r.plates} leafOverflow ${r.doorLeafOverflowCm}cm | ext stair y ${JSON.stringify(r.extStairY)}`);
 }
 
+// ---------------------------------------------------------------- 9) P3c: 外観・外環境(build/exterior.glb ＋ manifest ＋ 木の配置)
+function checkExterior() {
+  const glbPath = join(ROOT, 'build', 'exterior.glb'), manPath = join(ROOT, 'build', 'exterior_manifest.json');
+  if (!existsSync(glbPath) || !existsSync(manPath)) { fail('外観: build/exterior.glb / exterior_manifest.json がない'); return null; }
+  const g = parseGLB(glbPath);
+  const man = JSON.parse(readFileSync(manPath, 'utf8'));
+  const FH = GEOM.FLOOR_H;
+  const R = { glbMB: +(g.size / 1e6).toFixed(2) };
+  if ((g.gltf.images || []).length) fail(`外観: GLB にテクスチャが埋め込まれている(${g.gltf.images.length})`);
+  const world = new Map();
+  const walk = (i, parent) => { const m = mul(parent, mat4FromTRS(g.gltf.nodes[i])); world.set(i, m); for (const c of g.gltf.nodes[i].children || []) walk(c, m); };
+  for (const r of g.gltf.scenes[g.gltf.scene || 0].nodes) walk(r, [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  const byName = new Map(g.gltf.nodes.map((n, i) => [n.name, i]));
+  const want = { ExtAlways: 'extalways', Site: 'site', Terrain: 'terrain', TreeProto_0: 'treeproto', TreeProto_1: 'treeproto', Billboard: 'billboard',
+    Ridge_0: 'ridge', Ridge_1: 'ridge', Ridge_2: 'ridge', City: 'city' };
+  for (let L = 1; L <= 7; L++) want['ExtBand_' + L] = 'extband';
+  for (const [name, kind] of Object.entries(want)) {
+    const i = byName.get(name);
+    if (i === undefined) { fail(`外観: ノード ${name} がない`); continue; }
+    const ex = g.gltf.nodes[i].extras || {};
+    if (ex.n2_kind !== kind) fail(`外観: ${name} の n2_kind が ${kind} でない(${ex.n2_kind})`);
+  }
+  // 全プリミティブ: 法線あり・ライトマップの UV(TEXCOORD_1)なし(ベイクしない)
+  let prims = 0, tris = 0, lm = 0, nonorm = 0;
+  for (const node of g.gltf.nodes) {
+    if (node.mesh === undefined) continue;
+    for (const p of g.gltf.meshes[node.mesh].primitives) {
+      prims++; tris += (p.indices !== undefined ? g.gltf.accessors[p.indices].count : g.gltf.accessors[p.attributes.POSITION].count) / 3;
+      if (p.attributes.TEXCOORD_1 !== undefined) lm++;
+      if (p.attributes.NORMAL === undefined) nonorm++;
+    }
+  }
+  if (lm) fail(`外観: ライトマップの UV が残っている(${lm})`);
+  if (nonorm) fail(`外観: 法線のないプリミティブ ${nonorm}`);
+  Object.assign(R, { prims, tris });
+  // 材質の実行時テクスチャ(≤2048、法線 ≤1024)
+  for (const [mname, def] of Object.entries(man.materials || {})) {
+    for (const k of ['map', 'normalMap', 'roughnessMap', 'emissiveMap']) {
+      if (!def[k]) continue;
+      const p = join(ROOT, def[k]);
+      if (!existsSync(p)) { fail(`外観: ${mname}.${k} のファイルがない ${def[k]}`); continue; }
+      const [w, h] = imageSize(readFileSync(p));
+      if (w > 2048 || h > 2048 || (k === 'normalMap' && (w > 1024 || h > 1024))) fail(`外観: ${def[k]} が大きすぎる ${w}x${h}`);
+    }
+  }
+  if (!existsSync(join(ROOT, 'build', 'tex', 'ext_sky.webp'))) fail('外観: 夜空 build/tex/ext_sky.webp がない');
+  else { const [w, h] = imageSize(readFileSync(join(ROOT, 'build', 'tex', 'ext_sky.webp'))); if (w > 2048 || h > 2048) fail('外観: 夜空が 2048px 超'); }
+  // 階の帯: 高さがその階の範囲(バルコニーの見付け・屋根のパラペット・屋上Bの機械室を含む)、建物の中(壁の内側)に面が無い
+  const site = building.site;
+  const bandY = {}, inside = {};
+  for (let L = 1; L <= 7; L++) {
+    const i = byName.get('ExtBand_' + L);
+    if (i === undefined) continue;
+    const f = building.floors.find((ff) => ff.level === L);
+    const ts = nodeTris(g, world, i);
+    let y0 = Infinity, y1 = -Infinity, bad = 0;
+    // 建物の中 = 部屋・廊下の矩形(バルコニー・階段の箱・屋上A を除く)を 0.45m 内側へ縮めたもの。屋根(その階の天井より上)と 1F の風除室の奥の灯りは除く
+    const skip = new Set();
+    for (const r of f.rooms) if (r.kind === 'stair' || r.kind === 'elevator') skip.add(JSON.stringify(r.rect));
+    const rects = f.rooms.filter((r) => !skip.has(JSON.stringify(r.rect)) && r.id !== 'ENTRANCE' && r.id !== 'LOBBY').map((r) => r.rect);
+    for (const t of ts) {
+      for (const v of t.v) { y0 = Math.min(y0, v[1]); y1 = Math.max(y1, v[1]); }
+      const cx = (t.v[0][0] + t.v[1][0] + t.v[2][0]) / 3, cy = (t.v[0][1] + t.v[1][1] + t.v[2][1]) / 3, cz = (t.v[0][2] + t.v[1][2] + t.v[2][2]) / 3;
+      if (cy > L * FH - 0.25 || cy < (L - 1) * FH + 0.05) continue;
+      if (rects.some(([x, z, w, d]) => cx > x + 0.45 && cx < x + w - 0.45 && cz > z + 0.45 && cz < z + d - 0.45)) bad++;
+    }
+    bandY[L] = [+y0.toFixed(2), +y1.toFixed(2)];
+    inside[L] = bad;
+    const top = L * FH + (L === 7 ? 3.3 : 1.35);
+    if (y0 < (L - 1) * FH - 0.65 || y1 > top) fail(`外観: ExtBand_${L} の高さ ${y0.toFixed(2)}..${y1.toFixed(2)} が階の範囲外`);
+    if (bad) fail(`外観: ExtBand_${L} に建物の中の面が ${bad} ある`);
+  }
+  Object.assign(R, { bandY, bandInsideFaces: inside });
+  // 外構: 当たりの箱(車・ラック・ゴミ置場・柱・植え込み・照明柱)ごとに見た目の面がある
+  {
+    const ts = nodeTris(g, world, byName.get('Site'));
+    const miss = [];
+    for (const o of site.obstacles) {
+      const [x, z, w, d] = o.rect;
+      const hit = ts.some((t) => t.v.some((v) => v[0] >= x - 0.05 && v[0] <= x + w + 0.05 && v[2] >= z - 0.05 && v[2] <= z + d + 0.05 && v[1] > 0.1));
+      if (!hit && !o.id.startsWith('porch_col') && !o.id.startsWith('pilotis')) miss.push(o.id);
+    }
+    if (miss.length) fail(`外観: 当たりの箱に見た目が無い ${miss.join(',')}`);
+    R.siteObstacles = site.obstacles.length - miss.length + '/' + site.obstacles.length;
+    // 2F の張り出しの下の柱は ExtAlways、庇の柱は 1F の GLB
+  }
+  // 地形: 敷地の中は外構の面の下(≤ −0.03)
+  {
+    const ts = nodeTris(g, world, byName.get('Terrain'));
+    const B = site.bounds;
+    let hi = -Infinity, n = 0;
+    for (const t of ts) for (const v of t.v) if (v[0] > B.W + 0.2 && v[0] < B.E - 0.2 && v[2] > B.N + 0.2 && v[2] < B.S - 0.2) { hi = Math.max(hi, v[1]); n++; }
+    if (hi > -0.03) fail(`外観: 敷地の中の地形が外構より高い(${hi.toFixed(3)})`);
+    R.terrainInSite = { verts: n, maxY: +hi.toFixed(3) };
+  }
+  // 木の配置(build/exterior_instances.bin): 件数が manifest と一致、敷地の中に木が無い
+  {
+    const p = join(ROOT, 'build', man.instances);
+    if (!existsSync(p)) fail('外観: 木の配置ファイルがない');
+    else {
+      const b = readFileSync(p);
+      const nN = b.readUInt32LE(4), nB = b.readUInt32LE(8);
+      if (b.toString('ascii', 0, 4) !== 'N2TI' || nN !== man.trees.near || nB !== man.trees.billboards || b.length !== 12 + nN * 14 + nB * 12) fail('外観: 木の配置ファイルの件数・大きさが合わない');
+      const B = site.bounds;
+      let inSite = 0;
+      for (let i = 0; i < nN; i++) {
+        const x = b.readInt16LE(12 + i * 14) / 10, z = b.readInt16LE(12 + i * 14 + 4) / 10;
+        if (x > B.W - 1.0 && x < B.E + 1.0 && z > B.N - 1.0 && z < B.S + 1.0) inSite++;
+      }
+      if (inSite) fail(`外観: 敷地の中に木が ${inSite} 本`);
+      R.trees = { near: nN, billboards: nB, inSite };
+    }
+  }
+  // 灯りの点いた窓: 施錠の空室(入れる部屋・物語の部屋ではない)
+  {
+    const all = new Map();
+    for (const f of building.floors) for (const r of f.rooms) all.set(r.id, r);
+    const bad = (man.litWindows || []).filter((w) => { const r = all.get(w.room); return !r || r.kind !== 'unit' || r.door.enterable || r.story; });
+    if ((man.litWindows || []).length < 4) fail('外観: 灯りの点いた窓が 4 室未満');
+    if (bad.length) fail(`外観: 灯りの点いた窓が入れる部屋・物語の部屋 ${bad.map((w) => w.room)}`);
+    R.litWindows = (man.litWindows || []).map((w) => w.room);
+  }
+  return R;
+}
+const ext = onlyFloor ? null : checkExterior();
+if (ext) console.log(`EXT: GLB ${ext.glbMB}MB tris ${ext.tris} prims ${ext.prims} | bands y ${JSON.stringify(ext.bandY)} inside-faces ${JSON.stringify(ext.bandInsideFaces)} | site obstacles ${ext.siteObstacles} | terrain in site ${JSON.stringify(ext.terrainInSite)} | trees ${JSON.stringify(ext.trees)} | lit ${ext.litWindows}`);
+
 // ---------------------------------------------------------------- 容量
 let total = 0;
 const parts = {};
@@ -431,6 +560,7 @@ for (let N = 1; N <= 7; N++) {
   add('manifest', join(ROOT, 'build', `floor_${N}_manifest.json`));
 }
 for (const f of readdirSync(join(ROOT, 'build', 'tex'))) add('textures', join(ROOT, 'build', 'tex', f));
+for (const f of ['exterior.glb', 'exterior_manifest.json', 'exterior_instances.bin']) add('exterior', join(ROOT, 'build', f));   // P3c
 console.log(`assets: total ${(total / 1e6).toFixed(2)} MB = ` + Object.entries(parts).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}`).join(' / ') + ' (上限 35MB)');
 if (total > 35e6) fail(`追加アセットが 35MB を超えた: ${(total / 1e6).toFixed(2)} MB`);
 if (verbose) console.log(JSON.stringify(rows, null, 1));

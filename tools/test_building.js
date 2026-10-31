@@ -10,7 +10,8 @@
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
 //  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い。P3b-3: 内装のない部屋(空室 73・物語の部屋 5)の扉は開かない
 //     (「開ける」が出ない・E で「鍵がかかっている」)、内装のある部屋の扉は開く、地下の鉄扉は開かない
-//  6) 1F 風除室: 内側の自動ドアは近づくと開き、外側(正面玄関)は閉じたまま
+//  6) 1F 風除室: 内側の自動ドアは近づくと開く(P3c: 外側の正面玄関も開くようになった。外への出入りは 8 番)
+//  8) P3c 外観と外環境: 読み込み前後の負荷・屋上A/屋上B/エントランス前から見える・屋内の奥では描かない・敷地の境で止まる・玄関の出入り
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
 
 const DT = 1 / 60;
@@ -355,7 +356,9 @@ export async function run(N) {
     const z = N.player.pos.z;
     N.setView(17.6, 23.0, Math.PI, 0); N.pump(DT, 120, false);
     const closedAgain = N.doorApi.get('ENTRANCE').open01;
-    return { pass: before === 0 && z > 25.6 && z < 28.1 - 0.27 && opened > 0.85 && closedAgain === 0, before, openedWhenNear: +opened.toFixed(2), reachedZ: +z.toFixed(2), outerDoorStopsAt: 28.1 - 0.28, closedAfterLeaving: closedAgain };
+    // P3c: 外側(正面玄関)も近づくと開き、敷地 'G' へ出られる(出入りは 8 番で検査)。ここでは内側の自動ドアと、離れたら両方閉じることを見る
+    const outerClosed = N.doorApi.get('ENTRANCE_OUT').open01;
+    return { pass: before === 0 && z > 25.6 && opened > 0.85 && closedAgain === 0 && outerClosed === 0, before, openedWhenNear: +opened.toFixed(2), reachedZ: +z.toFixed(2), closedAfterLeaving: closedAgain, outerClosedAfterLeaving: outerClosed };
   });
 
   await T('7_enemy_other_levels', async () => {
@@ -386,6 +389,89 @@ export async function run(N) {
     ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4);
     ai.setState('SCRIPTED', { force: true });
     return { pass, reachedLurkAt_s: +t.toFixed(1), lurkLevel: st.level, levelsPassed: maxLevelSeen, framesVisibleWhileOnOtherLevel: visibleWhileAway, events: evs.filter((e) => /transfer|lurk|stuck|door_opened_generic/.test(e)).slice(0, 12), chaseTo7F: { arrived: arrived7, sec: +t2.toFixed(1), visibleOn7F: vis7 } };
+  });
+
+  // 8) P3c: 外観と外環境。a) 読み込み前後の1フレームの時間(同じ構図) b) 屋上A・屋上B・エントランス前から外が見える(scene にあり、
+  //    外を出した時と隠した時で画が変わる)・屋内の奥(廊下の途中)では描かない c) 敷地の境(柵・擁壁・生垣・門・建物の外壁)で止まる
+  //    d) 正面玄関の外側の自動ドアが開き、1F ⇔ 敷地 'G' を行き来できる
+  await T('8_exterior', async () => {
+    const gl = N.renderer.getContext();
+    const px1 = new Uint8Array(4);
+    const frameMs = (n = 40) => {
+      const ts = [];
+      for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
+      ts.sort((a, b) => a - b); return +ts[ts.length >> 1].toFixed(2);
+    };
+    const V = {
+      roofA: [4, 2.0, 2.5, 2.356, 0.1, '3,4,5'],
+      roofB: ['RB', 14.0, 24.0, -Math.PI / 2, 0.0, '6,7'],
+      entrance: ['G', N.building.site.spawn[0], N.building.site.spawn[1], Math.PI, 0.05, '1,2'],   // エントランス前から外(南の森・車路)
+      entranceUp: ['G', N.building.site.spawn[0], 34.2, 0, 0.5, '1,2'],                              // エントランス前から建物を見上げる(3F 以上は外観の帯)
+      corridor: [4, 6.9, 12.0, Math.PI, 0, '3,4,5'],
+    };
+    const go = async ([k, x, z, yaw, pitch, lv]) => { await N.teleport(k, x, z, yaw, pitch); await settle(lv); N.pump(DT, 30, false); };
+    N.setRenderSize(1920, 1080);
+    // a) 読み込み前
+    const before = {};
+    for (const k of ['roofB', 'entrance']) { await go(V[k]); frameMs(8); before[k] = frameMs(); }
+    const t0 = performance.now();
+    await N.loadExterior();
+    const loadMs = Math.round(performance.now() - t0);
+    const after = {};
+    for (const k of ['roofB', 'entrance']) { await go(V[k]); frameMs(8); after[k] = frameMs(); }
+    const fpsOk = Object.keys(before).every((k) => after[k] <= Math.max(16.7, before[k] * 1.5));
+    // b) 見えるか: 外を出した画と隠した画の差(320×180)
+    N.setRenderSize(320, 180);
+    const buf = new Uint8Array(320 * 180 * 4), buf2 = new Uint8Array(320 * 180 * 4);
+    const grab = (b) => { N.render(); gl.readPixels(0, 0, 320, 180, gl.RGBA, gl.UNSIGNED_BYTE, b); };
+    const grain0 = N.passes.grain.uniforms.grain.value;
+    N.passes.grain.uniforms.grain.value = 0;   // フィルム粒子は毎フレーム変わるので、画の比較の間だけ切る
+    const vis = {};
+    for (const k of ['roofA', 'roofB', 'entrance', 'entranceUp', 'corridor']) {
+      await go(V[k]);
+      const shown = N.exterior.shown;
+      const inScene = !!N.scene.getObjectByName('Exterior') && N.exterior.root.visible && N.exterior.terrain.parent === N.exterior.root;
+      N.exterior.force = true; N.pump(DT, 1, false); grab(buf);
+      N.exterior.force = false; N.pump(DT, 1, false); grab(buf2);
+      N.exterior.force = null; N.pump(DT, 1, false);
+      let diff = 0, changed = 0;
+      for (let i = 0; i < buf.length; i += 4) { const d = Math.abs(buf[i] - buf2[i]) + Math.abs(buf[i + 1] - buf2[i + 1]) + Math.abs(buf[i + 2] - buf2[i + 2]); diff += d; if (d > 6) changed++; }
+      vis[k] = { shown, inScene, changedPct: +(100 * changed / (320 * 180)).toFixed(1), meanDiff: +(diff / (320 * 180)).toFixed(2), bands: Object.entries(N.exterior.stats().bands).filter(([, v]) => v).map(([l]) => +l) };
+    }
+    N.passes.grain.uniforms.grain.value = grain0;
+    N.setRenderSize(0);
+    const visOk = ['roofA', 'roofB', 'entrance', 'entranceUp'].every((k) => vis[k].shown && vis[k].inScene && vis[k].changedPct > 5) && !vis.corridor.shown
+      && [3, 4, 5, 6, 7].every((l) => vis.entranceUp.bands.includes(l));
+    // c) 敷地の境で止まる(W を押し続ける)
+    const B = N.building.site.bounds;
+    const walks = {
+      south: [B.W + 6, 31.5, Math.PI], east: [30.0, 30.0, -Math.PI / 2], west: [1.0, 31.0, Math.PI / 2],
+      gate: [34.5, 31.0, Math.PI], building: [11.0, 31.0, 0], northWall: [28.5, 4.0, 0], courtyardFence: [16.0, 8.0, Math.PI / 2],
+      underStairs: [4.3, 27.0, 0], pilotis: [24.0, 27.0, 0],
+    };
+    const walked = {};
+    let walkOk = true;
+    for (const [name, [x, z, yaw]] of Object.entries(walks)) {
+      await N.teleport('G', x, z, yaw, 0);
+      key('KeyW', true); N.pump(DT, 420, false); key('KeyW', false); N.pump(DT, 2, false);
+      const p = pos();
+      const inside = p.level === 'G' && p.x > B.W - 0.01 && p.x < B.E + 0.01 && p.z > B.N - 0.01 && p.z < B.S + 0.01;
+      const fp = N.building.site.footprint.some(([fx, fz, fw, fd]) => p.x >= fx - 0.01 && p.x <= fx + fw + 0.01 && p.z >= fz - 0.01 && p.z <= fz + fd + 0.01);
+      walked[name] = { ...p, inside: inside && fp };
+      if (!(inside && fp)) walkOk = false;
+    }
+    // d) 1F の風除室 → 外側の自動ドア → 敷地 → 戻る
+    await N.teleport(1, 17.6, 26.6, Math.PI, 0); await settle('1,2');
+    key('KeyW', true); let opened = 0;
+    for (let i = 0; i < 240; i++) { N.pump(DT, 1, false); opened = Math.max(opened, N.doorApi.get('ENTRANCE_OUT').open01); }
+    key('KeyW', false); N.pump(DT, 2, false);
+    const out1 = pos();
+    N.setView(N.player.pos.x, N.player.pos.z, 0, 0);
+    key('KeyW', true); N.pump(DT, 260, false); key('KeyW', false); N.pump(DT, 2, false);
+    const back = pos();
+    const doorOk = opened > 0.85 && out1.level === 'G' && out1.z > 29.0 && back.level === 1 && back.z < 28.0;
+    return { pass: fpsOk && visOk && walkOk && doorOk, loadMs, frameMs: { before, after, rule: 'after ≤ max(16.7, before×1.5)' }, visible: vis, walked,
+      door: { maxOpen01: +opened.toFixed(2), out: out1, back } };
   });
 
   await N.teleport(4, 6.9, 7.6, Math.PI);
