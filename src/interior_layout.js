@@ -320,7 +320,7 @@ export function commonInterior(room) {
     deco('clock', 20.65, 22.18, 20.95, 22.2, 2.06, 2.34, 'S');
     deco('extinguisher', 21.7, 22.25, 21.9, 22.45, 0, 0.55, 'W');
     addFall('mug', 20.24, 0.72, 25.85, 'desk');
-    addFall('binders', 21.46, 1.8, 23.0, 'shelf');
+    addFall('binders', 21.46, 0.92, 23.0, 'shelf');   // 棚の中段の手前(通路側の縁から少し出ている)
     hide = { room: room.id, b: lk.b, f: 'W', eye: [21.5, 27.2], feet: [21.67, 27.2], out: [20.95, 27.2], stand: [20.66, 27.2], yaw: FACING_YAW.W, locker: true };
     points = { entry: [20.8, 22.8], room: [20.9, 24.8], living: [20.9, 26.0] };
     passage = [{ rect: [20.4, 22.16, 21.4, 25.6] }];
