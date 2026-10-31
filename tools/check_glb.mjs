@@ -12,7 +12,7 @@
 //   7) P3a-2: 1F に地下への階段(段が B1 の床まで下りる・B1 の施錠扉)。B1 の当たりが閉じている
 //   8) P3b: 入れる部屋(内装の壁の面が部屋の矩形の内側の面にある・家具・クローゼットの折戸/ロッカーの扉・掃き出し窓の障子)、
 //      バルコニー(床・手すり・隔て板)、4F の屋上A。2枚目のライトマップ(部屋の組)が存在し 2048px 以下
-//  最後に追加アセットの合計(GLB＋ライトマップ2種＋build/tex)を表示し、25MB を超えたら失敗。
+//  最後に追加アセットの合計(GLB＋ライトマップ2種＋build/tex)を表示し、35MB(DESIGN §2.3、2026-11-01 に 25→35MB)を超えたら失敗。
 // 実行: node tools/check_glb.mjs [--floor 4] [--verbose]   失敗時は非0終了。
 
 import { readFileSync, existsSync, statSync, readdirSync } from 'node:fs';
@@ -431,8 +431,8 @@ for (let N = 1; N <= 7; N++) {
   add('manifest', join(ROOT, 'build', `floor_${N}_manifest.json`));
 }
 for (const f of readdirSync(join(ROOT, 'build', 'tex'))) add('textures', join(ROOT, 'build', 'tex', f));
-console.log(`assets: total ${(total / 1e6).toFixed(2)} MB = ` + Object.entries(parts).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}`).join(' / ') + ' (上限 25MB)');
-if (total > 25e6) fail(`追加アセットが 25MB を超えた: ${(total / 1e6).toFixed(2)} MB`);
+console.log(`assets: total ${(total / 1e6).toFixed(2)} MB = ` + Object.entries(parts).map(([k, v]) => `${k} ${(v / 1e6).toFixed(2)}`).join(' / ') + ' (上限 35MB)');
+if (total > 35e6) fail(`追加アセットが 35MB を超えた: ${(total / 1e6).toFixed(2)} MB`);
 if (verbose) console.log(JSON.stringify(rows, null, 1));
 if (failures) { console.error(`check_glb: ${failures} 件失敗`); process.exit(1); }
 console.log('check_glb: OK');
