@@ -5,3 +5,8 @@ ref/
 
 # Blender スクリプトの Python キャッシュ
 tools/blender/__pycache__/
+
+# P1 敵候補: 生成物(.blend/.fbx/テクスチャ)・アセットパックのキャッシュ・プロジェクト専用 Blender ユーザーフォルダ(MPFB)
+build/enemy/
+build/enemy_cache/
+build/blender_user/
