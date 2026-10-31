@@ -3,6 +3,7 @@
 //  カメラが1層ぶん移動する(踊り場→1折れ目→中間踊り場→2折れ目→上/下の踊り場)。移動中はマウスで見回せる。
 //  形は building.stairs[].geom(build_building.mjs が書く。Blender の段と同じ数値)。
 //  外階段は 7F の上で屋上B('RB')まで続く(stops の並び)。
+//  P3a-2: 北階段は屋外の鉄骨(2F・3F の鉄扉→屋外通路→階段、下は 1F の地面)。地下への階段(basement)は 1F→'B1'。
 
 import * as THREE from 'three';
 import { levelY } from './world.js';
@@ -60,10 +61,10 @@ export class Stairs {
     return null;
   }
 
-  // 踊り場・階段の区画にいるか(隣の階の見た目を出す判定)
+  // 踊り場・階段の区画にいるか(隣の階の見た目を出す判定)。st.area があればそれ(北階段の屋外通路込み)
   inStairArea(px, pz) {
     for (const st of this.list) {
-      const [x0, z0, w, d] = st.pos.concat(st.size);
+      const [x0, z0, w, d] = st.area || st.pos.concat(st.size);
       if (px > x0 - 0.3 && px < x0 + w + 0.3 && pz > z0 - 0.3 && pz < z0 + d + 0.3) return st.id;
     }
     return null;

@@ -427,7 +427,7 @@
           ]
         },
         {
-          "id": "NST1",
+          "id": "BST",
           "kind": "stair",
           "rect": [
             7.8,
@@ -435,19 +435,15 @@
             6,
             2.9
           ],
-          "door": {
-            "pos": [
-              7.8,
-              0.725
-            ],
-            "facing": "W",
-            "locked": false,
-            "steel": true,
-            "operable": true
-          },
-          "connects": [
-            1,
-            2
+          "openings": [
+            {
+              "side": "W",
+              "pos": [
+                7.8,
+                1.45
+              ],
+              "width": 1.3
+            }
           ]
         }
       ],
@@ -487,6 +483,12 @@
           20.3,
           3.4,
           4.5
+        ],
+        [
+          13.8,
+          0,
+          5.6,
+          2.9
         ]
       ],
       "fillWalls": [],
@@ -613,22 +615,24 @@
           {
             "id": "nst_landing",
             "rect": [
-              7.8,
+              13.8,
               0,
               1.6,
               2.9
             ],
-            "kind": "stair"
+            "kind": "ground",
+            "outdoor": true
           },
           {
             "id": "nst_well",
             "rect": [
-              9.4,
+              15.4,
               0,
-              4.4,
+              4,
               2.9
             ],
-            "kind": "well"
+            "kind": "well",
+            "outdoor": true
           },
           {
             "id": "dining",
@@ -659,6 +663,26 @@
               1.45
             ],
             "kind": "corridor"
+          },
+          {
+            "id": "bst_landing",
+            "rect": [
+              7.8,
+              0,
+              1.6,
+              2.9
+            ],
+            "kind": "room"
+          },
+          {
+            "id": "bst_well",
+            "rect": [
+              9.4,
+              0,
+              4.4,
+              2.9
+            ],
+            "kind": "bwell"
           },
           {
             "id": "theater",
@@ -757,46 +781,82 @@
           {
             "kind": "bracket",
             "pos": [
-              8.6,
-              0.06
+              13.860000000000001,
+              1.45
             ],
             "y": 2.3,
-            "facing": "S"
+            "facing": "E"
+          },
+          {
+            "kind": "down",
+            "pos": [
+              8.6,
+              1.45
+            ]
           },
           {
             "kind": "down",
             "pos": [
               16.6,
               23.4
-            ]
+            ],
+            "energy": 4.5
           },
           {
             "kind": "down",
             "pos": [
               18.6,
               23.4
-            ]
+            ],
+            "energy": 4.5
           },
           {
             "kind": "down",
             "pos": [
-              17.6,
-              26.7
-            ]
+              16.5,
+              26
+            ],
+            "energy": 4.5
+          },
+          {
+            "kind": "down",
+            "pos": [
+              18.7,
+              26
+            ],
+            "energy": 4.5
+          },
+          {
+            "kind": "down",
+            "pos": [
+              16.5,
+              27.5
+            ],
+            "energy": 4.5
+          },
+          {
+            "kind": "down",
+            "pos": [
+              18.7,
+              27.5
+            ],
+            "energy": 4.5
           },
           {
             "kind": "down",
             "pos": [
               14.8,
               24.2
-            ]
+            ],
+            "energy": 4.5
           },
           {
             "kind": "down",
             "pos": [
               14.8,
               26.9
-            ]
+            ],
+            "energy": 4.5
           },
           {
             "kind": "down",
@@ -814,14 +874,6 @@
           }
         ],
         "exits": [
-          {
-            "room": "NST1",
-            "pos": [
-              7.8,
-              0.725
-            ],
-            "facing": "E"
-          },
           {
             "room": "DINING",
             "pos": [
@@ -845,8 +897,7 @@
           "DINING",
           "THEATER",
           "ENTRANCE",
-          "MST1",
-          "NST1"
+          "MST1"
         ],
         "hideSpots": [
           {
@@ -1385,10 +1436,11 @@
         {
           "id": "NST2",
           "kind": "stair",
+          "external": true,
           "rect": [
             7.8,
             0,
-            6,
+            11.600000000000001,
             2.9
           ],
           "door": {
@@ -1402,6 +1454,7 @@
             "operable": true
           },
           "connects": [
+            1,
             2,
             3
           ]
@@ -1443,6 +1496,12 @@
           20.3,
           3.4,
           4.5
+        ],
+        [
+          13.8,
+          0,
+          5.6,
+          2.9
         ]
       ],
       "fillWalls": [],
@@ -1512,24 +1571,37 @@
             "outdoor": true
           },
           {
-            "id": "nst_landing",
+            "id": "nst_gallery",
             "rect": [
               7.8,
+              0,
+              6,
+              2.9
+            ],
+            "kind": "gallery",
+            "outdoor": true
+          },
+          {
+            "id": "nst_landing",
+            "rect": [
+              13.8,
               0,
               1.6,
               2.9
             ],
-            "kind": "stair"
+            "kind": "outdoor",
+            "outdoor": true
           },
           {
             "id": "nst_well",
             "rect": [
-              9.4,
+              15.4,
               0,
-              4.4,
+              4,
               2.9
             ],
-            "kind": "well"
+            "kind": "well",
+            "outdoor": true
           }
         ],
         "caps": [],
@@ -1568,11 +1640,11 @@
           {
             "kind": "bracket",
             "pos": [
-              8.6,
-              0.06
+              12.9,
+              2.84
             ],
             "y": 2.3,
-            "facing": "S"
+            "facing": "N"
           }
         ],
         "exits": [
@@ -2103,10 +2175,11 @@
         {
           "id": "NST3",
           "kind": "stair",
+          "external": true,
           "rect": [
             7.8,
             0,
-            6,
+            11.600000000000001,
             2.9
           ],
           "door": {
@@ -2120,6 +2193,7 @@
             "operable": true
           },
           "connects": [
+            2,
             3
           ]
         }
@@ -2160,6 +2234,12 @@
           20.3,
           3.4,
           4.5
+        ],
+        [
+          13.8,
+          0,
+          5.6,
+          2.9
         ]
       ],
       "fillWalls": [],
@@ -2229,24 +2309,37 @@
             "outdoor": true
           },
           {
-            "id": "nst_landing",
+            "id": "nst_gallery",
             "rect": [
               7.8,
+              0,
+              6,
+              2.9
+            ],
+            "kind": "gallery",
+            "outdoor": true
+          },
+          {
+            "id": "nst_landing",
+            "rect": [
+              13.8,
               0,
               1.6,
               2.9
             ],
-            "kind": "stair"
+            "kind": "outdoor",
+            "outdoor": true
           },
           {
             "id": "nst_well",
             "rect": [
-              9.4,
+              15.4,
               0,
-              4.4,
+              4,
               2.9
             ],
-            "kind": "well"
+            "kind": "well",
+            "outdoor": true
           }
         ],
         "caps": [],
@@ -2285,11 +2378,11 @@
           {
             "kind": "bracket",
             "pos": [
-              8.6,
-              0.06
+              12.9,
+              2.84
             ],
             "y": 2.3,
-            "facing": "S"
+            "facing": "N"
           }
         ],
         "exits": [
@@ -4609,12 +4702,13 @@
     {
       "id": "north",
       "room": "NST",
+      "external": true,
       "pos": [
-        7.8,
+        13.8,
         0
       ],
       "size": [
-        6,
+        5.6,
         2.9
       ],
       "door": [
@@ -4625,10 +4719,73 @@
         1,
         3
       ],
+      "area": [
+        7.8,
+        0,
+        11.600000000000001,
+        2.9
+      ],
       "stops": [
         1,
         2,
         3
+      ],
+      "geom": {
+        "axis": "x",
+        "landing": [
+          13.8,
+          0,
+          1.5999999999999996,
+          2.9
+        ],
+        "mid": [
+          17.22,
+          0,
+          2.1799999999999997,
+          2.9
+        ],
+        "s0": 15.4,
+        "s1": 17.22,
+        "lanes": {
+          "up": [
+            1.55,
+            2.8
+          ],
+          "down": [
+            0.1,
+            1.35
+          ]
+        },
+        "guard": [
+          15.700000000000001,
+          0,
+          3.6999999999999984,
+          2.9
+        ],
+        "mouthDepth": 0.6,
+        "rise": 1.45,
+        "treads": 7,
+        "tread": 0.26
+      }
+    },
+    {
+      "id": "basement",
+      "room": "BST",
+      "pos": [
+        7.8,
+        0
+      ],
+      "size": [
+        6,
+        2.9
+      ],
+      "levels": [
+        "B1",
+        1
+      ],
+      "stops": [
+        "B1",
+        1
       ],
       "geom": {
         "axis": "x",
@@ -4837,14 +4994,6 @@
         "pos": [
           6,
           21.200000000000003
-        ]
-      },
-      {
-        "id": "1:dNST1",
-        "level": 1,
-        "pos": [
-          7.8,
-          0.725
         ]
       },
       {
@@ -6150,11 +6299,6 @@
         "kind": "corridor"
       },
       {
-        "a": "1:dNST1",
-        "b": "1:c0",
-        "kind": "corridor"
-      },
-      {
         "a": "2:c0",
         "b": "2:c1",
         "kind": "corridor"
@@ -6940,11 +7084,6 @@
         "kind": "elevator"
       },
       {
-        "a": "1:dNST1",
-        "b": "2:dNST2",
-        "kind": "stair"
-      },
-      {
         "a": "2:dNST2",
         "b": "3:dNST3",
         "kind": "stair"
@@ -7113,6 +7252,69 @@
     "spawn": [
       7.2,
       21.200000000000003
+    ]
+  },
+  "basement": {
+    "key": "B1",
+    "baseLevel": 1,
+    "y": -2.9,
+    "footprint": [
+      [
+        7.8,
+        0,
+        6,
+        2.9
+      ]
+    ],
+    "rooms": [
+      {
+        "id": "B1DOOR",
+        "kind": "stair",
+        "rect": [
+          7.8,
+          0,
+          6,
+          2.9
+        ],
+        "door": {
+          "pos": [
+            7.8,
+            1.45
+          ],
+          "facing": "W",
+          "locked": true,
+          "steel": true,
+          "sealed": true
+        }
+      }
+    ],
+    "fillWalls": [],
+    "obstacles": [],
+    "air": [
+      {
+        "id": "b1_landing",
+        "rect": [
+          7.8,
+          0,
+          1.6000000000000005,
+          2.9
+        ],
+        "kind": "room"
+      },
+      {
+        "id": "b1_well",
+        "rect": [
+          9.4,
+          0,
+          4.4,
+          2.9
+        ],
+        "kind": "bwell"
+      }
+    ],
+    "spawn": [
+      8.8,
+      2.2
     ]
   }
 }

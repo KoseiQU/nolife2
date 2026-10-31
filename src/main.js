@@ -29,6 +29,9 @@ import { Hud } from './hud.js';
 import { HUD_TEXT } from './hud_text.js';
 
 const PARAMS = new URLSearchParams(location.search);
+// 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、扉は全部開けられる
+// (契約で「開かない」と決まっている地下の鉄扉は除く)、死亡・襲撃ムービーなし。?tour&floor=N(1〜7・RB・B1)で開始階を指定
+const TOUR = PARAMS.has('tour');
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -55,6 +58,11 @@ export const LOOK = {
   // 金属とガラスだけに弱い環境反射(ライトマップは拡散だけなので、無いと SUS が真っ黒に見える)
   metalEnv: 0.08,
   glassEnv: 0.06,
+  // P3a-2: 風除室の透明ガラス(MeshPhysicalMaterial)。粗さは指紋・汚れのマップ(build/tex/glass_smudge)が掛かる
+  glass: { roughness: 1.0, transmission: 1.0, thickness: 0.012, tint: 0xa8d8c8, tintDistance: 0.35 },
+  probeGain: 1.0,     // 風除室の静的環境(キューブカメラ)の映り込みの倍率(材質ごとの値は manifest.envProbe.intensity)
+  // 透過(transmission)の背景を描く解像度。1 だと風除室を見ている間 GPU が約 +8ms(内蔵ブラウザの計測)、0.5 で約 +2〜3ms
+  transmissionScale: 0.5,
 };
 
 const errBox = document.getElementById('err');
@@ -75,6 +83,7 @@ renderer.toneMappingExposure = LOOK.exposure;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;   // r187 で PCFSoft は廃止(警告が毎フレーム出る)
 renderer.info.autoReset = false;   // composer の全パス合計を1フレーム分として数える(render() 冒頭でリセット)
+renderer.transmissionResolutionScale = LOOK.transmissionScale;   // P3a-2: 風除室の物理ガラス
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -153,7 +162,7 @@ const manifests = {};
 await Promise.all(LEVELS.map(async (lv) => { manifests[lv] = await getJSON(`./build/floor_${lv}_manifest.json`); }));
 const pmrem = new THREE.PMREMGenerator(renderer);
 const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK });
+const world = new World({ scene, renderer, building, manifests, envTex, look: LOOK, tour: TOUR });
 let playerLevel = region.level;          // 階のキー(1..7 / 'RB')。開始は 4F
 const floorY = levelY(region.level);     // 4F(410・覗き穴・チェックポイントの階)
 world.setVisible([glbLevel(playerLevel)]);
@@ -189,6 +198,8 @@ function useNearestDoor() {
   } else {
     best.rattle = 0.25; lastUseLocked = true;   // 施錠: ノブだけ鳴る。ごく小さく揺らす
     if (best.node) best.node.rotation.y = best.sign * 0.004;
+    // P3a-2: 開かない扉はガチャ音(地下の鉄扉など)
+    enemyAudio.play('rattle', new THREE.Vector3((best.collision.minX + best.collision.maxX) / 2, levelY(playerLevel) + 1.0, (best.collision.minZ + best.collision.maxZ) / 2), 0.8);
   }
   return best.roomId;
 }
@@ -229,7 +240,7 @@ const doorApi = {
 function updateDoors(dt) {
   world.updateDoors(dt, [
     { level: playerLevel, x: player.pos.x, z: player.pos.z },
-    ...(ai && !ai.transit ? [{ level: ai.level, x: enemy.pos.x, z: enemy.pos.z }] : []),
+    ...(ai && !ai.transit && !TOUR ? [{ level: ai.level, x: enemy.pos.x, z: enemy.pos.z }] : []),
   ]);
   for (const d of doors) if (!d.operable && d.rattle <= 0 && d.node) d.node.rotation.y = 0;
 }
@@ -265,7 +276,8 @@ for (const f of building.floors) {
   }
 }
 const enemyAudio = new EnemyAudio(camera, enemy);
-const resumeAudio = () => enemyAudio.resume();
+// 見学モードでは管理人の声(ハミング)を鳴らさない(扉のガチャ音だけ使う)
+const resumeAudio = TOUR ? () => { if (enemyAudio.ctx.state !== 'running') enemyAudio.ctx.resume(); } : () => enemyAudio.resume();
 window.addEventListener('pointerdown', resumeAudio);
 window.addEventListener('keydown', resumeAudio);
 const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
@@ -282,7 +294,8 @@ const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getP
 // P2c: 襲撃ムービー(固定カメラ・顔の補助光・血飛沫)。血の合成は最終段(粒子の後)
 const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
 composer.addPass(movie.pass);
-if (PARAMS.has('noai')) ai.setState('SCRIPTED');
+if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
+else if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
 
 // ---------------------------------------------------------------- peephole (P2b)
@@ -476,8 +489,41 @@ function extraTarget() {
   if (b) return { kind: 'evbutton', floor: b.floor, items: [HUD_TEXT.ev.button(b.floor)] };
   if (elevator.facingPanel(camera, playerLevel)) return { kind: 'evpanel', items: [HUD_TEXT.ev.panel] };
   const m = stairs.hint;
-  if (m && !stairs.busy) return { kind: 'stair', items: [m.toKey === 'RB' ? HUD_TEXT.stair.roof : m.dir === 'up' ? HUD_TEXT.stair.up : HUD_TEXT.stair.down] };
+  if (m && !stairs.busy) return { kind: 'stair', items: [m.toKey === 'RB' ? HUD_TEXT.stair.roof : m.toKey === 'B1' ? HUD_TEXT.stair.basement : m.dir === 'up' ? HUD_TEXT.stair.up : HUD_TEXT.stair.down] };
   return null;
+}
+
+// ---------------------------------------------------------------- 地下への階段の湿った音(P3a-2・仮音: WebAudio 合成の水滴＋残響)
+// 地下への階段の区画(1F の踊り場)では遠く小さく、B1 では近く。録音素材は P4 で差し替え
+const DRIP = { t: 2.0, bus: null, count: 0 };
+function updateDrips(dt) {
+  const bs = building.stairs.find((s) => s.id === 'basement');
+  const [x0, z0, w, d] = bs.pos.concat(bs.size);
+  const p = player.pos;
+  const near = playerLevel === 'B1' || (playerLevel === 1 && p.x > x0 - 1.5 && p.x < x0 + w && p.z > z0 - 0.5 && p.z < z0 + d + 1.5);
+  if (!near) { DRIP.t = Math.min(DRIP.t, 1.0); return; }
+  DRIP.t -= dt;
+  if (DRIP.t > 0) return;
+  DRIP.t = 1.4 + Math.random() * 3.2;
+  const ctx = enemyAudio.ctx;
+  if (ctx.state !== 'running') return;
+  if (!DRIP.bus) {
+    const dry = ctx.createGain(); dry.gain.value = 1;
+    const delay = ctx.createDelay(1.0); delay.delayTime.value = 0.23;
+    const fb = ctx.createGain(); fb.gain.value = 0.42;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
+    dry.connect(ctx.destination); dry.connect(delay); delay.connect(lp); lp.connect(fb); fb.connect(delay); lp.connect(ctx.destination);
+    DRIP.bus = dry;
+  }
+  const now = ctx.currentTime, vol = playerLevel === 'B1' ? 0.2 : 0.06;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.frequency.setValueAtTime(1300 + Math.random() * 700, now);
+  o.frequency.exponentialRampToValueAtTime(420, now + 0.08);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(vol, now + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+  o.connect(g); g.connect(DRIP.bus); o.start(now); o.stop(now + 0.16);
+  DRIP.count++;
 }
 
 // ---------------------------------------------------------------- loop
@@ -491,14 +537,17 @@ function step(dt) {
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-  ai.update(dt);
-  enemy.update(dt, camera);
-  movie.update(dt);
+  if (!TOUR) {
+    ai.update(dt);
+    enemy.update(dt, camera);
+    movie.update(dt);
+  }
   updateDoors(dt);
   elevator.update(dt);
-  enemy.root.visible = ai.level === playerLevel && !ai.transit;
+  enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit;
   updateVisibility();
-  enemyAudio.update(dt);
+  if (!TOUR) enemyAudio.update(dt);
+  updateDrips(dt);
   updateDeath(dt);
   hud.update(dt);
   grainPass.uniforms.time.value = simTime;
@@ -589,6 +638,22 @@ window.__n2 = {
   setExposure(v) { renderer.toneMappingExposure = v; },
   setLightmapGain(g) { seenMats.forEach((m) => { m.lightMapIntensity = manifest.lightmap.intensity * g; }); },
 };
+window.__n2.tour = TOUR;
 window.__N2 = window.__n2;
+// 見学モード: 小さな表示と開始階(EV ホール前。屋上B・地下はその階の出入口の前)
+if (TOUR) {
+  const tag = document.createElement('div');
+  tag.id = 'tourTag';
+  tag.textContent = '見学モード';
+  tag.style.cssText = 'position:fixed;right:12px;top:10px;z-index:8;pointer-events:none;color:#b9b2a8;opacity:.55;font:500 11px/1 -apple-system,"Hiragino Sans",sans-serif;letter-spacing:.2em;';
+  document.body.appendChild(tag);
+  const fl = PARAMS.get('floor');
+  if (fl) {
+    const key = fl === 'RB' || fl === 'B1' ? fl : Math.min(7, Math.max(1, parseInt(fl, 10) || 4));
+    if (key === 'RB') await window.__n2.teleport('RB', ...building.roofB.spawn, -Math.PI / 2);
+    else if (key === 'B1') await window.__n2.teleport('B1', ...building.basement.spawn, Math.PI / 2);
+    else await window.__n2.teleport(key, 6.9, 20.7, Math.PI);   // EV ホール前で EV を向く
+  }
+}
 if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then((m) => m.run(window.__N2)).catch(showErr);

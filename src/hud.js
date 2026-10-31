@@ -143,6 +143,9 @@ export class Hud {
       else if (door.locked) { if (inside) items.push(TX.door.unlock); badge = TX.door.lockedBadge; }
       else { items.push(TX.door.open); if (inside) items.push(TX.door.lock); }
       kind = kind || 'door';
+    } else if (door && door.tryable) {
+      items.push(TX.door.open);   // P3a-2: 開かない扉(地下の鉄扉)。試すと「鍵がかかっている」
+      kind = kind || 'door';
     }
     if (!kind && this.extraTarget) { const t = this.extraTarget(); if (t) return t; }   // P3a: カゴの行き先ボタン・階段
     if (!kind && this.evPanel && Math.abs(this.evPanel.y - cam.position.y) < 1.6 && look(this.evPanel.x, this.evPanel.z, HUD.evReach) >= 0) { items.push(TX.ev.call); kind = 'ev'; }

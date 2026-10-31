@@ -27,6 +27,7 @@ export const HUD_TEXT = {
     up: { key: 'W', text: '上の階へ' },
     down: { key: 'W', text: '下の階へ' },
     roof: { key: 'W', text: '屋上へ' },
+    basement: { key: 'W', text: '地下へ' },     // P3a-2: 1F 食堂奥の地下への階段
   },
   controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　L 施錠　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },

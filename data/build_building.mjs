@@ -87,10 +87,18 @@ const EAST_BLK_Z0 = SOUTH_CORR_Z0 - ROOM_D;  // 14.3
 // 旧データは南棟の東端のさらに東(x=25.2〜)に置いていた(廊下が約9m長すぎた)。
 const EAST_BLK_X0 = EAST_COL_X0 + 3 * ROOM_W + 0.8;  // 17.3
 
-// ---- 北階段(西棟北端東側・1〜3Fのみ) ----
-// 東西方向のU字(入口=西面、中廊下に接続)。z=0..2.9 で居室グリッドに整合
-const NST_RECT = [EAST_COL_X0, 0, 6.0, ROOM_W];
-const NST_DOOR = [EAST_COL_X0, 0.725];  // 入口パッド(北半分)中心
+// ---- 北階段(P3a-2 2026-11-01 ユーザー訂正: 屋外の鉄骨階段・2F/3F→1F の地面) ----
+// 2F・3F: 縦廊下の北端の東壁(213/313 の北)に鉄扉 → 屋外の通路(213/313 の北、x=7.8..13.8)→ 西棟の東の外にある
+// 鉄骨の折返し階段(x=13.8..19.4。主外階段と同じ部品)。下は 1F の地面(建物の北東の屋外。建物へ戻る入口はない)。
+// 1F の屋内からは北階段へつながらない(旧 1F の扉は撤去。その位置は地下への階段=BST)。
+const NST_GALLERY = [EAST_COL_X0, 0, WEST_WING_X1 - EAST_COL_X0, ROOM_W];   // 2F・3F の屋外通路 [7.8, 0, 6.0, 2.9]
+const NST_RECT = [WEST_WING_X1, 0, 5.6, ROOM_W];                               // 鉄骨階段の箱 [13.8, 0, 5.6, 2.9]
+const NST_DOOR = [EAST_COL_X0, 0.725];  // 鉄扉(縦廊下の東壁・北端。旧北階段の扉と同じ位置)
+// ---- 地下への階段(P3a-2 異世界要素: 1F 食堂奥の図面の階段記号の位置=旧北階段の 1F) ----
+// 屋内の折返し階段で 1 層下り、踊り場(階キー 'B1')の西壁に施錠された鉄扉(開かない。地下の中身は P5)。
+const BST_RECT = [EAST_COL_X0, 0, 6.0, ROOM_W];   // [7.8, 0, 6.0, 2.9]
+const BST_OPEN = [EAST_COL_X0, 1.45];             // 北の通路(縦廊下の延長)からの開口(扉なし)
+const BST_DOOR = [EAST_COL_X0, 1.45];             // 地下の踊り場の施錠扉(西壁)
 
 // =========================================================================
 // 階別インベントリ (DESIGN.md §4 の表 = 図面が正)
@@ -229,14 +237,21 @@ function coreRooms(level) {
       connects: level < 7 ? [level, level + 1] : [level],
     });
   }
-  // 北階段(1〜3F)。扉西=中廊下側。
-  if (level >= 1 && level <= 3) {
+  // 北階段(P3a-2: 屋外の鉄骨階段)。2F・3F は鉄扉(縦廊下側=西)→屋外通路→階段。1F は地面だけ(部屋も扉も無い)
+  if (level === 2 || level === 3) {
     rooms.push({
-      id: `NST${level}`, kind: 'stair',
-      rect: [...NST_RECT],
-      // P3a: 屋内階段の防火扉(鉄扉・施錠なし・開閉可)
+      id: `NST${level}`, kind: 'stair', external: true,
+      rect: [NST_GALLERY[0], 0, NST_GALLERY[2] + NST_RECT[2], ROOM_W],   // 通路＋階段の箱(外周の当たり)
       door: { pos: [...NST_DOOR], facing: 'W', locked: false, steel: true, operable: true },
-      connects: level < 3 ? [level, level + 1] : [level],
+      connects: level < 3 ? [level - 1, level, level + 1] : [level - 1, level],
+    });
+  }
+  // 地下への階段(1F)。北の通路から扉なしの開口で入る
+  if (level === 1) {
+    rooms.push({
+      id: 'BST', kind: 'stair',
+      rect: [...BST_RECT],
+      openings: [{ side: 'W', pos: [...BST_OPEN], width: 1.3 }],
     });
   }
   return rooms;
@@ -363,9 +378,9 @@ const MST_GEOM = (() => {
     mouthDepth: 0.6,                               // 段の手前のこの奥行に入って進むと上り下り
   };
 })();
-// 北階段(屋内・1〜3F)。流れは東西(x)。扉は西面(縦廊下)。北レーン=下り(扉の正面)、南レーン=上り
-const NST_GEOM = (() => {
-  const [x, z, w, d] = NST_RECT;
+// 北階段(P3a-2: 屋外の鉄骨・1〜3F)。流れは東西(x)。西端が階の踊り場(2F・3F は屋外通路から入る、1F は地面)。
+// 北レーン=下り、南レーン=上り
+const stairGeomX = ([x, z, w, d]) => {
   const s0 = x + 1.6, s1 = s0 + STAIR_TREADS * STAIR_TREAD;
   return {
     axis: 'x', landing: [x, z, s0 - x, d], mid: [s1, z, x + w - s1, d], s0, s1,
@@ -373,7 +388,10 @@ const NST_GEOM = (() => {
     guard: [s0 + 0.3, z, x + w - s0 - 0.3, d],
     mouthDepth: 0.6,
   };
-})();
+};
+const NST_GEOM = stairGeomX(NST_RECT);
+// 地下への階段(屋内・1F→B1)。北の通路から西端の踊り場に入り、北レーンを下る(B1 には南レーンで着く)
+const BST_GEOM = stairGeomX(BST_RECT);
 
 // 階の隠れ場所(管理人の潜伏 LURK)。4F は P0 の 4 か所(src/enemy_ai.js の HIDE_SPOTS と同一)を先頭に保つ
 function hideSpotsFor(level, zTop, scEnd) {
@@ -421,6 +439,23 @@ function buildRoofB(f7) {
   };
 }
 
+// 地下の踊り場(P3a-2): 階キー 'B1'(1F 床 − 階高)。当たりは walls.js をそのまま使える「疑似階」。
+// 部屋 = 階段の箱そのもの(4 壁の内面が 1F の BST と同じ)。西壁の鉄扉は施錠(開かない・P5 で中身を決める)。
+// 見た目は 1F の GLB に含める(build_floor.py build_basement_stair)。
+function buildBasement() {
+  return {
+    key: 'B1', baseLevel: 1, y: -FLOOR_H,
+    footprint: [[...BST_RECT]],
+    rooms: [{ id: 'B1DOOR', kind: 'stair', rect: [...BST_RECT], door: { pos: [...BST_DOOR], facing: 'W', locked: true, steel: true, sealed: true } }],
+    fillWalls: [], obstacles: [],
+    air: [
+      { id: 'b1_landing', rect: [...BST_GEOM.landing], kind: 'room' },
+      { id: 'b1_well', rect: [BST_GEOM.s0, BST_RECT[1], BST_RECT[0] + BST_RECT[2] - BST_GEOM.s0, BST_RECT[3]], kind: 'bwell' },
+    ],
+    spawn: [EAST_COL_X0 + 1.0, 2.2],
+  };
+}
+
 function shellFor(level, inv, scEnd, rooms) {
   const zTop = level === 1 ? 11.6 : (level <= 6 ? westZ0Of(level, inv) : null);
   const air = [];
@@ -440,13 +475,18 @@ function shellFor(level, inv, scEnd, rooms) {
   A('landing', MST_GEOM.landing, 'outdoor');
   A('mst_well', [MST_RECT[0], MST_GEOM.s0, MST_RECT[2], MST_RECT[1] + MST_RECT[3] - MST_GEOM.s0], 'well', { outdoor: true });
   if (level <= 3) {
-    A('nst_landing', NST_GEOM.landing, 'stair');
-    A('nst_well', [NST_GEOM.s0, NST_RECT[1], NST_RECT[0] + NST_RECT[2] - NST_GEOM.s0, NST_RECT[3]], 'well');
+    // 北階段(屋外の鉄骨)。2F・3F は鉄扉の外に屋外通路(gallery)。1F は地面(ground)
+    if (level >= 2) A('nst_gallery', NST_GALLERY, 'gallery', { outdoor: true });
+    A('nst_landing', NST_GEOM.landing, level === 1 ? 'ground' : 'outdoor', { outdoor: true });
+    A('nst_well', [NST_GEOM.s0, NST_RECT[1], NST_RECT[0] + NST_RECT[2] - NST_GEOM.s0, NST_RECT[3]], 'well', { outdoor: true });
   }
   if (level === 1) {
     A('dining', [0, 4.35, WEST_WING_X1, 11.6 - 4.35], 'room');
     A('north_passage', [WEST_CORR_X0, 0, CORR_W, 4.35], 'corridor');
-    A('north_nook', [EAST_COL_X0, NST_RECT[3], WEST_WING_X1 - EAST_COL_X0, 4.35 - NST_RECT[3]], 'corridor');
+    A('north_nook', [EAST_COL_X0, BST_RECT[3], WEST_WING_X1 - EAST_COL_X0, 4.35 - BST_RECT[3]], 'corridor');
+    // 地下への階段(1F の部分): 踊り場は館内と同じ仕上げ、下り口から先は床なし(bwell。天井は 1F の天井高)
+    A('bst_landing', BST_GEOM.landing, 'room');
+    A('bst_well', [BST_GEOM.s0, BST_RECT[1], BST_RECT[0] + BST_RECT[2] - BST_GEOM.s0, BST_RECT[3]], 'bwell');
     A('theater', [C1F.theater[0], SOUTH_ROOM_Z0, C1F.theater[1] - C1F.theater[0], ROOM_D], 'theater');
     A('mail', [C1F.mail[0], SOUTH_ROOM_Z0, C1F.mail[1] - C1F.mail[0], ROOM_D], 'lobby');
     A('lobby', [C1F.lobby[0], SOUTH_ROOM_Z0, C1F.lobby[1] - C1F.lobby[0], C1F.windbreakZ - SOUTH_ROOM_Z0], 'lobby');
@@ -466,9 +506,17 @@ function shellFor(level, inv, scEnd, rooms) {
   // 灯具(廊下の常夜灯は corridor.path から Blender 側で 6.5m おきに置く=P0 と同じ。ここはそれ以外)
   const lights = [];
   lights.push({ kind: 'bracket', pos: [WEST_CORR_X0 - 0.06, SOUTH_CORR_Z0 + 0.3], y: 2.3, facing: 'W' });   // 外階段の踊り場(鉄扉の脇の壁)
-  if (level <= 3) lights.push({ kind: 'bracket', pos: [EAST_COL_X0 + 0.8, 0.06], y: 2.3, facing: 'S' });  // 北階段の踊り場
+  // 北階段(屋外): 2F・3F は通路の 213/313 の北壁、1F は地面の脇の建物の東壁に壁付け灯
+  if (level === 2 || level === 3) lights.push({ kind: 'bracket', pos: [WEST_WING_X1 - 0.9, ROOM_W - 0.06], y: 2.3, facing: 'N' });
   if (level === 1) {
-    for (const [x, z] of [[16.6, 23.4], [18.6, 23.4], [17.6, 26.7], [14.8, 24.2], [14.8, 26.9], [15.8, 21.2], [18.4, 21.2]]) lights.push({ kind: 'down', pos: [x, z] });
+    lights.push({ kind: 'bracket', pos: [WEST_WING_X1 + 0.06, 1.45], y: 2.3, facing: 'E' });
+    lights.push({ kind: 'down', pos: [EAST_COL_X0 + 0.8, 1.45] });   // 地下への階段の踊り場(1F)
+  }
+  if (level === 1) {
+    // P3a-2: 風除室は2列×2(写真 entrance_windbreak・entrance_outside)、ロビーは2灯、メールコーナー2灯、ロビー前の廊下2灯
+    // 夜でも明るい(写真は夜の撮影): ロビー・風除室・メールコーナーの灯具は廊下の常夜灯より強い
+    for (const [x, z] of [[16.6, 23.4], [18.6, 23.4], [16.5, 26.0], [18.7, 26.0], [16.5, 27.5], [18.7, 27.5], [14.8, 24.2], [14.8, 26.9]]) lights.push({ kind: 'down', pos: [x, z], energy: 4.5 });
+    for (const [x, z] of [[15.8, 21.2], [18.4, 21.2]]) lights.push({ kind: 'down', pos: [x, z] });
   }
   // 非常口サイン(鉄扉・防火扉・共用室の出口の上。屋内側)
   const exits = [];
@@ -533,6 +581,8 @@ function buildFloor(level) {
   }
   // 屋外の外階段踊り場(西外壁の外側 x<0)。屋外の歩行可能領域(§2)。
   footprint.push([...MST_RECT]);
+  // P3a-2: 北階段の鉄骨の箱(西棟の東の外)。1F はその地面(建物の北東の屋外。建物へ戻る入口はない)
+  if (level <= 3) footprint.push([...NST_RECT]);
 
   // フィラー壁: 無し(EVは縦廊下軸上に配置し隙間が出ない)。
   const fillWalls = [];
@@ -750,8 +800,7 @@ function buildNavGraph(floors) {
     addEdge(`${lv}:dMST${lv}`, `${lv + 1}:dMST${lv + 1}`, 'stair');
   }
   addEdge('7:dEV7', '8:dEV8', 'elevator'); // 幻の8FへはEVのみ(外階段は8Fに無い)
-  addEdge('1:dNST1', '2:dNST2', 'stair');
-  addEdge('2:dNST2', '3:dNST3', 'stair');
+  addEdge('2:dNST2', '3:dNST3', 'stair');   // P3a-2: 北階段は屋外(1F は地面だけで扉が無い)
 
   return { nodes, edges };
 }
@@ -968,12 +1017,19 @@ function build() {
       { id: 'main', room: 'MST', external: true, pos: [MST_RECT[0], MST_RECT[1]], size: [MST_RECT[2], MST_RECT[3]], door: [...EXT_DOOR_POS], levels: [1, 7],
         stops: [1, 2, 3, 4, 5, 6, 7, 'RB'],
         geom: { ...MST_GEOM, rise: STAIR_RISE, treads: STAIR_TREADS, tread: STAIR_TREAD } },
-      { id: 'north', room: 'NST', pos: [NST_RECT[0], NST_RECT[1]], size: [NST_RECT[2], NST_RECT[3]], door: [...NST_DOOR], levels: [1, 3],
+      // north = 北階段(P3a-2: 屋外の鉄骨。2F・3F の鉄扉→屋外通路→階段、下は 1F の地面)。area = 上下の階を見せる範囲(通路込み)
+      { id: 'north', room: 'NST', external: true, pos: [NST_RECT[0], NST_RECT[1]], size: [NST_RECT[2], NST_RECT[3]], door: [...NST_DOOR], levels: [1, 3],
+        area: [NST_GALLERY[0], NST_GALLERY[1], NST_GALLERY[2] + NST_RECT[2], NST_RECT[3]],
         stops: [1, 2, 3],
         geom: { ...NST_GEOM, rise: STAIR_RISE, treads: STAIR_TREADS, tread: STAIR_TREAD } },
+      // basement = 地下への階段(P3a-2 異世界要素)。1F 食堂奥→B1(踊り場と施錠された鉄扉だけ)
+      { id: 'basement', room: 'BST', pos: [BST_RECT[0], BST_RECT[1]], size: [BST_RECT[2], BST_RECT[3]], levels: ['B1', 1],
+        stops: ['B1', 1],
+        geom: { ...BST_GEOM, rise: STAIR_RISE, treads: STAIR_TREADS, tread: STAIR_TREAD } },
     ],
     navGraph,
     roofB,
+    basement: buildBasement(),
   };
 
   // ---- 検算1: 居室数 ----
@@ -1107,6 +1163,17 @@ function build() {
   //  (b) 中央の島(複製管理人室)の内部へは、回廊から「1つの開口」だけで入れる
   //      (flood-fillの格子で、島内部⇔回廊 の通過セルが北辺開口の1箇所のみ)。
   const loopInfo = loopAssert8F(phantom, navGraph);
+  // ---- 検算7(P3a-2): 地下の踊り場が閉じている(施錠扉の向こうへ出られない)・北階段は 1F に扉が無い ----
+  reachedPerFloor.B1 = floodFillCheck({ level: 'B1', ...building.basement }, [EAST_COL_X0 + 1.0, 2.2]);
+  {
+    const f1 = floors.find((f) => f.level === 1);
+    if (f1.rooms.some((r) => r.id.startsWith('NST'))) throw new Error('ASSERT失敗: 1F に北階段の部屋(扉)が残っている');
+    if (!f1.rooms.some((r) => r.id === 'BST')) throw new Error('ASSERT失敗: 1F に地下への階段が無い');
+    for (const lv of [2, 3]) {
+      const r = floors.find((f) => f.level === lv).rooms.find((rr) => rr.id === 'NST' + lv);
+      if (!r || !r.door.steel || !r.external) throw new Error(`ASSERT失敗: ${lv}F の北階段の鉄扉が無い`);
+    }
+  }
   // ---- 検算6(P3a): 屋上B の外周が閉じている(踊り場から屋根へ出られ、外へは落ちない) ----
   reachedPerFloor.RB = floodFillCheck({ level: 'RB', ...roofB, rooms: [] }, [MST_RECT[0] + 1.7, SOUTH_CORR_Z0 + 0.7]);
   {

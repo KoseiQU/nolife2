@@ -61,11 +61,14 @@ export function buildAIGraph(building) {
     // 外階段の踊り場(鉄扉の向こう)
     add(lv, 'L', 4.6, 21.2);
     doorLink(lv, nodeId(lv, 'J'), nodeId(lv, 'L'), 'MST' + lv);
-    // 北階段(1〜3F)・1F の共用部
-    if (lv <= 3) add(lv, 'NS', 8.7, 0.725);
+    // 北階段(P3a-2: 屋外の鉄骨。1〜3F の踊り場。1F は地面で、建物の中からは歩いて行けない)・1F の共用部
+    if (lv <= 3) {
+      const ns = building.stairs.find((s) => s.id === 'north');
+      add(lv, 'NS', ns.geom.landing[0] + ns.geom.landing[2] / 2, ns.geom.landing[1] + ns.geom.landing[3] / 2);
+    }
     if (lv === 1) {
       add(1, 'DN', 6.9, 9.0); add(1, 'NP', 6.9, 1.2);
-      doorLink(1, top, nodeId(1, 'DN'), 'DINING'); link(nodeId(1, 'DN'), nodeId(1, 'NP')); doorLink(1, nodeId(1, 'NP'), nodeId(1, 'NS'), 'NST1');
+      doorLink(1, top, nodeId(1, 'DN'), 'DINING'); link(nodeId(1, 'DN'), nodeId(1, 'NP'));
       add(1, 'TH', 9.0, 24.6); doorLink(1, nearestH(9.0), nodeId(1, 'TH'), 'THEATER');
       add(1, 'LB', 17.6, 23.5); link(nearestH(17.6), nodeId(1, 'LB'));
       add(1, 'WB', 17.6, 26.6); doorLink(1, nodeId(1, 'LB'), nodeId(1, 'WB'), 'ENTRANCE');
