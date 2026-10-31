@@ -165,6 +165,14 @@ data/building.json
 ## 8. 検証環境の罠
 fable-method §7（rAF停止／keydown-keyupペア／ESMキャッシュ／ポインタロック不可／non-ASCII識別子禁止）を各委譲プロンプトに貼る。Blender関連の追加：`-b` ヘッドレスではGPUベイクにMetalデバイス指定が要る／ベイク結果は必ずPNGを目視／bpyのバージョン差でAPIが変わる（導入版：**Blender 5.2.3 LTS／bpy Python 3.13**、`/Applications/Blender.app/Contents/MacOS/Blender -b` でヘッドレス実行確認済み 2026-10-31）。
 
+## 10. 再開手順（コンテキスト圧縮後に読む）
+1. 本書 §7 フェーズ表で現在地を確認し、§9 決定ログの末尾 10 行を読む
+2. サーバー：`python3 -m http.server 8001`（プロジェクト直下）→ http://localhost:8001/ 。更新後は Cmd+Shift+R（ESM のヒューリスティックキャッシュ）。`?test=enemy` で決定的テスト、`?noai` で管理人停止、`window.__N2` にデバッグ API（`pump`・`enemy.place/setState/play/face`・`testResult`）
+3. 機械テスト：`node tools/check_glb.mjs`／`node tools/check_enemy.mjs`／ブラウザ `?test=enemy`
+4. 再生成：建物 `tools/build.sh`、敵 `tools/build_enemy_final.sh`（MPFB→07）→ `tools/build_enemy_rigged.sh`（Mixamo FBX→`build/enemy/07_rigged.glb`）。`build/enemy/` と `ref/` は gitignore（ローカル資産。消えたら `docs/enemy-candidates/*/NOTES.md` の手順で再生成、Mixamo のアニメは `build/enemy/mixamo/*.fbx`）
+5. 引き継ぎ文書：`docs/enemy-candidates/p1b/NOTES.md`（敵の作り）、`p2a/NOTES.md`（GLB 仕様）、`docs/p2b〜p2d/NOTES.md`（AI・音・演出の調整値、録音差し替えのファイル名体系）
+6. 体制：fable-method。メイン＝契約と監査、Opus サブエージェント逐次。P3 は**ユーザー確認後に着手**（元の構造を活かしつつ大きく変更する予定）
+
 ## 9. 決定ログ
 - 2026-10-31 方針確定：自由移動／実写に近い光＋格段に良い3D（特に敵）／私的利用／ブラウザ／104室・出入り約30室／敵＝人間の管理人／幽霊会話なし／物語保留／チェックポイント再開／声はユーザー録音で後差し替え／Blender導入（公式DMG）
 - 2026-10-31 P0 目視合格（ユーザー判定A）。追加要望「EVのデザインだけ変更」→ 実物写真を会話ログから復元して `ref/photos/` に保存、§2.1/§2.2 を追加し P0b を挿入。廊下の天井・床・器具の実物化は P3 で `corridor_to_ev_4F.jpg` を正として行う
