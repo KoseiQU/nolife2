@@ -5,7 +5,9 @@
 //  2) 各階の扉数(居室)= 図面の号室数。GLB の号室プレート・EV 扉・外階段の鉄扉が結び付いている
 //  3) EV: 4F で呼ぶ→カゴが来て開く→歩いて乗る→7 を押す→7F で開く→歩いて降りる。閉じた扉は通れない
 //  4) 外階段: 4F の鉄扉→踊り場→上る(5F,6F,7F,屋上B)→屋上を歩く(落ちない)→下る(…→1F)。段の手前の当たりで階段へ踏み外さない
-//  5) 北階段: 1F→2F→3F→2F→1F
+//  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
+//  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
+//  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い・4F の施錠扉が開く
 //  6) 1F 風除室: 内側の自動ドアは近づくと開き、外側(正面玄関)は閉じたまま
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
 
@@ -33,6 +35,30 @@ export async function run(N) {
     return false;
   }
   const pos = () => ({ x: +N.player.pos.x.toFixed(2), y: +N.player.pos.y.toFixed(2), z: +N.player.pos.z.toFixed(2), level: N.level });
+  if (N.tour) {
+    // 見学モード(?test=building&tour): 管理人が scene に無い・AI が動かない・4F の施錠扉(居室)が開けられる・地下の鉄扉は開かない
+    await T('9_tour_mode', async () => {
+      const inScene = !!N.enemyObj.root.parent;
+      const st0 = N.ai.stats();
+      await N.teleport(4, 6.9, 13.05, Math.PI / 2); await settle('3,4,5');
+      N.pump(DT, 120, false);
+      const st1 = N.ai.stats();
+      const d = N.doorApi.get('407');
+      const bound = !!d.node;
+      N.setView(7.2, d.pos[1], -Math.PI / 2, 0); N.pump(DT, 2, false);
+      const hint = N.hudState().hint;
+      tap('KeyE'); N.pump(DT, 90, false);
+      const opened = N.doorApi.isOpen('407') && d.node.rotation.y !== 0;
+      const b1 = N.doorApi.get('B1DOOR');
+      const tag = document.getElementById('tourTag');
+      const pass = !inScene && st0.state === 'SCRIPTED' && JSON.stringify(st0.pos) === JSON.stringify(st1.pos) && bound && hint.includes('開ける') && opened
+        && !b1.operable && !!tag && tag.textContent === '見学モード';
+      return { pass, enemyInScene: inScene, aiState: st0.state, aiMoved: JSON.stringify(st0.pos) !== JSON.stringify(st1.pos), door407: { bound, hint, opened }, b1Operable: b1.operable, tag: tag && tag.textContent };
+    });
+    N.testResult = out;
+    console.log('[test_building]', JSON.stringify(out));
+    return out;
+  }
   // 管理人を止める(階の移動テストの邪魔をしない)
   N.ai.setState('SCRIPTED', { force: true });
   N.enemy.place(6.9, 19.0, Math.PI);
@@ -175,20 +201,71 @@ export async function run(N) {
     return { pass, doorHint: hint, doorOpen, onLanding, guard: { z: +guardZ.toFixed(2), level: guardLevel }, ups, roof: { eastX: +roofX.toFixed(2), end: roofP, insideFootprint: inside }, downs };
   });
 
+  // 階段の口に立って段の方を向き W(上り下りが終わるまで)。st = building.stairs の要素(axis x: 流れは +x)
+  async function stairGo(id, dir) {
+    const st = N.building.stairs.find((s) => s.id === id);
+    const g = st.geom;
+    const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
+    const from = N.level;
+    N.setView(g.s0 - 0.3, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); N.pump(DT, 1, false);
+    const hint = N.hudState().hint;
+    key('KeyW', true); let t = 0;
+    while (N.level === from && t < 20) { N.pump(DT, 1, false); t += DT; }
+    key('KeyW', false); N.pump(DT, 2, false);
+    for (let i = 0; i < 100 && N.world.loadedLevels().indexOf(N.level === 'B1' ? 1 : N.level) < 0; i++) await sleep(50);
+    return { from, to: N.level, y: +N.player.pos.y.toFixed(2), x: +N.player.pos.x.toFixed(2), z: +N.player.pos.z.toFixed(2), hint };
+  }
+  const walk = (yaw, frames, x = N.player.pos.x, z = N.player.pos.z) => { N.setView(x, z, yaw, 0); key('KeyW', true); N.pump(DT, frames, false); key('KeyW', false); N.pump(DT, 2, false); return pos(); };
+
   await T('5_north_stairs', async () => {
-    await N.teleport(1, 8.6, 1.45, -Math.PI / 2); await settle('1,2');
-    const g = N.building.stairs.find((s) => s.id === 'north').geom;
-    const go = async (dir) => {
-      const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
-      const from = N.level;
-      N.setView(g.s0 - 0.3, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); N.pump(DT, 1, false);
-      key('KeyW', true); let t = 0;
-      while (N.level === from && t < 20) { N.pump(DT, 1, false); t += DT; }
-      key('KeyW', false); N.pump(DT, 2, false);
-      return { from, to: N.level, y: +N.player.pos.y.toFixed(2) };
-    };
-    const r = [await go('up'), await go('up'), await go('down'), await go('down')];
-    return { pass: r.map((x) => x.to).join(',') === '2,3,2,1' && Math.abs(N.player.pos.y) < 1e-3, moves: r };
+    // P3a-2: 北階段は屋外の鉄骨。3F の縦廊下の北端の鉄扉→屋外通路→踊り場→3F→2F→1F の地面(建物へは戻れない)→2F→3F
+    await N.teleport(3, 6.9, 0.725, -Math.PI / 2); await settle('2,3,4');
+    N.pump(DT, 2, false);
+    const doorHint = N.hudState().hint;
+    tap('KeyE'); N.pump(DT, 60, false);
+    const doorOpen = N.doorApi.isOpen('NST3');
+    const through = walk(-Math.PI / 2, 80, 6.9, 0.725);            // 鉄扉を抜けて屋外通路へ
+    // 通路を東へ(南寄り=上りレーンの線を歩く。3F は最上階なので上りの口は無く、下りの口を踏まない)、段の手前の当たりで止まる
+    const gallery = walk(-Math.PI / 2, 360, through.x, 2.2);
+    const st = N.building.stairs.find((s) => s.id === 'north');
+    const onLanding = through.x > 7.9 && gallery.x > st.pos[0] && gallery.x < st.geom.s0 + 0.35 && gallery.level === 3 && Math.abs(gallery.y - 5.8) < 1e-3;
+    const d1 = await stairGo('north', 'down');
+    const d2 = await stairGo('north', 'down');
+    const ground = pos();
+    // 地面: 西(建物の壁)・北/南(柵)・東(段の下)へ歩いても小さな矩形から出ない
+    const w = walk(Math.PI / 2, 120);
+    const e = walk(-Math.PI / 2, 180, 14.6, 1.45);
+    const n = walk(0, 120, 14.6, 1.45);
+    const so = walk(Math.PI, 120, 14.6, 1.45);
+    const inGround = [w, e, n, so].every((p) => p.level === 1 && p.x > st.pos[0] && p.x < st.geom.s0 + 0.35 && p.z > 0 && p.z < 2.9 && Math.abs(p.y) < 1e-3);
+    const u1 = await stairGo('north', 'up');
+    const u2 = await stairGo('north', 'up');
+    const noDoor1F = !N.doorApi.get('NST1');
+    const pass = doorHint.includes('開ける') && doorOpen && onLanding && d1.to === 2 && d2.to === 1 && Math.abs(ground.y) < 1e-3
+      && ground.x > st.pos[0] && inGround && u1.to === 2 && u2.to === 3 && noDoor1F && Math.abs(N.player.pos.y - 2 * 2.9) < 1e-3;
+    return { pass, doorHint, doorOpen, gallery, moves: [d1, d2, u1, u2].map((m) => `${m.from}->${m.to} y=${m.y}`), ground, groundWalls: { w, e, n, so }, noDoor1F };
+  });
+
+  await T('5b_basement_stairs', async () => {
+    // P3a-2: 1F 食堂奥(北の通路)→地下への階段の踊り場→下る→B1 の踊り場→施錠された鉄扉(開かない・「鍵がかかっている」＋ガチャ音)→上って 1F
+    await N.teleport(1, 6.9, 1.45, -Math.PI / 2); await settle('1,2');
+    const landing = walk(-Math.PI / 2, 60, 6.9, 1.45);
+    const down = await stairGo('basement', 'down');
+    const atB1 = N.level === 'B1' && Math.abs(N.player.pos.y + 2.9) < 1e-3;
+    const door = N.doorApi.get('B1DOOR');
+    N.setView(8.75, 1.45, Math.PI / 2, 0); N.pump(DT, 2, false);
+    const hint = N.hudState().hint;
+    const nLog = N.enemyAudio.log.length;
+    tap('KeyE'); N.pump(DT, 30, false);
+    const toast = N.hudState().toast;
+    const rattle = N.enemyAudio.log.slice(nLog).some((l) => l.name === 'rattle');
+    const stillClosed = !N.doorApi.isOpen('B1DOOR') && door.angle === 0 && !door.collision.disabled;
+    const push = walk(Math.PI / 2, 120, 8.75, 1.45);                // 扉へ向かって歩いても抜けない
+    const blocked = push.x > 7.8 + 0.2 && push.level === 'B1';
+    const up = await stairGo('basement', 'up');
+    const pass = landing.x > 7.9 && down.to === 'B1' && down.hint.includes('地下') && atB1 && hint.includes('開ける') && toast.includes('鍵がかかっている')
+      && rattle && stillClosed && blocked && up.to === 1 && Math.abs(N.player.pos.y) < 1e-3;
+    return { pass, landing, down, b1: { atB1, doorHint: hint, toast, rattle, stillClosed, push }, up };
   });
 
   await T('6_entrance_autodoors', async () => {
