@@ -53,7 +53,7 @@ function sideGaps(room, side) {
   const gaps = [];
   const horiz = side === 'N' || side === 'S';
   if (room.door && room.door.facing === side) {
-    gaps.push({ center: horiz ? room.door.pos[0] : room.door.pos[1], width: GEOM.DOOR_W });
+    gaps.push({ center: horiz ? room.door.pos[0] : room.door.pos[1], width: doorWidth(room) });
   }
   for (const o of room.openings || []) {
     if (o.side === side) {
@@ -62,6 +62,9 @@ function sideGaps(room, side) {
   }
   return gaps;
 }
+
+// 扉の開口幅(P3a: 風除室の自動ドアなど door.width を持つ扉。既定は GEOM.DOOR_W)
+export function doorWidth(room) { return (room.door && room.door.width) || GEOM.DOOR_W; }
 
 // 部屋の4壁
 function roomWallBoxes(room, boxes) {
@@ -166,10 +169,11 @@ function doorBlockerBoxes(floor, boxes) {
     if (!room.door || !(room.door.locked || room.door.steel || room.door.common)) continue;
     const [px, pz] = room.door.pos;
     const horiz = room.door.facing === 'N' || room.door.facing === 'S';
+    const dw = doorWidth(room);
     boxes.push({
       cx: px, cz: pz,
-      w: horiz ? GEOM.DOOR_W : T,
-      d: horiz ? T : GEOM.DOOR_W,
+      w: horiz ? dw : T,
+      d: horiz ? T : dw,
       kind: 'door',
       roomId: room.id,
     });

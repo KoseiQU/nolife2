@@ -70,15 +70,22 @@ const EXT_DOOR_POS = [WEST_CORR_X0, HCORR_CZ];              // [6.0, 21.2] facin
 //   北辺は建物の横廊下ライン(z=20.3)に flush、深さ2.8mは南へ延ばす(z=20.3..23.1。
 //   x=2.6..6.0 の屋外空間でEVシャフト(x≥6.0)・南棟居室(x≥7.8)と重ならない)。
 const EXT_LANDING_W = 3.4;
-const EXT_LANDING_D = 2.8;
+// P3a(図面照合): 外階段の箱は図面で EV の西 x≈2.6..6.0、z≈20.3..24.8(角が欠けた矩形)。旧 2.8m は踊り場だけ
+// だったので、折返し階段(2レーン)と中間踊り場まで含む 4.5m に延ばす。屋外の歩ける床は北端の踊り場(1.45m)だけで、
+// 階段の上り下りは src/stairs.js の移動(STAIR_GEOM)が担う。
+const EXT_LANDING_D = 4.5;
 const MST_RECT = [WEST_CORR_X0 - EXT_LANDING_W, SOUTH_CORR_Z0, EXT_LANDING_W, EXT_LANDING_D]; // [2.6, 20.3, 3.4, 2.8]
 const MST_DOOR = [...EXT_DOOR_POS]; // 鉄扉 = 主階段の「入口」(nav/stairFronts はこの door.pos を使う)
 
 // ---- 南棟居室・東ブロックの開始x(縦廊下の東=7.8から。EVホールと重ならない) ----
 const SOUTH_ROOM_X0 = EAST_COL_X0; // 7.8
 
-// ---- 東ブロック(南棟東端の北側。居室北面・南側廊下接続) ----
+// ---- 東ブロック(南棟の東半分の北側。居室北面・南側廊下接続) ----
 const EAST_BLK_Z0 = SOUTH_CORR_Z0 - ROOM_D;  // 14.3
+// P3a(図面照合 2026-10-31): 図面 1〜6F では東ブロック(222-220 / 419-417 等)は南棟の東半分の真北に載り、
+// 西端は南棟の4室目の西端より約0.8m東(図面 2-3F: 南棟西端から 150px ≒ 3.27室)。東端は南棟東端より約0.8m東に出る。
+// 旧データは南棟の東端のさらに東(x=25.2〜)に置いていた(廊下が約9m長すぎた)。
+const EAST_BLK_X0 = EAST_COL_X0 + 3 * ROOM_W + 0.8;  // 17.3
 
 // ---- 北階段(西棟北端東側・1〜3Fのみ) ----
 // 東西方向のU字(入口=西面、中廊下に接続)。z=0..2.9 で居室グリッドに整合
@@ -188,9 +195,9 @@ function southRoomsX1(southCount) {
   return SOUTH_ROOM_X0 + (southCount > 0 ? southCount : 6) * ROOM_W;
 }
 
-// 東ブロック: 南棟東端の北側に面一で接続(§2「ずれのない完全なL字」)。西→東。
-function eastRooms(ids, southCount) {
-  const xStart = southRoomsX1(southCount);
+// 東ブロック: 南棟の東半分の北側(P3a 図面照合)。西→東。5F/6F は西の2室ぶんだけ(東の1室ぶんは屋根)。
+function eastRooms(ids) {
+  const xStart = EAST_BLK_X0;
   return ids.map((id, i) => {
     const x = xStart + i * ROOM_W;
     return {
@@ -227,14 +234,26 @@ function coreRooms(level) {
     rooms.push({
       id: `NST${level}`, kind: 'stair',
       rect: [...NST_RECT],
-      door: { pos: [...NST_DOOR], facing: 'W', locked: false },
+      // P3a: 屋内階段の防火扉(鉄扉・施錠なし・開閉可)
+      door: { pos: [...NST_DOOR], facing: 'W', locked: false, steel: true, operable: true },
       connects: level < 3 ? [level, level + 1] : [level],
     });
   }
   return rooms;
 }
 
-// 1F共用部(図面: 西棟北端に厨房+食堂、南棟南面は西からシアター/メール/玄関/管理室)
+// 1F 南面の共用部の区切り(x)。P3a 図面照合(1F 図面の縮尺 ≈15.2px/m・縦廊下東端=7.8m 基準)
+const C1F = {
+  theater: [EAST_COL_X0, 14.0],   // シアタールーム(図面 305→400px)
+  mail: [14.0, 15.6],             // メールコーナー・宅配BOX(図面 400→425px)
+  lobby: [15.6, 19.6],            // ロビー/風除室(図面 425→485px。「正面玄関」の矢印 455px が中央)
+  office: [19.6, 22.0],           // 管理室(図面 485→515px)
+  windbreakZ: SOUTH_ROOM_Z0 + 3.2, // ロビーと風除室の境(内側の自動ドア)。風除室の奥行 2.8m
+  autoDoorW: 1.8,                 // 自動ドアの開口(ガラス2枚)
+  mailOpen: [1.4, 2.0],           // メールコーナーの口(風除室の北端からの中心位置, 幅)
+};
+
+// 1F共用部(図面: 西棟北端に厨房+食堂、南棟南面は西からシアター/メール/ロビー・風除室/管理室)
 function commonAreas1F() {
   const rooms = [];
   // 厨房: 西棟最北西側
@@ -253,40 +272,43 @@ function commonAreas1F() {
     door: { pos: [VCORR_CX, 11.6], facing: 'S', locked: false, common: true },
     openings: [{ side: 'N', pos: [VCORR_CX, 4.35], width: 1.2 }],
   });
-  // 南棟南面(西→東): シアター(EVホールの東隣) → メール/宅配BOX → エントランス → 管理室。
-  // 並び順は現状維持。居室帯 x=7.8..scEnd を4等分(§2「並び順は現状維持」)。
-  const southCount = 6;
-  const srX0 = SOUTH_ROOM_X0;
-  const srX1 = southRoomsX1(southCount); // 7.8 + 6*2.9 = 25.2
-  const bay = (srX1 - srX0) / 4;         // 4.35
-  const bx = (i) => srX0 + bay * i;
+  // 南棟南面(西→東)。P3a(図面照合 2026-10-31・写真 entrance_*/mailboxes_1F/lobby_1F_corridor):
+  //   シアター(EVの東隣・幅≈6.2m) → メールコーナー(幅≈1.6mの細長い室。風除室の西側に口を開け、西壁に集合ポスト・宅配BOX)
+  //   → ロビー(廊下に大きく開いた石目タイルのホール) → 風除室(ロビーの南。内側=北の自動ドア・外側=南の正面玄関の自動ドア。
+  //   どちらも透明ガラス2枚が左右反対方向へ開く) → 管理室(幅≈2.4m。風除室の東壁に受付の小窓)。管理室の東は屋外(図面の柱列)。
+  //   旧データは4等分(各4.35m)で、メールコーナーが廊下に扉を持っていた。
   rooms.push({
     id: 'THEATER', kind: 'multi',
-    rect: [bx(0), SOUTH_ROOM_Z0, bay, ROOM_D],
-    door: { pos: [bx(0) + bay / 2, SOUTH_CORR_Z1], facing: 'N', locked: false },
+    rect: [C1F.theater[0], SOUTH_ROOM_Z0, C1F.theater[1] - C1F.theater[0], ROOM_D],
+    door: { pos: [C1F.theater[0] + 1.2, SOUTH_CORR_Z1], facing: 'N', locked: false, common: true },
   });
   rooms.push({
     id: 'MAILBOX', kind: 'lobby',
-    rect: [bx(1), SOUTH_ROOM_Z0, bay, ROOM_D],
-    door: { pos: [bx(1) + bay / 2, SOUTH_CORR_Z1], facing: 'N', locked: false },
+    rect: [C1F.mail[0], SOUTH_ROOM_Z0, C1F.mail[1] - C1F.mail[0], ROOM_D],
+    openings: [{ side: 'E', pos: [C1F.mail[1], C1F.windbreakZ + C1F.mailOpen[0]], width: C1F.mailOpen[1] }],
   });
-  // P12(DESIGN §2「1Fエントランス＝ガラスの風除室」): ENTRANCE = 内外2枚の自動ガラス
-  // 引き戸に挟まれた風除室そのもの(部屋の矩形・footprintは変更しない=flood-fill/開口の
-  // 座標は従来どおり)。
-  //  - 内側ドア(北=廊下側): glass+common(施錠なし・常時operable・自動スライド)。
-  //  - 外側ドア(南=玄関開口): perimOpenings 側に glass:true を立て、walls.js の
-  //    perimDoor ブロッカ+level.js の意匠をガラス扉化する(施錠は従来どおり)。
+  rooms.push({
+    id: 'LOBBY', kind: 'lobby',
+    rect: [C1F.lobby[0], SOUTH_ROOM_Z0, C1F.lobby[1] - C1F.lobby[0], C1F.windbreakZ - SOUTH_ROOM_Z0],
+    openings: [
+      { side: 'N', pos: [(C1F.lobby[0] + C1F.lobby[1]) / 2, SOUTH_ROOM_Z0], width: C1F.lobby[1] - C1F.lobby[0] - 0.4 },
+      { side: 'S', pos: [(C1F.lobby[0] + C1F.lobby[1]) / 2, C1F.windbreakZ], width: C1F.autoDoorW },
+    ],
+  });
+  // ENTRANCE = 風除室。内側の自動ドア(北・door)と外側の正面玄関(南・perimOpenings のガラス扉。夜間は閉じたまま)
   rooms.push({
     id: 'ENTRANCE', kind: 'lobby',
-    rect: [bx(2), SOUTH_ROOM_Z0, bay, ROOM_D],
-    door: { pos: [bx(2) + bay / 2, SOUTH_CORR_Z1], facing: 'N', locked: false, glass: true, common: true },
-    // 正面玄関(南向き開口)。外周側は perimOpenings + オートロック扉ブロッカ(ガラス扉)
-    openings: [{ side: 'S', pos: [bx(2) + bay / 2, SOUTH_ROOM_Z1], width: 1.8, glass: true }],
+    rect: [C1F.lobby[0], C1F.windbreakZ, C1F.lobby[1] - C1F.lobby[0], SOUTH_ROOM_Z1 - C1F.windbreakZ],
+    door: { pos: [(C1F.lobby[0] + C1F.lobby[1]) / 2, C1F.windbreakZ], facing: 'N', locked: false, glass: true, common: true, auto: true, width: C1F.autoDoorW },
+    openings: [
+      { side: 'S', pos: [(C1F.lobby[0] + C1F.lobby[1]) / 2, SOUTH_ROOM_Z1], width: C1F.autoDoorW, glass: true },
+      { side: 'W', pos: [C1F.mail[1], C1F.windbreakZ + C1F.mailOpen[0]], width: C1F.mailOpen[1] },
+    ],
   });
   rooms.push({
     id: 'OFFICE', kind: 'office',
-    rect: [bx(3), SOUTH_ROOM_Z0, bay, ROOM_D],
-    door: { pos: [bx(3) + bay / 2, SOUTH_CORR_Z1], facing: 'N', locked: true },
+    rect: [C1F.office[0], SOUTH_ROOM_Z0, C1F.office[1] - C1F.office[0], ROOM_D],
+    door: { pos: [(C1F.office[0] + C1F.office[1]) / 2, SOUTH_CORR_Z1], facing: 'N', locked: true },
   });
   return rooms;
 }
@@ -315,6 +337,158 @@ function corridorPath(level, inv, scEnd) {
   };
 }
 
+
+// =========================================================================
+// P3a: 階の外殻(shell)と階段の形
+//  見た目(Blender: tools/blender/build_floor.py)と当たり・移動(src/world.js・stairs.js)が同じ定義を読む。
+//  air      … 歩ける(または見える)空気の矩形。重ならない。kind で床・壁・天井の仕上げが決まる
+//             corridor/hall=廊下(長尺シート・クロス壁・平天井) / lobby=石目タイル / theater=暗いカーペット /
+//             room=共用室 / alcove=EV扉の凹み / outdoor=外階段の踊り場(屋外) / well=階段の吹き抜け(床なし・壁は階高いっぱい)
+//             stair=屋内階段の踊り場(壁は階高いっぱい)
+//  caps     … 部屋の途中で見た目を切る闇の板(410 の玄関の先。P0 と同じ)
+//  windows  … 夜空の窓(発光面) / lights … 灯具 / exits … 非常口サイン
+// =========================================================================
+const STAIR_RISE = FLOOR_H / 2;          // 1.45(折返し階段の1折れ分)
+const STAIR_TREADS = 7;                  // 踏面 7(蹴上げ 8 段 × 0.181m)
+const STAIR_TREAD = 0.26;
+// 外階段(西外壁の鉄骨ジグザグ)。流れは南北(z)。西レーン=上り(踊り場→中間踊り場)、東レーン=下り(鉄扉の正面。写真 outer_stairs_2)
+const MST_GEOM = (() => {
+  const [x, z, w, d] = MST_RECT;
+  const s0 = z + 1.45;                       // 階の踊り場(屋外の床)の南端 = 段の始まり
+  const s1 = s0 + STAIR_TREADS * STAIR_TREAD;  // 段の終わり = 中間踊り場の北端
+  return {
+    axis: 'z', landing: [x, z, w, s0 - z], mid: [x, s1, w, z + d - s1], s0, s1,
+    lanes: { up: [x, x + 1.6], down: [x + w - 1.6, x + w] },
+    guard: [x, s0 + 0.3, w, z + d - s0 - 0.3],     // 階の床の高さで階段側へ踏み出さない当たり
+    mouthDepth: 0.6,                               // 段の手前のこの奥行に入って進むと上り下り
+  };
+})();
+// 北階段(屋内・1〜3F)。流れは東西(x)。扉は西面(縦廊下)。北レーン=下り(扉の正面)、南レーン=上り
+const NST_GEOM = (() => {
+  const [x, z, w, d] = NST_RECT;
+  const s0 = x + 1.6, s1 = s0 + STAIR_TREADS * STAIR_TREAD;
+  return {
+    axis: 'x', landing: [x, z, s0 - x, d], mid: [s1, z, x + w - s1, d], s0, s1,
+    lanes: { up: [z + 1.55, z + d - 0.1], down: [z + 0.1, z + 1.35] },
+    guard: [s0 + 0.3, z, x + w - s0 - 0.3, d],
+    mouthDepth: 0.6,
+  };
+})();
+
+// 階の隠れ場所(管理人の潜伏 LURK)。4F は P0 の 4 か所(src/enemy_ai.js の HIDE_SPOTS と同一)を先頭に保つ
+function hideSpotsFor(level, zTop, scEnd) {
+  const spots = [];
+  if (level === 4) {
+    spots.push({ id: 'r410_back', area: 'R', x: 8.98, z: 8.38, faceTo: [7.8, 7.25] });
+    spots.push({ id: 'r410_door_shadow', area: 'R', x: 8.16, z: 6.2, faceTo: [8.7, 7.6] });
+    spots.push({ id: 'corridor_north', area: 'C', x: 6.32, z: 6.2, faceTo: [6.9, 9.5] });
+    spots.push({ id: 'ev_blind', area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] });
+  } else {
+    if (zTop !== null) spots.push({ id: `L${level}_corr_north`, area: 'C', x: 6.32, z: zTop + 0.4, faceTo: [6.9, zTop + 3.7] });
+    spots.push({ id: `L${level}_ev_blind`, area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] });
+  }
+  spots.push({ id: `L${level}_corr_east`, area: 'C', x: scEnd - 0.4, z: 20.72, faceTo: [scEnd - 4.0, 21.2] });
+  if (level === 1) {
+    spots.push({ id: 'L1_dining_corner', area: 'C', x: 0.5, z: 4.85, faceTo: [6.9, 11.0] });
+    spots.push({ id: 'L1_theater_back', area: 'C', x: 13.5, z: 27.6, faceTo: [9.0, 22.6] });
+  }
+  return spots.map((h) => ({ ...h, level }));
+}
+
+// 屋上B(DESIGN §2.3 2026-10-31 追記): 7F の外階段をさらに1層上がった最上階の屋根(7F床＋階高)。屋外のまま出る。
+// 当たりは walls.js をそのまま使える「疑似階」(key 'RB')として持つ: footprint の外周=パラペット、obstacles=機械室などの箱。
+// 見た目は 7F の GLB に含める(build_floor.py)。
+function buildRoofB(f7) {
+  const fp = f7.footprint.filter((r) => !(r[0] === MST_RECT[0] && r[1] === MST_RECT[1]));   // 7F の屋内(廊下・EV・南棟)
+  const xs = fp.map((r) => r[0] + r[2]);
+  const xEnd = Math.max(...xs);
+  const obstacles = [
+    { id: 'ev_machine', rect: [WEST_CORR_X0, SOUTH_ROOM_Z0, CORR_W, EV_RECT[3]], h: 2.6 },     // EV 機械室(シャフトの上)
+    { id: 'water_tank', rect: [xEnd - 2.6, SOUTH_ROOM_Z0 + 2.4, 2.0, 2.2], h: 1.9 },          // 受水槽の箱
+    { id: 'hatch', rect: [12.4, SOUTH_ROOM_Z0 + 1.2, 0.9, 0.9], h: 0.55 },                    // 点検口
+  ];
+  for (let i = 0; i < 5; i++) obstacles.push({ id: `ac_${i}`, rect: [9.2 + i * 2.2, SOUTH_ROOM_Z1 - 0.62, 0.85, 0.36], h: 0.72 });   // 室外機(南のパラペット沿い)
+  const air = [
+    { id: 'landing', rect: [...MST_GEOM.landing], kind: 'outdoor' },
+    { id: 'mst_well', rect: [MST_RECT[0], MST_GEOM.s0, MST_RECT[2], MST_RECT[1] + MST_RECT[3] - MST_GEOM.s0], kind: 'well', outdoor: true },
+    ...fp.filter((r) => !(r[0] === EV_RECT[0] && r[1] === EV_RECT[1])).map((r, i) => ({ id: `roof_${i}`, rect: [...r], kind: 'roof' })),
+  ];
+  for (const o of obstacles) o.rect = o.rect.map((v) => +v.toFixed(4));
+  return {
+    key: 'RB', baseLevel: 7, y: +(7 * FLOOR_H).toFixed(4), parapetH: 0.75, railH: 1.1,
+    footprint: [...fp, [...MST_RECT]], rooms: [], fillWalls: [], obstacles, air,
+    spawn: [WEST_CORR_X0 + 1.2, HCORR_CZ],
+  };
+}
+
+function shellFor(level, inv, scEnd, rooms) {
+  const zTop = level === 1 ? 11.6 : (level <= 6 ? westZ0Of(level, inv) : null);
+  const air = [];
+  const A = (id, rect, kind, extra = {}) => air.push({ id, rect: rect.map((v) => +v.toFixed(4)), kind, ...extra });
+  if (zTop !== null) A('corridor', [WEST_CORR_X0, zTop, CORR_W, WEST_WING_Z1 - zTop], 'corridor');
+  A('hall', [WEST_CORR_X0, SOUTH_CORR_Z0, CORR_W, CORR_W], 'hall');
+  if (level === 1) {
+    A('corridor_h1', [EAST_COL_X0, SOUTH_CORR_Z0, C1F.mail[0] - EAST_COL_X0, CORR_W], 'corridor');
+    A('lobby_front', [C1F.mail[0], SOUTH_CORR_Z0, C1F.office[0] - C1F.mail[0], CORR_W], 'lobby');
+    A('corridor_h2', [C1F.office[0], SOUTH_CORR_Z0, scEnd - C1F.office[0], CORR_W], 'corridor');
+  } else {
+    A('corridor_h', [EAST_COL_X0, SOUTH_CORR_Z0, scEnd - EAST_COL_X0, CORR_W], 'corridor');
+  }
+  const ev = rooms.find((r) => r.kind === 'elevator');
+  const evCx = ev.door.pos[0] + 0.2;   // walls.js evOpeningCenter(facing N: +x へ EV_OPEN_SHIFT)
+  A('ev_alcove', [evCx - 0.5, SOUTH_ROOM_Z0, 1.0, 0.27], 'alcove');
+  A('landing', MST_GEOM.landing, 'outdoor');
+  A('mst_well', [MST_RECT[0], MST_GEOM.s0, MST_RECT[2], MST_RECT[1] + MST_RECT[3] - MST_GEOM.s0], 'well', { outdoor: true });
+  if (level <= 3) {
+    A('nst_landing', NST_GEOM.landing, 'stair');
+    A('nst_well', [NST_GEOM.s0, NST_RECT[1], NST_RECT[0] + NST_RECT[2] - NST_GEOM.s0, NST_RECT[3]], 'well');
+  }
+  if (level === 1) {
+    A('dining', [0, 4.35, WEST_WING_X1, 11.6 - 4.35], 'room');
+    A('north_passage', [WEST_CORR_X0, 0, CORR_W, 4.35], 'corridor');
+    A('north_nook', [EAST_COL_X0, NST_RECT[3], WEST_WING_X1 - EAST_COL_X0, 4.35 - NST_RECT[3]], 'corridor');
+    A('theater', [C1F.theater[0], SOUTH_ROOM_Z0, C1F.theater[1] - C1F.theater[0], ROOM_D], 'theater');
+    A('mail', [C1F.mail[0], SOUTH_ROOM_Z0, C1F.mail[1] - C1F.mail[0], ROOM_D], 'lobby');
+    A('lobby', [C1F.lobby[0], SOUTH_ROOM_Z0, C1F.lobby[1] - C1F.lobby[0], C1F.windbreakZ - SOUTH_ROOM_Z0], 'lobby');
+    A('windbreak', [C1F.lobby[0], C1F.windbreakZ, C1F.lobby[1] - C1F.lobby[0], SOUTH_ROOM_Z1 - C1F.windbreakZ], 'lobby');
+  }
+  const caps = [];
+  if (level === 4) {
+    // P0 と同じ: 410 は玄関から 1.5m までを作り、その先は闇の板(居室の内装は P3b)
+    A('room410_entry', [EAST_COL_X0, 5.8, 1.5, ROOM_W], 'room410');
+    caps.push({ id: 'cap_room410', x: 9.3, z0: 5.8, z1: 8.7, normal: 'W' });
+  }
+  // 窓(夜空の発光面)。pos=壁面上の中心、facing=室内側への法線
+  const windows = [];
+  if (zTop !== null && level !== 1) windows.push({ pos: [VCORR_CX, zTop], facing: 'S', w: 0.75, h: 0.9, sill: 1.15 });
+  windows.push({ pos: [scEnd, HCORR_CZ], facing: 'W', w: 0.75, h: 0.9, sill: 1.15 });
+  if (level === 1) for (const z of [5.6, 8.0, 10.4]) windows.push({ pos: [0, z], facing: 'E', w: 1.5, h: 1.3, sill: 0.85 });
+  // 灯具(廊下の常夜灯は corridor.path から Blender 側で 6.5m おきに置く=P0 と同じ。ここはそれ以外)
+  const lights = [];
+  lights.push({ kind: 'bracket', pos: [WEST_CORR_X0 - 0.06, SOUTH_CORR_Z0 + 0.3], y: 2.3, facing: 'W' });   // 外階段の踊り場(鉄扉の脇の壁)
+  if (level <= 3) lights.push({ kind: 'bracket', pos: [EAST_COL_X0 + 0.8, 0.06], y: 2.3, facing: 'S' });  // 北階段の踊り場
+  if (level === 1) {
+    for (const [x, z] of [[16.6, 23.4], [18.6, 23.4], [17.6, 26.7], [14.8, 24.2], [14.8, 26.9], [15.8, 21.2], [18.4, 21.2]]) lights.push({ kind: 'down', pos: [x, z] });
+  }
+  // 非常口サイン(鉄扉・防火扉・共用室の出口の上。屋内側)
+  const exits = [];
+  for (const r of rooms) {
+    if (!r.door) continue;
+    if (r.door.steel && r.id.startsWith('NST')) exits.push({ room: r.id, pos: [...r.door.pos], facing: 'E' });   // 縦廊下側から見る
+  }
+  if (level === 1) {
+    exits.push({ room: 'DINING', pos: [VCORR_CX, 11.6], facing: 'N', inside: true });
+    exits.push({ room: 'THEATER', pos: [C1F.theater[0] + 1.2, SOUTH_ROOM_Z0], facing: 'S', inside: true });
+  }
+  // ゲーム内で開閉できる扉(それ以外の扉は施錠のまま開かない)
+  const operable = rooms.filter((r) => r.door && (r.door.steel || r.door.common || r.id === '410')).map((r) => r.id);
+  return {
+    zTop, air, caps, windows, lights, exits, operable,
+    hideSpots: hideSpotsFor(level, zTop, scEnd),
+    hall: [WEST_CORR_X0, SOUTH_CORR_Z0, CORR_W, CORR_W],
+  };
+}
+
 // =========================================================================
 // フロア生成
 // =========================================================================
@@ -324,15 +498,16 @@ function buildFloor(level) {
   rooms.push(...westWestRooms(inv.westWest));
   rooms.push(...westEastRooms(inv.westEast));
   rooms.push(...southRooms(inv.south));
-  rooms.push(...eastRooms(inv.east, inv.south.length));
+  rooms.push(...eastRooms(inv.east));
   if (level === 1) rooms.push(...commonAreas1F());
   rooms.push(...coreRooms(level));
 
   const southN = inv.south.length;
   const eastN = inv.east.length;
   const srEnd = southRoomsX1(southN);
-  const ebX1 = eastN > 0 ? southRoomsX1(southN) + eastN * ROOM_W : 0;
-  const scEnd = Math.max(srEnd, ebX1);
+  const ebX1 = eastN > 0 ? EAST_BLK_X0 + eastN * ROOM_W : 0;
+  // 横廊下の東端: 南棟(居室帯)と東ブロックの東端の大きい方。1F は南の共用部帯が短い(管理室まで)ので東ブロックで決まる
+  const scEnd = Math.max(level === 1 ? 0 : srEnd, ebX1);
 
   // フットプリント(セットバック込み)。外周壁はこの矩形群の露出辺に張られる。
   const footprint = [];
@@ -351,10 +526,10 @@ function buildFloor(level) {
   // これが欠けると廊下南縁の外周壁が全面に立ち、各共用ドアの真後ろが塞がれて
   // 「開くのに通れない自動ドア」(行き止まり)になる(2026-07-05 プレイ報告のバグ)。
   if (level === 1) {
-    footprint.push([SOUTH_ROOM_X0, SOUTH_ROOM_Z0, southRoomsX1(6) - SOUTH_ROOM_X0, ROOM_D]);
+    footprint.push([SOUTH_ROOM_X0, SOUTH_ROOM_Z0, C1F.office[1] - SOUTH_ROOM_X0, ROOM_D]);   // P3a: 管理室の東端まで
   }
   if (eastN > 0) {
-    footprint.push([southRoomsX1(southN), EAST_BLK_Z0, eastN * ROOM_W, ROOM_D]); // 東ブロック
+    footprint.push([EAST_BLK_X0, EAST_BLK_Z0, eastN * ROOM_W, ROOM_D]); // 東ブロック
   }
   // 屋外の外階段踊り場(西外壁の外側 x<0)。屋外の歩行可能領域(§2)。
   footprint.push([...MST_RECT]);
@@ -367,17 +542,16 @@ function buildFloor(level) {
   // perimDoorブロッカを作るため、room.openings側だけでなくこちらにもglassを立てる。
   const perimOpenings = [];
   if (level === 1) {
-    const bay = (southRoomsX1(6) - SOUTH_ROOM_X0) / 4;
     perimOpenings.push({
-      pos: [SOUTH_ROOM_X0 + bay * 2.5, SOUTH_ROOM_Z1], width: 1.8, facing: 'S', glass: true,
+      pos: [(C1F.lobby[0] + C1F.lobby[1]) / 2, SOUTH_ROOM_Z1], width: C1F.autoDoorW, facing: 'S', glass: true,
     });
   }
 
   // props(P1では最小限)。宅配ボックスはメールコーナー前(x基準を新レイアウトへ)。
   const props = [];
   if (level === 1) {
-    const bay = (southRoomsX1(6) - SOUTH_ROOM_X0) / 4;
-    props.push({ kind: 'deliveryBox', pos: [SOUTH_ROOM_X0 + bay * 1.5, 0, SOUTH_CORR_Z1 + 0.5], rot: 0 });
+    // 集合ポスト・宅配BOX はメールコーナーの西壁(写真 mailboxes_1F.jpg)。見た目は build_floor.py が作る
+    props.push({ kind: 'mailboxes', pos: [C1F.mail[0], 0, SOUTH_ROOM_Z0 + 0.6], size: [0.42, 1.75, 4.6], rot: 0 });
     props.push({ kind: 'camera', pos: [SOUTH_ROOM_X0, CEIL_H - 0.2, SOUTH_CORR_Z0 + 0.2], rot: 0 });
   }
 
@@ -396,6 +570,7 @@ function buildFloor(level) {
     fillWalls,
     ...(perimOpenings.length ? { perimOpenings } : {}),
     props,
+    shell: shellFor(level, inv, scEnd, rooms),
   };
 }
 
@@ -769,6 +944,7 @@ function build() {
   const allFloors = [...floors, phantom];
 
   const navGraph = buildNavGraph(allFloors);
+  const roofB = buildRoofB(floors.find((f) => f.level === 7));
 
   const building = {
     meta: {
@@ -788,10 +964,16 @@ function build() {
     },
     stairs: [
       // main = 外階段(西外壁の鉄骨ジグザグ・1〜7F)。posは屋外踊り場の原点。
-      { id: 'main', external: true, pos: [MST_RECT[0], MST_RECT[1]], size: [MST_RECT[2], MST_RECT[3]], door: [...EXT_DOOR_POS], levels: [1, 7] },
-      { id: 'north', pos: [NST_RECT[0], NST_RECT[1]], size: [NST_RECT[2], NST_RECT[3]], levels: [1, 3] },
+      // levels: 鉄扉のある階。stops: 外階段で行ける高さの並び(7F の上は屋上B 'RB'。屋外のまま出る)
+      { id: 'main', room: 'MST', external: true, pos: [MST_RECT[0], MST_RECT[1]], size: [MST_RECT[2], MST_RECT[3]], door: [...EXT_DOOR_POS], levels: [1, 7],
+        stops: [1, 2, 3, 4, 5, 6, 7, 'RB'],
+        geom: { ...MST_GEOM, rise: STAIR_RISE, treads: STAIR_TREADS, tread: STAIR_TREAD } },
+      { id: 'north', room: 'NST', pos: [NST_RECT[0], NST_RECT[1]], size: [NST_RECT[2], NST_RECT[3]], door: [...NST_DOOR], levels: [1, 3],
+        stops: [1, 2, 3],
+        geom: { ...NST_GEOM, rise: STAIR_RISE, treads: STAIR_TREADS, tread: STAIR_TREAD } },
     ],
     navGraph,
+    roofB,
   };
 
   // ---- 検算1: 居室数 ----
@@ -925,6 +1107,13 @@ function build() {
   //  (b) 中央の島(複製管理人室)の内部へは、回廊から「1つの開口」だけで入れる
   //      (flood-fillの格子で、島内部⇔回廊 の通過セルが北辺開口の1箇所のみ)。
   const loopInfo = loopAssert8F(phantom, navGraph);
+  // ---- 検算6(P3a): 屋上B の外周が閉じている(踊り場から屋根へ出られ、外へは落ちない) ----
+  reachedPerFloor.RB = floodFillCheck({ level: 'RB', ...roofB, rooms: [] }, [MST_RECT[0] + 1.7, SOUTH_CORR_Z0 + 0.7]);
+  {
+    const roofCell = [14.0, SOUTH_ROOM_Z0 + 3.0];
+    const inside = roofB.footprint.some(([x, z, w, d]) => roofCell[0] > x && roofCell[0] < x + w && roofCell[1] > z && roofCell[1] < z + d);
+    if (!inside) throw new Error('ASSERT失敗: 屋上Bの屋根面が footprint に無い');
+  }
 
   const out = join(__dirname, 'building.json');
   writeFileSync(out, JSON.stringify(building, null, 2));
