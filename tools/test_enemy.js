@@ -156,7 +156,7 @@ export async function run(N) {
   T('7_lurk_ambush_attack', () => {
     W.reset();
     N.setView(6.9, 12.0, Math.PI, 0); N.setFlashlight(false);
-    N.enemy.place(9.4, 7.5, -1.73);   // P3b: 410 の隠れ場所 r410_back は内装が入って玄関の先(トイレの扉の前)へ移った
+    N.enemy.place(9.4, 7.05, -1.73);   // P3b: 410 の隠れ場所 r410_back は内装が入って玄関の先(トイレの扉の前)へ移った(P3b-2 の鏡像で北寄りへ)
     N.ai.setState('LURK', { force: true, log: true, spot: 'r410_back', standNow: true });
     const ev0 = N.ai.events.length;
     // ① 離れて(扉は閉)いる間は潜伏のまま・消灯
@@ -187,8 +187,8 @@ export async function run(N) {
     W.reset();
     N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 21.0, Math.PI);
     const res = {};
-    // P3b: 410 の室内(内装が入った)。洋室の奥から玄関の方を見る
-    const shots = { room_off: [12.4, 7.35, Math.PI / 2 - 0.15, false], room_on: [12.4, 7.35, Math.PI / 2 - 0.15, true], corridor_off: [6.9, 7.6, Math.PI, false], corridor_on: [6.9, 7.6, Math.PI, true] };
+    // P3b: 410 の室内(内装が入った)。洋室の奥から玄関の方を見る(P3b-2: 鏡像に合わせて立ち位置と向きも鏡に)
+    const shots = { room_off: [12.4, 7.15, Math.PI / 2 + 0.15, false], room_on: [12.4, 7.15, Math.PI / 2 + 0.15, true], corridor_off: [6.9, 7.6, Math.PI, false], corridor_on: [6.9, 7.6, Math.PI, true] };
     for (const [k, [x, z, yaw, fl]] of Object.entries(shots)) { N.setView(x, z, yaw, 0); N.setFlashlight(fl); N.pump(DT, 3, false); res[k] = W.centerLuma(); }
     N.setFlashlight(false);
     const pass = res.room_off >= DARK_MIN.room && res.corridor_off >= DARK_MIN.corridor;

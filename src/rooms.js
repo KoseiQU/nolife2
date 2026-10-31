@@ -4,7 +4,8 @@
 //  - 掃き出し窓: E で開閉(引き違いの室内側の障子が はめ殺し の前へ滑る)。開いている間は当たりが無効 → バルコニーへ出られる。外からも開く
 //  - 隠れる: クローゼット(居室)/ロッカー(管理室)の前で E。中から扉の隙間越しに見る(マウスで少し見回せる)。もう一度 E で出る
 //  - 落ちる物: プレイヤーの体(半径 0.28m)が触れると落ちて転がる(約1秒)＋落下音。onNoise で管理人へ(同じ階なら部屋を知られる)
-//  - 屋上A: 410/401 のバルコニー北端の隔て板。flags.roofA が真なら E で台に上がって乗り越える(偽なら「乗り越えられない」)
+//  - 屋上A: 410/401 のバルコニー北端の隔て板。flags.roofA が真なら室外機(台)の前で E → 室外機に乗る(目線が一段上がる)→ 隔て板を越える →
+//    屋上に降りる(偽なら「乗り越えられない」)。屋上側からは逆順(越える→室外機に降りる→バルコニーに降りる)
 //  update(dt) 駆動(rAF 非依存。手動ポンプで決定的に動く)。音は WebAudio の仮音(P4 で録音へ差し替え)。
 
 import * as THREE from 'three';
@@ -20,7 +21,9 @@ export const ROOMS = {
   facing: 0.55,
   touchMargin: 0.08,     // 落ちる物: 体の半径＋この距離で触れたことにする
   fallTime: 1.1,
-  vaultTime: 1.9,
+  vaultTime: 2.05,       // 乗り越え全体(秒)= 下の4区間の和
+  vaultSeg: { mount: 0.55, hold: 0.3, over: 0.65, drop: 0.55 },   // 室外機に乗る / 乗って一拍 / 隔て板を越える / 降りる
+  vaultClear: 0.27,      // 越える時の足の高さ = 台の天板＋これ(目線は隔て板 1.85m の上)
   hideYaw: 0.75,         // 隠れている間に見回せる左右(rad)
   hidePitch: 0.45,
   eyeY: 1.52,            // 隠れている時の目の高さ
@@ -202,7 +205,10 @@ export class Rooms {
     for (const g of this.gates) {
       if (g.level !== level) continue;
       const [x, z, w, d] = g.rect;
-      const dd = look(x + w / 2, z + d / 2, 1.3);
+      // バルコニー側からは台(室外機)を、屋上側からは隔て板を見て E
+      const balSide = p.z > z + d / 2;
+      const [sx0, sz0, sx1, sz1] = g.step;
+      const dd = balSide ? look((sx0 + sx1) / 2, (sz0 + sz1) / 2, 1.1) : look(x + w / 2, z + d / 2, 1.3);
       if (dd >= 0 && dd < bd) { bd = dd; best = { kind: 'gate', gate: g }; }
     }
     for (const w of this.windows.values()) {
@@ -234,19 +240,25 @@ export class Rooms {
   }
 
   // ------------------------------------------------------------ 屋上A へ乗り越える
+  // P3b-2: 区間ごとの動き。up = 目線が先に上がる(足を掛けて体を持ち上げる)/ down = 最後に落ちる(飛び降りる)/ flat = なめらか
+  //  バルコニー → 屋上: 台の前 →[mount up]→ 室外機の天板 →[hold]→ 同じ所(一拍)→[over up]→ 隔て板の上 →[drop down]→ 屋上
+  //  屋上 → バルコニー: 逆順(隔て板の上 → 室外機の天板 → 一拍 → バルコニーの床)
   _startVault(g) {
     const p = this.player;
     const [sx0, sz0, sx1, sz1] = g.step;
     const lineZ = g.rect[1] + g.rect[3] / 2;
     const onBalcony = p.pos.z > lineZ;
     const y = levelY(g.level);
-    const stepTop = g.room === '410' ? 0.42 : 0.55;
-    const stepC = new THREE.Vector3((sx0 + sx1) / 2, y + stepTop, (sz0 + sz1) / 2);
-    const over = new THREE.Vector3((g.over.from[0] + g.over.to[0]) / 2, y + 0.75, lineZ);
+    const stepTop = g.stepTop || 0.6;
+    const S = ROOMS.vaultSeg;
+    const stepC = new THREE.Vector3(THREE.MathUtils.clamp(p.pos.x, sx0 + 0.25, sx1 - 0.25), y + stepTop, (sz0 + sz1) / 2);
+    const over = new THREE.Vector3((g.over.from[0] + g.over.to[0]) / 2, y + stepTop + ROOMS.vaultClear, lineZ);
     const dst = onBalcony ? new THREE.Vector3(g.over.to[0], y, g.over.to[1]) : new THREE.Vector3(g.over.from[0], y, g.over.from[1]);
     const start = p.pos.clone();
-    const pts = onBalcony ? [start, stepC, over, dst] : [start, over, stepC, dst];
-    this.vault = { g, pts, t: 0, dst, toRoof: onBalcony };
+    const segs = onBalcony
+      ? [{ to: stepC, d: S.mount, ease: 'up', ev: 'vault_on_step' }, { to: stepC, d: S.hold, ease: 'flat' }, { to: over, d: S.over, ease: 'up', ev: 'vault_over' }, { to: dst, d: S.drop, ease: 'down' }]
+      : [{ to: over, d: S.over, ease: 'up', ev: 'vault_over' }, { to: stepC, d: S.mount, ease: 'down', ev: 'vault_on_step' }, { to: stepC, d: S.hold, ease: 'flat' }, { to: dst, d: S.drop, ease: 'down' }];
+    this.vault = { g, from: start, segs, i: 0, t: 0, total: 0, dst, toRoof: onBalcony };
     p.frozen = true;
     this._sfx('climb', stepC);
     this.log('vault_start', { gate: g.id, toRoof: onBalcony });
@@ -254,14 +266,23 @@ export class Rooms {
 
   _updateVault(dt) {
     const V = this.vault;
-    V.t += dt;
-    const k = Math.min(1, V.t / ROOMS.vaultTime);
-    const n = V.pts.length - 1;
-    const f = k * n, i = Math.min(n - 1, Math.floor(f)), u = f - i;
-    const s = u * u * (3 - 2 * u);
-    const pos = V.pts[i].clone().lerp(V.pts[i + 1], s);
-    const bob = Math.sin(k * Math.PI) * 0.05;
+    V.t += dt; V.total += dt;
+    let sg = V.segs[V.i];
+    while (V.t >= sg.d && V.i < V.segs.length - 1) {
+      V.t -= sg.d; V.from = sg.to.clone();
+      if (sg.ev) this.log(sg.ev, { gate: V.g.id, y: +(sg.to.y - levelY(V.g.level)).toFixed(2), z: +sg.to.z.toFixed(2) });
+      if (sg.ev === 'vault_on_step') this._sfx('climb', sg.to);
+      V.i++; sg = V.segs[V.i];
+    }
+    const u = Math.min(1, V.t / sg.d);
+    const sm = u * u * (3 - 2 * u);
+    const yk = sg.ease === 'up' ? 1 - (1 - u) * (1 - u) * (1 - u) : sg.ease === 'down' ? u * u : sm;
+    const a = V.from, b = sg.to;
+    const pos = new THREE.Vector3(a.x + (b.x - a.x) * sm, a.y + (b.y - a.y) * yk, a.z + (b.z - a.z) * sm);
+    // 乗って一拍の間は膝で受けて少し沈む
+    const bob = sg.ease === 'flat' && V.i > 0 ? -Math.sin(u * Math.PI) * 0.06 : 0;
     this.player.placeAt(pos.x, pos.y, pos.z, bob);
+    const k = V.i === V.segs.length - 1 && u >= 1 ? 1 : 0;
     if (k >= 1) {
       this.player.frozen = false;
       this.player.placeAt(V.dst.x, V.dst.y, V.dst.z, 0);

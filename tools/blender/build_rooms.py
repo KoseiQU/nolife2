@@ -909,8 +909,16 @@ def build_balconies(col):
         g = gates.get(r['id'])
         if g:
             sx0, sz0, sx1, sz1 = g['step']
-            if r['id'] == '410':
-                pt.box((sx0, y, sz0), (sx1, y + 0.42, sz1), 'MR_Concrete', keep=lambda k, c, n: k != '-y')   # 台(コンクリートの踏み台)
+            if g.get('stepFront'):
+                # P3b-2(410): 隔て板の手前に背を付けた室外機(正面=吹き出しをバルコニー側へ)=よじ登る台。防振ゴムの脚2本の上に本体、天板の高さ = stepTop
+                top = y + g.get('stepTop', 0.6)
+                fk = g['stepFront']
+                for (fa0, fa1) in ((sx0 + 0.06, sx0 + 0.16), (sx1 - 0.16, sx1 - 0.06)):
+                    ac.pbox((fa0, y, sz0 + 0.02), (fa1, y + 0.06, sz1 - 0.02), 'darkgray', keep=lambda k, c, n: k not in ('+y', '-y'))
+                ac.pbox((sx0, y + 0.06, sz0), (sx1, top, sz1), 'lightgray', front=fk, front_uv=APPUV['acout'], front_mat='MR_Appl')
+                # 冷媒管の化粧カバー(本体の外壁側の側面から外壁へ。床から 0.3m の高さで外壁に入る)
+                hx0 = sx0 - 0.07 if fx > 0 else sx1
+                ac.pbox((min(hx0, hx0 + 0.07), y + 0.22, sz0 + 0.08), (max(hx0, hx0 + 0.07), y + 0.36, sz0 + 0.18), 'lightgray')
             else:
                 mn, mx = (sx0, y, sz0), (sx1, y + 0.55, sz1)
                 ac.pbox(mn, mx, 'lightgray', front='+x' if fx > 0 else '-x', front_uv=APPUV['acout'], front_mat='MR_Appl')   # 室外機=踏み台

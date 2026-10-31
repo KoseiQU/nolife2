@@ -87,7 +87,7 @@ export function buildLevelCollisions(building, key) {
     }
     for (const g of floor.gates || []) {
       const [sx0, sz0, sx1, sz1] = g.step;
-      cols.push(Object.assign(box(sx0, sz0, sx1, sz1, 'furn', g.id), { y0, y1: y0 + 0.6 }));
+      cols.push(Object.assign(box(sx0, sz0, sx1, sz1, 'furn', g.id), { y0, y1: y0 + (g.stepTop || 0.6) }));   // 台(室外機)
     }
   }
   // 階段の段の手前で止める当たり(踊り場の床の高さでは階段側へ進めない。上り下りは stairs.js)

@@ -7,6 +7,8 @@
 //    外壁: 掃き出し窓(引き違い。開く側=A 寄りの半分)＋カーテン → バルコニー(奥行 1.0m)
 //  局所座標: u = 玄関の壁(扉の面)から外壁へ(0..6.0)、v = 部屋の幅(0..2.9、世界の x か z の増える向き)。
 //  A 側 = v の小さい側。扉の面(facing)で左右反転する: W/S 向きの部屋は図面と同じ向き、E/N 向きは鏡像。
+//  部屋ごとの上書き UNIT_VARIANTS[id].mirror = true は v を反転する(A 側 = v の大きい側。P3b-2: 410 は図面の鏡像=DESIGN §2.3。
+//  他の部屋の向きの規則はユーザー判断待ちなので 410 だけ)。家具・窓の開く側・カーテン・落ちる物・隠れ場所・通路は局所(u,v)で置くので全部一緒に反転する。
 //  玄関→洋室の通路1本(前作のアサートを移植): 扉の中心(v=1.45)から幅 0.95 を玄関から洋室の入口(u=3.5)まで、
 //  そこから窓の開く側(幅 0.8)まで、足元の家具が一切入らないことを生成時に検査する(違反は throw)。
 
@@ -18,7 +20,7 @@ export const LIVING_U0 = 3.5;        // 洋室の入口(これより奥が洋室
 const WIN = { v0: 1.02, v1: 2.62, split: 1.82, h: 2.0 };   // 掃き出し窓(v の範囲、開く側 = v0..split)
 
 // ---------------------------------------------------------------- 局所(u,v) → 世界(x,z)
-export function roomFrame(room) {
+export function roomFrame(room, mirror = !!(UNIT_VARIANTS[room.id] && UNIT_VARIANTS[room.id].mirror)) {
   const [rx, rz, rw, rd] = room.rect;
   const facing = room.door.facing;                  // 扉の外向き(廊下側)
   const alongX = facing === 'E' || facing === 'W';  // u が x 方向
@@ -26,7 +28,7 @@ export function roomFrame(room) {
   const doorHigh = facing === 'E' || facing === 'S';
   const uO = alongX ? rx : rz, vO = alongX ? rz : rx;
   const wu = (u) => uO + (doorHigh ? uLen - u : u);
-  const wv = (v) => vO + v;
+  const wv = (v) => vO + (mirror ? vLen - v : v);
   const pt = (u, v) => (alongX ? [wu(u), wv(v)] : [wv(v), wu(u)]);
   const rect = (u0, u1, v0, v1) => {
     const a = pt(u0, v0), b = pt(u1, v1);
@@ -37,9 +39,10 @@ export function roomFrame(room) {
   const face = (d) => {
     const s = d[0] === '+' ? 1 : -1;
     if (d[1] === 'u') { const g = s * dirU; return alongX ? (g > 0 ? 'E' : 'W') : (g > 0 ? 'S' : 'N'); }
-    return alongX ? (s > 0 ? 'S' : 'N') : (s > 0 ? 'E' : 'W');
+    const g = mirror ? -s : s;
+    return alongX ? (g > 0 ? 'S' : 'N') : (g > 0 ? 'E' : 'W');
   };
-  return { room, uLen, vLen, alongX, doorHigh, pt, rect, face, wu, wv, outward: face('+u') };
+  return { room, uLen, vLen, alongX, doorHigh, mirror, pt, rect, face, wu, wv, outward: face('+u') };
 }
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 export const FACING_YAW = { E: -Math.PI / 2, W: Math.PI / 2, S: Math.PI, N: 0 };   // カメラがその向きを見る yaw
@@ -64,7 +67,7 @@ export const UNIT_VARIANTS = {
   321: { type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: null, laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['basket', 'bag'], poster: 'p2', fall: ['mug', 'vase'] },
   401: { type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'books', 'cup'], floor: ['bag'], poster: 'p3', fall: ['books', 'cans'] },
   404: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box'], poster: null, fall: ['cans'] },
-  410: { type: 'lived', curtain: 'navy', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'lamp', 'cup', 'papers'], floor: ['bag'], poster: 'p1', fall: ['vase', 'books'] },
+  410: { mirror: true, type: 'lived', curtain: 'navy', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'lamp', 'cup', 'papers'], floor: ['bag'], poster: 'p1', fall: ['vase', 'books'] },
   413: { type: 'messy', curtain: 'wine', curtainState: 'closed', bedding: 'charcoal', rug: 'rust', laundry: 'rail', desk: ['monitor', 'cans', 'snack', 'books'], floor: ['clothes', 'clothes2', 'trash', 'box'], poster: 'p5', fall: ['cans', 'mug'] },
   418: { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: 'green', laundry: null, desk: ['laptop', 'plant', 'lamp'], floor: [], poster: 'p4', fall: ['vase', 'books'] },
   501: { type: 'messy', curtain: 'gray', curtainState: 'half', bedding: 'terracotta', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'papers', 'snack'], floor: ['clothes', 'books', 'bag'], poster: 'p6', fall: ['cans', 'books'] },
@@ -90,8 +93,9 @@ export const PALETTE = {
 // 返り値: { items[], decor[], solids[], closet, window, fallables[], points{ entry, room, living }, passage{...} }
 //  items: 据え付けの家具(Blender が kind ごとに作る)。b=[x0,z0,x1,z1](世界)、y=[y0,y1](床から)、f=正面の向き(N/S/E/W)
 //  solids: 当たり [x0,z0,x1,z1,y0,y1,tall](tall=視線を遮る高さの物)
-export function unitInterior(room) {
-  const F = roomFrame(room);
+//  opt.mirror: 鏡像の上書き(build_assert が全室を鏡像でも検査する)。省略時は UNIT_VARIANTS[id].mirror
+export function unitInterior(room, opt = {}) {
+  const F = roomFrame(room, opt.mirror !== undefined ? !!opt.mirror : undefined);
   const V = UNIT_VARIANTS[room.id] || { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: null, laundry: null, desk: [], floor: [], poster: null, fall: ['vase'] };
   const items = [], decor = [], solids = [], foot = [];
   const put = (k, u0, u1, v0, v1, y0, y1, f, solid, extra = {}) => {
@@ -125,12 +129,12 @@ export function unitInterior(room) {
   items.push({ k: 'intercom', b: F.rect(0.36, 0.5, 0.06, 0.08), y: [1.3, 1.5], f: F.face('+v') });
   items.push({ k: 'breaker', b: F.rect(0.94, 1.26, 2.82, 2.84), y: [1.75, 2.1], f: F.face('-v') });  // トイレの壁の上(分電盤)
   // --- 掃き出し窓・カーテン ---
-  const wa = F.pt(6.0, WIN.v0), wb = F.pt(6.0, WIN.v1), ws = F.pt(6.0, WIN.split);
+  const wa = F.pt(6.0, WIN.v0), wb = F.pt(6.0, WIN.v1), ws = F.pt(6.0, WIN.split), wf = F.pt(6.0, WIN.split - 0.04);
   const along = F.alongX ? 1 : 0;   // 窓の壁に沿う世界の軸(0=x, 1=z)
   const window = {
     pos: [r4((wa[0] + wb[0]) / 2), r4((wa[1] + wb[1]) / 2)], facing: F.outward, width: r4(WIN.v1 - WIN.v0), h: WIN.h,
     axis: along === 1 ? 'z' : 'x',
-    open: [r4(wa[along]), r4(ws[along])].sort((a, b) => a - b), fix: [r4(ws[along] - 0.04), r4(wb[along])].sort((a, b) => a - b),
+    open: [r4(wa[along]), r4(ws[along])].sort((a, b) => a - b), fix: [r4(wf[along]), r4(wb[along])].sort((a, b) => a - b),
     line: r4(F.alongX ? F.wu(6.0) : F.wu(6.0)),
   };
   if (V.curtain) {
@@ -222,7 +226,7 @@ export function local(F, x, z) {
   const [rx, rz, rw, rd] = F.room.rect;
   const uO = F.alongX ? rx : rz, vO = F.alongX ? rz : rx;
   const u = F.doorHigh ? F.uLen - (a - uO) : a - uO;
-  return [u, b - vO];
+  return [u, F.mirror ? F.vLen - (b - vO) : b - vO];
 }
 
 // ---------------------------------------------------------------- バルコニー(全居室)
@@ -238,12 +242,13 @@ export function balconyOf(room, level, gates = {}) {
     case 'S': rect = [rx, rz + rd, rw, D]; break;
     default: rect = [rx, rz - D, rw, D];
   }
-  // 室外機(高い側の端・外壁際。入れる部屋では当たり)。401 は北端の踊み台が室外機を兼ねる(屋上A の台)
+  // 室外機(高い側の端・外壁際。入れる部屋では当たり)。屋上A へ乗り越える部屋(410・401)は北端の室外機が踏み台を兼ねる
+  // (gate.step。P3b-2 で 410 もコンクリートの台から室外機へ。室外機は1台だけ)
   const axis = (F.outward === 'E' || F.outward === 'W') ? 'z' : 'x';
   const [bx, bz, bw, bd] = rect;
   const hi = axis === 'z' ? bz + bd : bx + bw;
   let ac = null;
-  if (!(gates.lo === 'gate' && room.id === '401')) {
+  if (gates.lo !== 'gate') {
     const fsgn = (F.outward === 'E' || F.outward === 'S') ? 1 : -1;
     const facade = axis === 'z' ? (fsgn > 0 ? bx : bx + bw) : (fsgn > 0 ? bz : bz + bd);
     const a = [facade + fsgn * 0.06, facade + fsgn * 0.36].sort((p, q) => p - q);
