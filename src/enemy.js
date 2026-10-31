@@ -22,7 +22,7 @@ export const ENEMY = {
   fade: 0.3,                       // 既定のクロスフェード秒
   flashlight: {
     angle: THREE.MathUtils.degToRad(25),
-    penumbra: 0.45,
+    penumbra: 0.75,                // 縁を広くぼかす(壁・天井に輪郭の帯を作らない)
     distance: 12,
     decay: 2,
     intensity: 26,
@@ -41,7 +41,7 @@ export const ENEMY = {
   irradianceKnee: 4,              // 敵材質の直接光の膝(W/m² 相当)。小さいほど近距離の白飛びを抑える
 };
 
-const MAX_LAMPS = 6;
+const MAX_LAMPS = 7;   // 常夜灯など最大 5 ＋ 照り返し 1 ＋ 襲撃ムービーの顔の補助光 1
 
 export class Enemy {
   constructor(scene, { floorY = 0, collisions = [], lamps = [], exitLamps = [], windowLamps = [] } = {}) {
@@ -65,6 +65,7 @@ export class Enemy {
     this._feet = { L: { min: 1e9, max: -1e9, armed: false, prevY: 0, hist: [] }, R: { min: 1e9, max: -1e9, armed: false, prevY: 0, hist: [] } };
     this._prevPos = new THREE.Vector3();
     this.speed = 0;                // 実移動速度(足音・アニメの判定用。AI が設定)
+    this.faceFill = 0;             // 襲撃ムービーの顔の補助光(0 = 消灯)
     this.ready = false;
   }
 
@@ -136,7 +137,7 @@ export class Enemy {
     for (const [x, z] of this._lampDefs.lamps) this._lampWorld.push({ p: new THREE.Vector3(x, this.floorY + L.y, z), c: new THREE.Color(L.color).multiplyScalar(L.intensity), r: L.range });
     for (const [x, y, z] of this._lampDefs.exitLamps) this._lampWorld.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.exitLamp.color).multiplyScalar(ENEMY.exitLamp.intensity), r: ENEMY.exitLamp.range });
     for (const [x, y, z] of this._lampDefs.windowLamps) this._lampWorld.push({ p: new THREE.Vector3(x, y, z), c: new THREE.Color(ENEMY.windowLamp.color).multiplyScalar(ENEMY.windowLamp.intensity), r: ENEMY.windowLamp.range });
-    this._lampWorld.length = Math.min(this._lampWorld.length, MAX_LAMPS - 1);   // 最後の1枠は照り返し用
+    this._lampWorld.length = Math.min(this._lampWorld.length, MAX_LAMPS - 2);   // 後ろの 2 枠は照り返し・顔の補助光
 
     this.place(6.9, 19.5, Math.PI);
     this.play('look_idle', { fade: 0 });
@@ -367,6 +368,16 @@ export class Enemy {
       i++;
     }
     for (; i < MAX_LAMPS; i++) { u.n2LampColor.value[i].setScalar(0); u.n2LampRange.value[i] = 1; }
+    // 襲撃ムービー中だけ: 顔の前・やや下に補助光(叫び顔を見せる。敵の材質だけに効く)
+    if (this.faceFill > 0) {
+      const k = MAX_LAMPS - 1;
+      const head = this.bones.head.getWorldPosition(_v1);
+      const f = this.forward(_v2);
+      const p = _v3.copy(head).addScaledVector(f, 0.55).add(_v4.set(0, -0.25, 0));
+      u.n2LampPos.value[k].copy(p).applyMatrix4(view);
+      u.n2LampColor.value[k].set(0xffe2c8).multiplyScalar(this.faceFill);
+      u.n2LampRange.value[k] = 1.6;
+    }
     u.n2UpView.value.set(0, 1, 0).transformDirection(view);
     u.n2HemiSky.value.set(ENEMY.hemi.sky).multiplyScalar(ENEMY.hemi.intensity * 10);
     u.n2HemiGround.value.set(ENEMY.hemi.ground).multiplyScalar(ENEMY.hemi.intensity * 10);

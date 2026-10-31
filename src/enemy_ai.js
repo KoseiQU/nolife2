@@ -6,6 +6,9 @@
 //  経路: P0 は直線廊下＋EVホールなので、廊下軸上の点列＋410 室内の点のグラフ(ダイクストラ＋見通しで間引き)。
 //  鍵で入室: 施錠扉の前で「鍵束→錠」→ door_open_in で扉を押し開けて入る(ルートモーション)。
 //  行動はジェネレータ(=update(dt) ごとに 1 歩進むコルーチン)で書く。setTimeout 非依存なので手動ポンプで決定的に進む。
+//  P2c: LURK(潜伏)を追加。隠れ場所に立ち止まり消灯して待つ。近づく(≤4m)/同じ部屋に入る/懐中電灯を向けると、
+//  grin で無言のまま walk_brutal で近づき ATTACK。時間配分 潜伏 60〜120 秒 : 巡回 20〜40 秒(DESIGN §3.4.1)。
+//  懐中電灯は PATROL/ALERT/CHASE で点灯、LURK で消灯(§3.2.1)。
 
 import * as THREE from 'three';
 import { segmentHitT } from './enemy.js';
@@ -32,6 +35,16 @@ export const AI = {
   windup: 0.8,             // 振りかぶり区間(attack 表情 1.0 に同期)
   chaseLose: 6.0,
   alertSearch: 12.0,
+  lurk: {
+    standMin: 60, standMax: 120,     // 潜伏して立っている時間
+    patrolMin: 20, patrolMax: 40,    // その後の巡回時間
+    near: 4.0,                       // この距離まで近づかれたら(遮蔽なし)発見
+    lightRange: 12.0,                // プレイヤーの懐中電灯の円錐に入ったら発見(この距離まで)
+    lightHalfAngle: 0.55,            // 円錐の判定角(rad)。FLASHLIGHT.angle の 8 割弱
+    approachSpeed: 1.6,              // 無言の接近(walk_brutal)
+    giveUp: 10.0,                    // これより離れたら CHASE(点灯)へ切り替える
+    idleTimeScale: 0.25,             // 立っている間の look_idle の速さ
+  },
   door: {
     startDist: 0.54,       // door_open_in 開始時の本体と扉面(廊下側)の距離。手が f50〜90 で ≈0.5m 先に届く
     lateral: 0.14,         // 右手(押す手)がノブ側に来るよう扉中心からずらす量
@@ -41,6 +54,15 @@ export const AI = {
     lockTime: 0.7,
   },
 };
+
+// 隠れ場所(P0 区間)。P3 で建物データ(building.json)へ移す前提で、座標と向く先だけの素朴な配列にしておく。
+// area: 'R' = 410 室内(扉を鍵で開けて入り、中から閉める) / 'C' = 廊下・EV ホール
+export const HIDE_SPOTS = [
+  { id: 'r410_back', area: 'R', x: 8.98, z: 8.38, faceTo: [7.8, 7.25] },          // 410 の奥の角(入ってきた者を正面から見る)
+  { id: 'r410_door_shadow', area: 'R', x: 8.16, z: 6.2, faceTo: [8.7, 7.6] },     // 扉の陰(開いた扉板の裏に隠れる)
+  { id: 'corridor_north', area: 'C', x: 6.32, z: 6.2, faceTo: [6.9, 9.5] },       // 廊下北端の角(窓の下の暗がり)
+  { id: 'ev_blind', area: 'C', x: 8.38, z: 21.72, faceTo: [6.9, 21.2] },          // EV ホール東の死角
+];
 
 const NODES = {
   N0: [6.9, 6.3], C1: [6.9, 7.38], C2: [6.9, 10.15], C3: [6.9, 13.05], C4: [6.9, 15.95], C5: [6.9, 18.85],
@@ -74,7 +96,7 @@ export class EnemyAI {
     this.enemy.onFootstep = (foot, pos) => {
       if (!this.audio) return;
       const run = this.enemy.current === 'run_intent';
-      this.audio.play('step', pos, run ? 1.0 : (this.state === 'PATROL' ? 0.6 : 0.8));
+      this.audio.play('step', pos, run ? 1.0 : (this.state === 'PATROL' ? 0.6 : this.state === 'LURK' ? 0.4 : 0.8));
     };
     this.setState('PATROL');
   }
@@ -93,9 +115,13 @@ export class EnemyAI {
     this.state = s;
     this.stateTime = 0;
     this.enemy.aimPoint = null;
-    if (s !== 'CHASE' && s !== 'ATTACK') this.enemy.setFace('grin', 0);
+    if (s !== 'CHASE' && s !== 'ATTACK' && s !== 'LURK') this.enemy.setFace('grin', 0);
     if (s !== 'ATTACK') this.enemy.setFace('attack', 0);
+    // 懐中電灯: 探している時だけ点ける(§3.2.1)。潜伏中は消して闇に溶ける
+    // (ATTACK は直前の状態のまま: 潜伏からの襲撃は消灯のまま、追跡からなら点灯のまま)
+    if (s !== 'SCRIPTED' && s !== 'ATTACK') this.enemy.setFlashlight(s !== 'LURK');
     const gen = {
+      LURK: () => this._lurk(opts),
       PATROL: () => this._patrol(),
       ALERT: () => this._alert(opts),
       CHASE: () => this._chase(),
@@ -189,6 +215,7 @@ export class EnemyAI {
       if (Math.hypot(n.x - e.x, n.z - e.z) <= n.r) { this.heard = true; this._heardAt = { x: n.x, z: n.z }; this.log('heard_noise', { r: n.r }); }
     }
     if (this.state === 'DEAD') return;
+    if (this.state === 'LURK') { this._lurkTrigger(p, dist); return; }
     if (this.canSee || this.inProximity) {
       this.lastKnown = { x: p.x, z: p.z };
       this.lastSeenTime = this.time;
@@ -200,6 +227,31 @@ export class EnemyAI {
       this.lastHeardTime = this.time;
       if (this.state === 'PATROL' && !this.pending) { this.log('heard', { dist: +dist.toFixed(2) }); this.setState('ALERT', { react: true }); }
     }
+  }
+
+  // 潜伏中の発見条件: 近い(遮蔽なし)/同じ部屋/懐中電灯を向けられた
+  _lurkTrigger(p, dist) {
+    if (this.lurkFound) return;
+    const L = AI.lurk;
+    let why = null;
+    if (!this.occluded && dist <= L.near) why = 'near';
+    else if (this._area(p.x, p.z) === 'R' && this._area(this.enemy.pos.x, this.enemy.pos.z) === 'R') why = 'room';
+    else if (this.player.flashlightOn && !this.occluded && dist <= L.lightRange && this._inPlayerLight()) why = 'light';
+    if (why) {
+      this.lurkFound = why;
+      this.lastKnown = { x: p.x, z: p.z };
+      this.log('lurk_found', { why, dist: +dist.toFixed(2) });
+    }
+  }
+
+  // 管理人(胸の高さ)がプレイヤーの懐中電灯の円錐の中にいるか
+  _inPlayerLight() {
+    const cam = this.player.camera;
+    const f = cam.getWorldDirection(_tmpV);
+    const e = this.enemy.pos;
+    const dx = e.x - cam.position.x, dy = e.y + 1.3 - cam.position.y, dz = e.z - cam.position.z;
+    const d = Math.hypot(dx, dy, dz);
+    return (dx * f.x + dy * f.y + dz * f.z) / Math.max(d, 1e-4) >= Math.cos(AI.lurk.lightHalfAngle);
   }
 
   _inVision(p, dist) {
@@ -456,7 +508,9 @@ export class EnemyAI {
     // 室内にいたら廊下へ戻り、扉を閉める
     if (this._area(e.pos.x, e.pos.z) === 'R') yield* this._leaveRoom();
     const order = ['405', '406', 'EV', '404', '407', '410', '403', '408', '402', '409', '401', '410', 'N0'];   // 410(プレイヤーの部屋)は一巡に2回
+    const budget = AI.lurk.patrolMin + this._rand() * (AI.lurk.patrolMax - AI.lurk.patrolMin);
     while (true) {
+      if (this.stateTime >= budget && this.lurkEnabled !== false) { this.setState('LURK'); yield; return; }   // 巡回は短く、潜伏が主
       const tgt = order[this.patrolIdx++ % order.length];
       if (tgt === 'EV' || tgt === 'N0') {
         const [x, z] = NODES[tgt];
@@ -575,6 +629,8 @@ export class EnemyAI {
     e.play('attack_downward', { fade: 0.15 });
     e.setFace('grin', 0);
     this.log('attack_start');
+    if (this.audio) this.audio.play('scream', this.enemy.headWorld(), 1.0);
+    if (this.onAttackStart) this.onAttackStart();
     const a = e.actions.attack_downward;
     const dur = a.getClip().duration;
     let hit = false;
@@ -609,6 +665,71 @@ export class EnemyAI {
     this.setState('CHASE');
   }
 
+  // ------------------------------------------------------------ LURK(潜伏)
+  // opts.spot: 隠れ場所 id(省略時は順番に選ぶ)。opts.standNow: その場で即座に潜伏(テスト用)
+  *_lurk(opts = {}) {
+    const e = this.enemy, L = AI.lurk;
+    this.lurkFound = null;
+    const spot = HIDE_SPOTS.find((h) => h.id === opts.spot) || this._pickSpot();
+    this.lurkSpot = spot.id;
+    this.log('lurk_go', { spot: spot.id });
+    if (!opts.standNow) {
+      const r = yield* this._goTo(spot.x, spot.z, 'PATROL', { useKey: true, stopIf: () => !!this.lurkFound, arrive: 0.12 });
+      if (this.lurkFound) { yield* this._ambush(); return; }
+      if (r !== 'arrived') { this.setState('PATROL'); yield; return; }
+      // 部屋に入った場合は中から扉を閉める(何もなかったように見せる)
+      if (spot.area === 'R' && this.doors.isOpen('410') && this._area(this.player.pos.x, this.player.pos.z) !== 'R') {
+        yield* this._turnTo(Math.atan2(7.8 - e.pos.x, 7.25 - e.pos.z));
+        this.doors.close('410');
+        this.log('door_closed_inside', { room: '410' });
+        yield* this._wait(1.0);
+        if (this.lurkFound) { yield* this._ambush(); return; }
+      }
+      yield* this._turnTo(Math.atan2(spot.faceTo[0] - e.pos.x, spot.faceTo[1] - e.pos.z));
+    }
+    // 立ち止まって待つ(ごく遅い見回し・消灯・鼻歌なし)
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.6, timeScale: L.idleTimeScale });
+    this.log('lurk_stand', { spot: spot.id });
+    const stand = L.standMin + this._rand() * (L.standMax - L.standMin);
+    for (let t = 0; t < stand; t += this.dt) {
+      if (this.lurkFound) { yield* this._ambush(); return; }
+      yield;
+    }
+    this.setState('PATROL');
+    yield;
+  }
+
+  _pickSpot() {
+    this._spotIdx = ((this._spotIdx ?? -1) + 1) % HIDE_SPOTS.length;
+    return HIDE_SPOTS[this._spotIdx];
+  }
+
+  // 発見後: grin、消灯のまま無言で近づく → ATTACK。離されたら CHASE(点灯)
+  *_ambush() {
+    const e = this.enemy, L = AI.lurk;
+    e.setFace('grin', 0.8);
+    e.aimPoint = null;
+    let route = null, replan = 0, lost = 0;
+    while (true) {
+      const p = this.player.pos;
+      const dist = Math.hypot(p.x - e.pos.x, p.z - e.pos.z);
+      if (!this.occluded) { lost = 0; this.lastKnown = { x: p.x, z: p.z }; } else lost += this.dt;
+      if (dist <= AI.attackRange && !this.occluded) { this.setState('ATTACK'); yield; return; }
+      if (dist > L.giveUp || lost > AI.chaseLose) { this.setState('CHASE'); yield; return; }
+      const tgt = this.lastKnown;
+      if (this._area(tgt.x, tgt.z) !== this._area(e.pos.x, e.pos.z) && !this.doors.isOpen('410')) {
+        if (this._area(e.pos.x, e.pos.z) === 'C') { yield* this._doorEntry(this.doors.get('410'), true); route = null; continue; }
+        this.doors.setLocked('410', false); this.doors.open('410', 1.5);
+      }
+      replan -= this.dt;
+      if (!route || replan <= 0) { route = this._route(e.pos.x, e.pos.z, tgt.x, tgt.z); replan = 0.25; }
+      const wp = route[0] || tgt;
+      if (this._stepToward(wp.x, wp.z, L.approachSpeed, 'walk_brutal', 5.0, 0.3) && route.length) route.shift();
+      yield;
+    }
+  }
+
   // ------------------------------------------------------------ SCRIPTED(デバッグ)
   *_scripted(opts) {
     if (opts.goto) {
@@ -625,10 +746,13 @@ export class EnemyAI {
       face: { grin: +e.face.grin.toFixed(2), attack: +e.face.attack.toFixed(2) },
       canSee: this.canSee, heard: this.heard, occluded: this.occluded, lastKnown: this.lastKnown,
       uninterruptible: this.uninterruptible,
+      lurkSpot: this.state === 'LURK' ? this.lurkSpot : null, lurkFound: this.state === 'LURK' ? this.lurkFound : null,
+      enemyFlashlight: this.enemy.flashlight.on,
     };
   }
 }
 
+const _tmpV = new THREE.Vector3();
 function doorPos(door, floorY) {
   const c = door.collision;
   return new THREE.Vector3(c ? (c.minX + c.maxX) / 2 : 0, floorY + 1.0, c ? (c.minZ + c.maxZ) / 2 : 0);

@@ -7,7 +7,7 @@
 import * as THREE from 'three';
 
 export const ENEMY_AUDIO = {
-  humVolume: { PATROL: 0.55, ALERT: 0.0, CHASE: 0.9, ATTACK: 0.0, SCRIPTED: 0.55, DOOR: 0.25 },
+  humVolume: { PATROL: 0.55, ALERT: 0.0, CHASE: 0.9, ATTACK: 0.0, SCRIPTED: 0.55, DOOR: 0.25, LURK: 0.0 },
   stepVolume: { walk: 0.7, run: 1.0 },
   refDistance: 1.4,
   rolloff: 1.3,
@@ -32,6 +32,8 @@ export class EnemyAudio {
       keys: synthKeys(this.ctx),
       lock: synthLock(this.ctx),
       rattle: synthRattle(this.ctx),
+      scream: synthScream(this.ctx),
+      hit: synthHit(this.ctx),
     };
     this.hum = this._makeSource(enemy.bones.head, true);
     this.hum.setBuffer(this.buffers.hum);
@@ -207,6 +209,44 @@ function synthRattle(ctx) {
         const t = (i - i0) / sr2;
         d[i] += Math.exp(-t * 45) * (Math.sin(2 * Math.PI * 900 * t) * 0.4 + (r() - 0.5) * 0.9) * 0.45;
       }
+    }
+  });
+}
+
+// 叫び笑い(振りかぶりの瞬間): 喉を絞った「あ゛ぁぁ」。のこぎり波＋母音 a のフォルマント＋がなり(ノイズ変調)、音程が上ずる
+function synthScream(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 1.3, sr, (d, sr2, n) => {
+    const r = rng(31);
+    let ph = 0, lp1 = 0, lp2 = 0, bp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr2;
+      const f = 170 + 150 * Math.min(1, t / 0.35) + 8 * Math.sin(t * 2 * Math.PI * 7) + (r() - 0.5) * 18;
+      ph += f / sr2;
+      const saw = 2 * (ph - Math.floor(ph)) - 1;
+      const growl = 1 + 0.5 * Math.sin(t * 2 * Math.PI * 38) * (r() * 0.5 + 0.5);
+      const src = saw * growl + (r() - 0.5) * 0.6;
+      // 粗い母音フィルタ(2 段のローパスとバンド強調の混合)
+      lp1 += (src - lp1) * 0.22; lp2 += (lp1 - lp2) * 0.22;
+      bp += ((src - lp1) - bp) * 0.35;
+      const env = Math.min(1, t / 0.05) * Math.min(1, (1.3 - t) / 0.4);
+      d[i] = Math.tanh((lp2 * 1.2 + bp * 0.7) * 2.2) * 0.5 * env;
+    }
+  });
+}
+
+// 打撃: 鈍い「ゴッ」＋骨に当たる乾いた割れ
+function synthHit(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 0.5, sr, (d, sr2, n) => {
+    const r = rng(53);
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr2;
+      const thump = Math.sin(2 * Math.PI * 55 * t * (1 - t)) * Math.exp(-t * 14);
+      lp += ((r() - 0.5) - lp) * 0.5;
+      const crack = lp * Math.exp(-t * 60) * 1.6;
+      d[i] = Math.tanh((thump * 1.4 + crack) * 1.5) * 0.9;
     }
   });
 }
