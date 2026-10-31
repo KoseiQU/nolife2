@@ -193,6 +193,7 @@ export class Enemy {
     this.flashlight.on = !!on;
     this.flashlight.light.visible = this.flashlight.beam.visible = !!on;
     this.flashlight.lens.material.color.setScalar(on ? 6 : 0.02);
+    this.flashlight.lens.visible = !!on;   // 消灯時はレンズ面を出さない(暗所で白い円盤に見えたため)
   }
 
   // ------------------------------------------------------------ pose / anim
