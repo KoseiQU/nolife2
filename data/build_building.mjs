@@ -502,6 +502,82 @@ function buildBasement() {
   };
 }
 
+// P3c: 1F の外(敷地)。階キー 'G'(1F と同じ床の高さ y=0)。当たりは walls.js をそのまま使える「疑似階」:
+//  footprint = 歩ける矩形(建物の外面 = 1F の外周の矩形 + 壁厚 0.12 に合わせる)。外周 = 敷地の境(柵・擁壁・生垣)と建物の外壁。
+//  perimOpenings = 正面玄関(風除室の外側の自動ドア)。ここを越えると 1F ⇔ G を切り替える(portal)。
+//  obstacles = 車・駐輪ラック・ゴミ置場・植え込み・柱など(当たりの箱)。見た目は tools/blender/build_exterior.py が同じデータから作る。
+//  図面 floorplan_1F の東側(駐車場・駐輪場・ゴミ置場・バイク置場)の位置を 15.5px/m で読んだもの(DESIGN §2.3 外環境)。
+const SITE_T = 0.12;
+function buildSite(f1) {
+  const T = SITE_T;
+  const r2 = (v) => +v.toFixed(3);
+  const R = (x0, z0, x1, z1) => [r2(x0), r2(z0), r2(x1 - x0), r2(z1 - z0)];
+  const ent = f1.rooms.find((r) => r.id === 'ENTRANCE');
+  const [ex0, , ew] = ent.rect;
+  const zS = SOUTH_ROOM_Z1;                       // 1F 南面 28.1
+  const xE = 26.0;                                // 1F 横廊下・東ブロックの東端
+  const nst = NST_RECT;                           // 北階段の箱(1F は地面の小さな囲い)
+  const W = -2.0, S = 34.5, E = 38.0, N = -3.0;   // 敷地の境
+  const footprint = [
+    R(W, zS + T, xE + T, S),                                        // S: 正面のアプローチ(南面の前)
+    R(ex0, zS, ex0 + ew, zS + T),                                   // 玄関の踏み段(外側の自動ドアの線 z=28.1 まで)
+    R(W, WEST_WING_Z1 + T, MST_RECT[0] - T, zS + T),                // W1: 外階段の西(西棟の南端の前)
+    R(MST_RECT[0] - T, MST_RECT[1] + MST_RECT[3] + T, SOUTH_ROOM_X0 - T, zS + T),   // W2: 外階段の南
+    R(EV_RECT[0] + EV_RECT[2] - 1.8 + T, EV_RECT[1] + EV_RECT[3] + T, SOUTH_ROOM_X0 - T, MST_RECT[1] + MST_RECT[3] + T),   // W3: EV の南面(赤橙のパネル)の前
+    R(C1F.office[1] + T, SOUTH_CORR_Z1 + T, xE + T, zS + T),        // P: 管理室の東(2F の張り出しの下=柱だけの屋外)
+    R(xE + T, N, E, S),                                             // E: 東側(駐車場・車路)
+    R(nst[0] + nst[2] + T, N, xE + T, EAST_BLK_Z0 - 1.0 - T),       // N: 北側(駐輪場・ゴミ置場)。南端=東ブロックのバルコニーの外
+    R(WEST_WING_X1 + 1.0 + T, nst[1] + nst[3] + T, nst[0] + nst[2] + T, EAST_BLK_Z0 - 1.0 - T),   // N2: 北階段の南(西棟東列のバルコニーの外)
+  ];
+  const perimOpenings = [{ pos: [ex0 + ew / 2, zS], width: C1F.autoDoorW, facing: 'N', glass: true }];
+  // 当たりの箱(h = 見た目の高さ。当たりは 0..CEIL_H で常に塞ぐ)
+  const obstacles = [];
+  const ob = (id, kind, x0, z0, x1, z1, h, extra = {}) => obstacles.push({ id, kind, rect: R(x0, z0, x1, z1), h, ...extra });
+  // 庇の柱(build_floor.build_porch と同じ位置)
+  ob('porch_col_w', 'column', ex0 - 1.6 + 0.05, zS + T + 1.65, ex0 - 1.6 + 0.35, zS + T + 1.95, 2.55);
+  ob('porch_col_e', 'column', ex0 + ew + 1.25, zS + T + 1.65, ex0 + ew + 1.55, zS + T + 1.95, 2.55);
+  // 2F の張り出しの下の柱(管理室の東)
+  ob('pilotis_col_n', 'column', 24.85, SOUTH_CORR_Z1 + T + 0.1, 25.2, SOUTH_CORR_Z1 + T + 0.45, 2.9);
+  ob('pilotis_col_s', 'column', 24.85, zS - 0.35, 25.2, zS, 2.9);
+  // 植え込み(縁石 0.15 + 低木)。正面の西側・東側、外階段の西
+  ob('bed_front_w', 'bed', SOUTH_ROOM_X0, zS + T, ex0 - 1.8, zS + T + 1.1, 0.7);
+  ob('bed_front_e', 'bed', C1F.office[0] + 1.7, zS + T, C1F.office[1] + T, zS + T + 1.1, 0.7);
+  ob('bed_w1', 'bed', W, WEST_WING_Z1 + T, W + 1.4, WEST_WING_Z1 + T + 6.0, 0.8);
+  ob('bed_south_w', 'bed', W, S - 1.2, 11.5, S, 0.9);
+  // 駐車場(図面: 東端の縦長の枠 x≈31.8〜35.8, z≈−0.9〜12。車は東向きに頭から入れる 2.5m 幅 × 5 台)
+  const parking = { x0: 31.2, x1: 36.4, z0: -0.5, stall: 2.5, n: 5, stopX: 35.75 };
+  const cars = [
+    { stall: 0, color: [0.08, 0.085, 0.09], len: 4.3, wid: 1.72, h: 1.48, cabin: 0.55 },
+    { stall: 1, color: [0.62, 0.62, 0.6], len: 4.6, wid: 1.78, h: 1.45, cabin: 0.52 },
+    { stall: 3, color: [0.06, 0.1, 0.16], len: 3.4, wid: 1.48, h: 1.66, cabin: 0.62 },
+  ];
+  for (const c of cars) {
+    const zc = parking.z0 + (c.stall + 0.5) * parking.stall;
+    ob('car_' + c.stall, 'car', parking.stopX - 0.1 - c.len, zc - c.wid / 2, parking.stopX - 0.1, zc + c.wid / 2, c.h);
+    c.rect = obstacles[obstacles.length - 1].rect;
+  }
+  // 駐輪場(図面の3つの枠)。屋根つきのラック。ラックの間に通路
+  const racks = [[15.6, 18.3], [19.1, 22.1], [22.5, 25.4]].map(([x0, x1], i) => ({ id: 'rack_' + i, x0, x1, z0: 3.3, z1: 9.1 }));
+  for (const r of racks) ob(r.id, 'rack', r.x0, r.z0, r.x1, r.z1, 2.2);
+  // ゴミ置場(図面の枠 x≈22.0〜27.4, z≈−0.5〜1.4)。コンクリートの囲い＋南に金網の扉
+  ob('garbage', 'garbage', 22.0, -0.5, 27.4, 1.4, 1.9);
+  // バイク置場(図面の2枠)。1台だけ置く
+  const bikes = [{ x0: 26.5, x1: 28.3, z0: 12.9, z1: 15.6 }, { x0: 31.8, x1: 33.7, z0: 12.9, z1: 15.6 }];
+  ob('motorbike', 'motorbike', 27.0, 13.5, 27.8, 15.3, 1.1);
+  // 照明柱(足元の当たりだけ)
+  const poles = [[30.4, 6.0], [30.4, 19.0], [30.4, 31.0], [4.5, 31.5], [12.5, 31.2], [21.0, 33.0], [21.0, 2.0]];
+  poles.forEach(([x, z], i) => ob('pole_' + i, 'pole', x - 0.1, z - 0.1, x + 0.1, z + 0.1, 3.6));
+  // 境の種類(見た目): 擁壁＋柵(南・東)、擁壁(北=山側)、生垣＋柵(西)。車路の出口は閉じた門(南東)
+  const gate = { x0: 31.6, x1: 37.4, z: S };
+  return {
+    key: 'G', baseLevel: 1, y: 0, footprint, perimOpenings, rooms: [], fillWalls: [], obstacles,
+    portal: { x0: ex0, x1: ex0 + ew, z: zS },
+    spawn: [ex0 + ew / 2, zS + 3.2],
+    bounds: { W, S, E, N },
+    parking, cars, racks, bikes, gate, poles,
+  };
+}
+
 function shellFor(level, inv, scEnd, rooms) {
   const zTop = level === 1 ? 11.6 : (level <= 6 ? westZ0Of(level, inv) : null);
   const air = [];
@@ -1140,6 +1216,7 @@ function build() {
     navGraph,
     roofB,
     basement: buildBasement(),
+    site: buildSite(floors.find((f) => f.level === 1)),   // P3c: 1F の外(敷地・階キー 'G')
   };
 
   // ---- 検算1: 居室数 ----
@@ -1290,6 +1367,19 @@ function build() {
     const roofCell = [14.0, SOUTH_ROOM_Z0 + 3.0];
     const inside = roofB.footprint.some(([x, z, w, d]) => roofCell[0] > x && roofCell[0] < x + w && roofCell[1] > z && roofCell[1] < z + d);
     if (!inside) throw new Error('ASSERT失敗: 屋上Bの屋根面が footprint に無い');
+  }
+
+  // ---- 検算8(P3c): 敷地(階キー 'G')の外周が閉じている(柵・擁壁・建物の外壁の外へ出られない)・玄関の線が 1F の外側の自動ドアと一致 ----
+  {
+    const site = building.site;
+    reachedPerFloor.G = floodFillCheck({ level: 'G', ...site, footprint: site.footprint, rooms: [] }, site.spawn);
+    const f1 = floors.find((f) => f.level === 1);
+    const po = f1.perimOpenings[0];
+    if (Math.abs(po.pos[0] - (site.portal.x0 + site.portal.x1) / 2) > 1e-6 || Math.abs(po.pos[1] - site.portal.z) > 1e-6) throw new Error('ASSERT失敗: 敷地の玄関の線が 1F の外側の自動ドアと一致しない');
+    // 敷地の歩ける矩形が 1F の建物(外周の矩形)に食い込まない
+    for (const [x, z, w, d] of site.footprint) for (const [bx, bz, bw, bd] of f1.footprint) {
+      if (x < bx + bw - 1e-6 && x + w > bx + 1e-6 && z < bz + bd - 1e-6 && z + d > bz + 1e-6) throw new Error(`ASSERT失敗: 敷地の矩形 ${[x, z, w, d]} が建物 ${[bx, bz, bw, bd]} に重なる`);
+    }
   }
 
   const out = join(__dirname, 'building.json');
