@@ -640,6 +640,9 @@ def fbx_material(m, tex_dir):
     return nm
 
 
+EXPR_KEYS = ('grin', 'attack')
+
+
 def export_copy(o):
     """書き出し用の複製: モディファイア(マスク・アーマチュア・細分化 0)を適用した形にし、形状キーは grin だけ残す。
     MPFB の体型ターゲット(形状キー)は基本形へ焼き込む。FBX が形状キーを落とさないよう、複製にはモディファイアを残さない。"""
@@ -656,13 +659,13 @@ def export_copy(o):
     basis = me.shape_keys.reference_key
     b = np.empty(n * 3, np.float32); basis.data.foreach_get('co', b)
     mix = b.copy()
-    grin = None
+    expr = {}                                     # 表情キー(grin / attack)は残し、他は基本形へ焼く
     for k in keys:
         if k is basis:
             continue
         c = np.empty(n * 3, np.float32); k.data.foreach_get('co', c)
-        if k.name == 'grin':
-            grin = c - b
+        if k.name in EXPR_KEYS:
+            expr[k.name] = c - b
         else:
             mix += (c - b) * k.value
     nm = me.copy()
@@ -682,10 +685,12 @@ def export_copy(o):
                     if g.group == gi and g.weight > 0.0:
                         inn[v.index] = True
             drop |= inn if md.invert_vertex_group else ~inn
-    if grin is not None:
+    if expr:
         c.shape_key_add(name='Basis', from_mix=False)
-        gk = c.shape_key_add(name='grin', from_mix=False)
-        gk.data.foreach_set('co', mix + grin); gk.value = 0.0
+        for kn in EXPR_KEYS:
+            if kn in expr:
+                gk = c.shape_key_add(name=kn, from_mix=False)
+                gk.data.foreach_set('co', mix + expr[kn]); gk.value = 0.0
     if drop.any():
         bm = bmesh.new(); bm.from_mesh(nm)
         bm.verts.ensure_lookup_table()

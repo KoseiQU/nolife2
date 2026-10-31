@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
-ARGS = parse_args({'far': False, 'labels': '', 'face': False, 'grin': False, 'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
+ARGS = parse_args({'attack': False, 'far': False, 'labels': '', 'face': False, 'grin': False, 'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
 MODE = ARGS['mode']
 
 # --- 廊下(P0b)での立ち位置とカメラ。Blender 座標 = (x, -z, y)(build_scene.py と同じ)。床 z=8.7 ---
@@ -363,17 +363,17 @@ def compare():
     log(f'saved {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
 
 
-def apply_grin(scene):
+def apply_grin(scene, key='grin'):
     """笑い顔: 体・眉/まつ毛の帯の grin を 1 に、ヘアカーブ(眉・まつ毛)は記録した移動量を足す。"""
     import numpy as np
     for o in scene.objects:
-        if o.type == 'MESH' and o.data.shape_keys and 'grin' in o.data.shape_keys.key_blocks:
-            o.data.shape_keys.key_blocks['grin'].value = 1.0
-        if o.type == 'CURVES' and 'n2_grin' in o.data.attributes:
+        if o.type == 'MESH' and o.data.shape_keys and key in o.data.shape_keys.key_blocks:
+            o.data.shape_keys.key_blocks[key].value = 1.0
+        if o.type == 'CURVES' and 'n2_' + key in o.data.attributes:
             n = len(o.data.points)
             p = np.empty(n * 3, np.float32); d = np.empty(n * 3, np.float32)
             o.data.attributes['position'].data.foreach_get('vector', p)
-            o.data.attributes['n2_grin'].data.foreach_get('vector', d)
+            o.data.attributes['n2_' + key].data.foreach_get('vector', d)
             o.data.attributes['position'].data.foreach_set('vector', p + d)
 
 
@@ -399,6 +399,8 @@ def main():
         show_export_hair(scene)
     if ARGS.get('grin'):
         apply_grin(scene)
+    if ARGS.get('attack'):
+        apply_grin(scene, 'attack')
     if ARGS.get('debug_lights'):
         for o in scene.objects:
             if o.type == 'LIGHT': print('LIGHT', o.name, o.data.type, o.data.energy, tuple(round(v, 2) for v in o.matrix_world.translation), o.hide_render)

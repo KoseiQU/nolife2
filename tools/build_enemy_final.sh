@@ -36,10 +36,12 @@ echo "== 4/4 render"
 R() { "$BLENDER" -b "$1" -P tools/blender/enemy_render.py -- "${@:2}" --device "$DEVICE" 2>&1 | grep -E '^\[n2|Error|Traceback' || true; }
 R "$B" --mode portrait --samples $((256 * K)) --out "$OUT/07_portrait.jpg"
 R "$B" --mode portrait --grin --samples $((256 * K)) --out "$OUT/07_grin_portrait.jpg"
+R "$B" --mode portrait --attack --samples $((256 * K)) --out "$OUT/07_attack_portrait.jpg"
 R build/p0_baked.blend --mode insitu --enemy "$B" --samples $((512 * K)) --out "$OUT/07_insitu.jpg"
 R build/p0_baked.blend --mode insitu --far --enemy "$B" --samples $((512 * K)) --out "$OUT/07_insitu_far.jpg"
 R build/p0_baked.blend --mode peephole --enemy "$B" --samples $((512 * K)) --out "$OUT/07_peephole.jpg"
 R build/p0_baked.blend --mode peephole --grin --enemy "$B" --samples $((512 * K)) --out "$OUT/07_grin_peephole.jpg"
+R build/p0_baked.blend --mode peephole --attack --enemy "$B" --samples $((512 * K)) --out "$OUT/07_attack_peephole.jpg"
 R "$B" --mode threequarter --samples $((256 * K)) --out "$OUT/07_threequarter.jpg"
 R "$B" --mode portrait --strips --samples $((256 * K)) --out "$OUT/07_portrait_export_hair.jpg"
 # 前後比較: P1b 初版(コミット 849e92c の画像)→ 差し戻し後

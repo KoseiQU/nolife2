@@ -390,6 +390,15 @@ def skin_masks(body, rig, eyes_obj):
         a_ = co[np.argmin(np.linalg.norm(co - a_, axis=1))]; b_ = co[np.argmin(np.linalg.norm(co - b_, axis=1))]
         t_, d_ = seg_param(co, a_, b_)
         tend = np.maximum(tend, np.exp(-(d_ / 0.008) ** 2) * (t_ > 0.05) * (t_ < 0.95))
+    # 口角の内側(大きく口を開けると表に出る、MakeHuman の肌テクスチャの赤い粘膜部分)
+    lipm = group_mask(body, 'lips') > 0.3
+    corner = np.zeros(len(co), np.float32)
+    if lipm.any():
+        lp_ = co[lipm]
+        for sgn in (1, -1):
+            cpt = lp_[np.argmax(lp_[:, 0] * sgn)]
+            corner = np.maximum(corner, smoothstep(0.012, 0.004, np.linalg.norm(co - cpt, axis=1)))
+    set_point_attr(body, 'n2_corner', corner)
     for name_, v_ in (('n2_cav', cav), ('n2_hand', hand), ('n2_handback', back), ('n2_knuck', knuck), ('n2_tendon', tend)):
         set_point_attr(body, name_, v_)
     forehead = np.clip(smoothstep(ez + 0.03, ez + 0.045, z) * smoothstep(ez + 0.095, ez + 0.075, z) *
@@ -442,6 +451,8 @@ def upgrade_skin(body, rig, eyes_obj, size=4096):
     scalp = n.attr('n2_scalp')
     sc_col = n.mix(n.mix(col, (0.36, 0.33, 0.31, 1), 0.7), (0.14, 0.13, 0.12, 1), n.math('MULTIPLY', dots, 0.6))
     col = n.mix(col, sc_col, n.math('MULTIPLY', scalp, 0.85))
+    # 口角の内側の赤い描き込みを肌色に(attack で口を大きく開けると見えるため)
+    col = n.mix(col, n.mix(col, (0.56, 0.45, 0.40, 1), 0.85), n.attr('n2_corner'))
     # 彫りの影: 眼窩・こけた頬・こめかみのくぼみを少し暗く紫がかった色に
     cav = n.attr('n2_cav')
     col = n.mix(col, n.mix(col, (0.62, 0.52, 0.52, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', cav, 0.7))
@@ -1375,7 +1386,7 @@ def age_mouth(objs):
     LOG('mouth: teeth yellowed, gums dulled, teeth decimated')
 
 
-def make_grin(body, units):
+def make_grin(body, units, key='grin'):
     from bl_ext.user_default.mpfb.services import TargetService, LocationService
     d = os.path.join(LocationService.get_mpfb_data('targets'), 'expression', 'units', 'asian')
     kb = body.data.shape_keys.key_blocks
@@ -1391,28 +1402,77 @@ def make_grin(body, units):
         c = np.empty(n * 3, np.float32); k.data.foreach_get('co', c)
         delta += (c - b) * w
         body.shape_key_remove(k)
-    g = body.shape_key_add(name='grin', from_mix=False)
+    if key == 'attack':    # 口角まわりは移動量を周囲と均す(大きく開けると口の内側の面が外へめくれるため)
+        co3 = b.reshape(-1, 3); d3 = delta.reshape(-1, 3)
+        lipm = group_mask(body, 'lips') > 0.3
+        if lipm.any():
+            lp_ = co3[lipm]
+            cm = np.zeros(n, np.float32)
+            for sgn in (1, -1):
+                cpt = lp_[np.argmax(lp_[:, 0] * sgn)]
+                cm = np.maximum(cm, smoothstep(0.020, 0.008, np.linalg.norm(co3 - cpt, axis=1)))
+            ev = np.empty(len(body.data.edges) * 2, np.int32); body.data.edges.foreach_get('vertices', ev); ev = ev.reshape(-1, 2)
+            cnt = np.zeros(n, np.float32); np.add.at(cnt, ev[:, 0], 1); np.add.at(cnt, ev[:, 1], 1)
+            for _ in range(25):
+                acc = np.zeros_like(d3); np.add.at(acc, ev[:, 0], d3[ev[:, 1]]); np.add.at(acc, ev[:, 1], d3[ev[:, 0]])
+                avg = acc / np.maximum(cnt, 1)[:, None]
+                d3 = d3 + (avg - d3) * cm[:, None] * 0.8
+            delta = d3.ravel()
+    g = body.shape_key_add(name=key, from_mix=False)
     g.relative_key = basis
     g.data.foreach_set('co', b + delta)
     g.value = 0.0; g.slider_max = 1.0
     mv = np.linalg.norm(delta.reshape(-1, 3), axis=1)
-    LOG(f'grin: {len(units)} units, max move {mv.max() * 1000:.1f} mm')
+    LOG(f'{key}: {len(units)} units, max move {mv.max() * 1000:.1f} mm')
     return g
 
 
-def grin_deltas(body):
-    """体の各頂点の grin の移動量(レストのワールド座標)。"""
-    k = body.data.shape_keys.key_blocks['grin']
+def jaw_follow(body, teeth, tongue, key='attack'):
+    """顎を開くキーに、下の歯と舌を剛体で追従させる(顎の頂点の動きから回転・平行移動を推定 = Kabsch)。"""
+    co, dl = grin_deltas(body, key)
+    jw = group_mask(body, 'jaw') * (group_mask(body, 'body') > 0.5)
+    sel = jw > 0.5
+    P = co[sel]; Q = P + dl[sel]
+    pc, qc = P.mean(0), Q.mean(0)
+    U, _, Vt = np.linalg.svd((P - pc).T @ (Q - qc))
+    D = np.diag([1, 1, np.sign(np.linalg.det(Vt.T @ U.T))])
+    Rm = Vt.T @ D @ U.T
+    ang = math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(Rm) - 1) / 2))))
+    def move(pts):
+        return (pts - pc) @ Rm.T + qc
+    for o, part in ((teeth, 'lower'), (tongue, 'all')):
+        if o is None:
+            continue
+        me = o.data
+        pts = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get('co', pts); pts = pts.reshape(-1, 3)
+        mw = np.array(o.matrix_world, np.float32)
+        wp = pts @ mw[:3, :3].T + mw[:3, 3]
+        nw = move(wp)
+        if part == 'lower':     # 下の歯だけ: MakeHuman の歯は下顎側が 'jaw' の重みを持つので、その重みで動かす
+            w = group_mask(o, 'jaw')
+            nw = wp + (nw - wp) * w[:, None]
+        inv = np.linalg.inv(mw)
+        lp = nw @ inv[:3, :3].T + inv[:3, 3]
+        if not me.shape_keys:
+            o.shape_key_add(name='Basis', from_mix=False)
+        k = o.shape_key_add(name=key, from_mix=False)
+        k.data.foreach_set('co', lp.astype(np.float32).ravel()); k.value = 0.0
+    LOG(f'{key}: jaw {ang:.1f}° → lower teeth / tongue follow')
+
+
+def grin_deltas(body, key='grin'):
+    """体の各頂点の表情キー(grin / attack)の移動量(レストのワールド座標)。"""
+    k = body.data.shape_keys.key_blocks[key]
     k.value = 0.0; a, _ = rest_mesh_arrays(body)
     k.value = 1.0; b, _ = rest_mesh_arrays(body)
     k.value = 0.0
     return a, b - a
 
 
-def transfer_grin(body, meshes, curves):
+def transfer_grin(body, meshes, curves, key='grin'):
     """眉・まつ毛(帯メッシュとヘアカーブ)を、近くの肌の動きに合わせて grin に追従させる。"""
     from mathutils.kdtree import KDTree
-    co, dl = grin_deltas(body)
+    co, dl = grin_deltas(body, key)
     sel = np.where(np.linalg.norm(dl, axis=1) > 1e-6)[0]
     kd = KDTree(len(sel))
     for j, i in enumerate(sel):
@@ -1431,16 +1491,16 @@ def transfer_grin(body, meshes, curves):
         d = field(pts)
         if not me.shape_keys:
             m.shape_key_add(name='Basis', from_mix=False)
-        k = m.shape_key_add(name='grin', from_mix=False)
+        k = m.shape_key_add(name=key, from_mix=False)
         k.data.foreach_set('co', (pts + d).ravel())
         k.value = 0.0
     for c in curves:
         pos = np.empty(len(c.data.points) * 3, np.float32)
         c.data.attributes['position'].data.foreach_get('vector', pos)
         d = field(pos.reshape(-1, 3))
-        at = c.data.attributes.new('n2_grin', 'FLOAT_VECTOR', 'POINT')
+        at = c.data.attributes.new('n2_' + key, 'FLOAT_VECTOR', 'POINT')
         at.data.foreach_set('vector', d.astype(np.float32).ravel())
-    LOG(f'grin transfer: {len(meshes)} meshes, {len(curves)} curves')
+    LOG(f'{key} transfer: {len(meshes)} meshes, {len(curves)} curves')
 
 
 # ---------------------------------------------------------------------------
@@ -1615,9 +1675,12 @@ def attach_hammer(rig, obj):
 def upgrade(C, body, rig, objs, extras):
     rng = np.random.default_rng(1967)
     eyes = objs['high-poly']
+    age_mouth(objs)                       # 歯の間引きは形状キーを付ける前に
     if C.get('grin'):
         make_grin(body, C['grin'])
-    age_mouth(objs)
+    if C.get('attack'):
+        make_grin(body, C['attack'], 'attack')
+        jaw_follow(body, objs.get('teeth_base'), objs.get('tongue01'), 'attack')
     F = upgrade_skin(body, rig, eyes)
     upgrade_eyes(eyes)
     upgrade_coverall(objs['elvs_male_coveralls_1'], rig)
@@ -1629,6 +1692,8 @@ def upgrade(C, body, rig, objs, extras):
     curves, strips = make_brows_lashes(objs, rig, F, rng)
     if C.get('grin'):
         transfer_grin(body, strips, curves)
+    if C.get('attack'):
+        transfer_grin(body, strips, curves, 'attack')
     if C.get('hammer'):
         h = make_hammer()
         export_hammer(h, os.path.dirname(TEX_OUT))

@@ -110,6 +110,24 @@
    "limit": "≥8"
   },
   {
+   "check": "attack シェイプキー(FBX): 顎先の下がり(mm)",
+   "ok": true,
+   "value": 34.6,
+   "limit": "≥25"
+  },
+  {
+   "check": "attack に追従(歯・舌・眉・まつ毛)",
+   "ok": true,
+   "value": [
+    "N2E_07.body.001",
+    "N2E_07.brow_strips.001",
+    "N2E_07.lash_strips.001",
+    "N2E_07.teeth_base.001",
+    "N2E_07.tongue01.001"
+   ],
+   "limit": "teeth, tongue, brow_strips, lash_strips"
+  },
+  {
    "check": "FBX 再読込: メッシュ数",
    "ok": true,
    "value": 11,
@@ -130,7 +148,7 @@
   {
    "check": "FBX サイズ(MB)",
    "ok": true,
-   "value": 21.17,
+   "value": 21.3,
    "limit": "≤50"
   }
  ]

@@ -201,6 +201,10 @@ FINAL = dict(
     # 襲う時の「不気味な笑い」= シェイプキー grin(表情ユニットの合成)。口角を大きく上げて歯を見せ、目は見開く、片眉だけ上げる
     grin={'mouth-corner-puller': 1.0, 'mouth-upward-retraction': 0.55, 'mouth-parling': 0.55, 'mouth-retraction': 0.35,
           'eye-left-opened-up': 0.55, 'eye-right-opened-up': 0.45, 'eyebrows-left-up': 0.55, 'eyebrows-right-inner-up': 0.15},
+    # 襲う瞬間の叫び笑い = シェイプキー attack: 目をカッと見開き、両眉を上げ、顎を大きく落として口を開ける(口角は上がったまま)
+    attack={'mouth-open': 1.0, 'mouth-corner-puller': 0.45, 'mouth-upward-retraction': 0.8, 'mouth-parling': 0.6, 'mouth-depression': 0.25, 'mouth-elevation': 0.9,
+            'nose-left-elevation': 0.4, 'nose-right-elevation': 0.4,
+            'eye-left-opened-up': 1.0, 'eye-right-opened-up': 1.0, 'eyebrows-left-up': 1.0, 'eyebrows-right-up': 1.0},
     clothes=['elvs_male_coveralls_1', 'shoes03'],
     hammer=True,   # 右手にハンマー(全長 40cm)。書き出しは build/enemy/hammer.fbx / .glb の別ファイル
     recolor={

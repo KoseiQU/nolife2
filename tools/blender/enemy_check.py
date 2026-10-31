@@ -13,6 +13,7 @@
 #  8) 帽子のクラウン: 天井(外面)が頭頂 +10mm 以内(=頭に密着したドーム)
 #  9) ハンマー: 三角形 ≤3k・全長 0.38〜0.42m・テクスチャ ≤2048・原点=握り・hammer.fbx/.glb が読み直せる
 # 10) FBX の体に形状キー grin があり、値 1 で口まわりが ≥8mm 動く
+# 11) FBX の体に形状キー attack があり、顎先が ≥25mm 下がる。歯・舌・眉・まつ毛も attack を持つ
 
 import bpy, json, math, os, sys
 import numpy as np
@@ -207,6 +208,22 @@ else:
         if ec_.z - 0.11 < p_.z < ec_.z - 0.04 and abs(p_.x - ec_.x) < 0.065 and p_.y < ec_.y + 0.03:
             mv = max(mv, ((mw_ @ b_.co) - p_).length)
     rec('grin シェイプキー(FBX): 口まわりの最大移動(mm)', mv >= 0.008, round(mv * 1000, 1), '≥8')
+ak = fbody.data.shape_keys.key_blocks.get('attack') if fbody is not None and fbody.data.shape_keys else None
+if ak is None:
+    rec('attack シェイプキー(FBX)', False, 'なし', 'あり・顎先 ≥25mm 下がる')
+else:
+    ec_ = Vector(export['eye_center_rest'])
+    bk = fbody.data.shape_keys.reference_key
+    mw_ = fbody.matrix_world
+    drop = 0.0
+    for a_, b_ in zip(bk.data, ak.data):
+        p_ = mw_ @ a_.co
+        if ec_.z - 0.20 < p_.z < ec_.z - 0.09 and abs(p_.x - ec_.x) < 0.025 and p_.y < ec_.y + 0.01:
+            drop = max(drop, p_.z - (mw_ @ b_.co).z)
+    rec('attack シェイプキー(FBX): 顎先の下がり(mm)', drop >= 0.025, round(drop * 1000, 1), '≥25')
+    fol = [o.name for o in new if o.data.shape_keys and 'attack' in o.data.shape_keys.key_blocks]
+    need = ('teeth', 'tongue', 'brow_strips', 'lash_strips')
+    rec('attack に追従(歯・舌・眉・まつ毛)', all(any(k in nm for nm in fol) for k in need), sorted(fol), ', '.join(need))
 rec('FBX 再読込: メッシュ数', len(new) == len(export['meshes']), len(new), len(export['meshes']))
 rec('FBX 再読込: 頂点数・素材数の一致', not mism, mism or '全一致', '全一致')
 fimgs = {i for i in bpy.data.images if i.users and i.packed_file is not None or i.filepath.endswith(('.jpg', '.png'))}
