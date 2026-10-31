@@ -21,13 +21,19 @@ import { Enemy } from './enemy.js';
 import { EnemyAI } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
 import { Peephole } from './peephole.js';
+import { AttackMovie } from './attack_movie.js';
 
 const PARAMS = new URLSearchParams(location.search);
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
   exposure: 4.5,        // ACES 前の露出
-  lightmapGain: 1.0,    // ライトマップ強度への追加倍率(1 = Cycles と同じ物理量)
+  lightmapGain: 1.2,    // ライトマップ強度への追加倍率(1 = Cycles と同じ物理量)。P2c: 消灯時の常夜灯・窓明かりを少し持ち上げる(§3.2.1)
+  // P2c(§3.2.1「消灯時でも輪郭が見える下限」): ごく弱い環境光の床(半球光。空=月明かりの青灰、床=暖色の照り返し)。
+  // ライトマップがほぼ 0 の室内(410)でも、壁・扉・人影の輪郭が分かる程度。敵の材質にも効く(人影のシルエット)
+  ambientFloor: 0.12,
+  ambientSky: 0x8a96b0,
+  ambientGround: 0x2a2420,
   fogDensity: 0.05,
   fogColor: 0x020305,
   aoIntensity: 0.55,    // GTAO の混ぜ具合(ベイクに既に AO が入っているので弱め)
@@ -68,6 +74,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 scene.fog = new THREE.FogExp2(LOOK.fogColor, LOOK.fogDensity);
+const ambientFloor = new THREE.HemisphereLight(LOOK.ambientSky, LOOK.ambientGround, LOOK.ambientFloor);
+scene.add(ambientFloor);
 const camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.05, 60);
 scene.add(camera);
 
@@ -320,7 +328,12 @@ window.addEventListener('pointerdown', resumeAudio);
 window.addEventListener('keydown', resumeAudio);
 const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
 const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管理人(EV ホール、北を向く)
-const ai = new EnemyAI({ enemy, audio: enemyAudio, player, collisions, doors: doorApi, doorInfo, floorY, onKill: () => startDeath() });
+const ai = new EnemyAI({ enemy, audio: enemyAudio, player, collisions, doors: doorApi, doorInfo, floorY,
+  onKill: () => { movie.hit(); startDeath(); },
+  onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; movie.start(); } });
+// P2c: 襲撃ムービー(固定カメラ・顔の補助光・血飛沫)。血の合成は最終段(粒子の後)
+const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
+composer.addPass(movie.pass);
 if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
 
@@ -336,6 +349,46 @@ const lens = (() => {
 })();
 const peephole = new Peephole({ camera, player, floorY, lens });
 composer.insertPass(peephole.pass, composer.passes.indexOf(grainPass));
+let doorScope = null;
+buildDoorScopeInside();
+
+// P2c: ドアスコープを室内側から見えるように(§3.4.1)。扉板の内面・目の高さに真鍮のリングとレンズ。
+// 扉板(door410.node)の子にするので扉と一緒に回る。レンズには廊下側の光の点(小さな発光)と環境反射
+function buildDoorScopeInside() {
+  const c = door410.collision;
+  const z = (c.minZ + c.maxZ) / 2;
+  const rc = new THREE.Raycaster(new THREE.Vector3(c.maxX + 0.5, floorY + 1.48, z), new THREE.Vector3(-1, 0, 0), 0, 1);
+  const hit = rc.intersectObject(door410.node, true)[0];
+  const innerX = hit ? hit.point.x : c.maxX;
+  const grp = new THREE.Group();
+  grp.name = 'DoorScopeInside_410';
+  const brass = new THREE.MeshStandardMaterial({ color: 0xb48a46, metalness: 1.0, roughness: 0.32, envMap: envTex, envMapIntensity: 0.55 });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0165, 0.0048, 10, 28).rotateY(Math.PI / 2), brass);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.0125, 0.0125, 0.012, 20).rotateZ(Math.PI / 2), brass);
+  barrel.position.x = 0.002;
+  const dot = (() => {     // 廊下の常夜灯がレンズに映った点(少し上にずれた小さな光)
+    const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+    const g = cv.getContext('2d');
+    const gr = g.createRadialGradient(38, 24, 0, 38, 24, 14);
+    gr.addColorStop(0, 'rgba(255,236,200,1)'); gr.addColorStop(0.35, 'rgba(255,214,160,0.55)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = '#000'; g.fillRect(0, 0, 64, 64); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+  })();
+  const lensMat = new THREE.MeshStandardMaterial({ color: 0x07090c, roughness: 0.04, metalness: 0.0, envMap: envTex, envMapIntensity: 0.9,
+    emissive: 0xffffff, emissiveMap: dot, emissiveIntensity: 0.9 });
+  const lensMesh = new THREE.Mesh(new THREE.CircleGeometry(0.011, 24).rotateY(Math.PI / 2), lensMat);
+  lensMesh.position.x = 0.0085;
+  grp.add(ring, barrel, lensMesh);
+  for (const m of [ring, barrel, lensMesh]) { m.castShadow = false; m.receiveShadow = true; }
+  // 扉板ローカル(開閉角 0 のとき世界の向きと同じ。原点 = 蝶番)
+  grp.position.set(innerX - door410.node.position.x + 0.004, floorY + 1.48 - door410.node.position.y, z - door410.node.position.z);
+  door410.node.add(grp);
+  doorScope = grp;
+}
+const peepHint = document.createElement('div');
+peepHint.textContent = 'E長押し：覗く';
+peepHint.style.cssText = 'position:fixed;left:0;right:0;bottom:12vh;text-align:center;color:#c9c2b6;font:13px/1.6 -apple-system,"Hiragino Sans",sans-serif;letter-spacing:.12em;opacity:0;transition:opacity .25s;pointer-events:none;text-shadow:0 0 6px #000;';
+document.body.appendChild(peepHint);
 let pendingE = null;   // E の長押し判定 {t, held}
 function canPeep() {
   const p = player.object.position;
@@ -343,7 +396,7 @@ function canPeep() {
   if (!(p.x > 7.86 && p.z > 5.8 && p.z < 8.7)) return false;   // 410 の室内
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
   const dx = lens.x - p.x, dz = lens.z - p.z, dist = Math.hypot(dx, dz);
-  return dist < 1.6 && (dx * fwd.x + dz * fwd.z) / dist > 0.5;
+  return dist < 1.2 && (dx * fwd.x + dz * fwd.z) / dist > 0.5;   // P2c: 1.2m 以内で扉に正対(ヒント表示と同じ条件)
 }
 function onUseKey() {
   if (canPeep()) { pendingE = { t: 0, held: false }; return null; }   // 短押し=扉、長押し=覗き穴(離した時に決まる)
@@ -374,6 +427,7 @@ function updatePeepInput(dt) {
   if (peephole.active && !pendingE && !player.keys.has('KeyP') && !peephole.forced) peephole.set(false);
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   peephole.update(size.x, size.y);
+  peepHint.style.opacity = (!peephole.active && !death && !movie.active && canPeep()) ? '1' : '0';
 }
 
 // ---------------------------------------------------------------- death / checkpoint (P2b)
@@ -387,7 +441,8 @@ caption.style.cssText = 'color:#b9b2a8;font:500 22px/1 "Hiragino Mincho ProN","Y
 overlay.appendChild(caption);
 document.body.append(flash, overlay);
 let death = null;   // { t, respawned }
-const DEATH = { flash: 0.18, toBlack: 1.0, hold: 3.0, fadeIn: 1.0 };
+// P2c: ヒット(t=0)の後は血飛沫を見せてから暗転。ATTACK 開始から暗転完了まで ≈0.85+1.75 = 2.6 秒
+const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0.8 };
 function startDeath() {
   if (death) return;
   death = { t: 0, respawned: false };
@@ -399,23 +454,19 @@ function updateDeath(dt) {
   if (!death) return;
   death.t += dt;
   const t = death.t;
-  flash.style.opacity = String(t < DEATH.flash ? 0.85 : Math.max(0, 0.85 - (t - DEATH.flash) * 2.5));
+  flash.style.opacity = String(t < DEATH.flash ? 0.35 : Math.max(0, 0.35 - (t - DEATH.flash) * 3));
   const respawnAt = DEATH.toBlack + DEATH.hold;
   let black;
-  if (t < respawnAt) black = Math.min(1, Math.max(0, (t - DEATH.flash * 0.5) / (DEATH.toBlack - DEATH.flash * 0.5)));
+  if (t < respawnAt) black = Math.min(1, Math.max(0, (t - DEATH.blackFrom) / (DEATH.toBlack - DEATH.blackFrom)));
   else black = Math.max(0, 1 - (t - respawnAt) / DEATH.fadeIn);
   overlay.style.opacity = String(black);
   caption.style.opacity = String(t > DEATH.toBlack && t < respawnAt ? Math.min(1, (t - DEATH.toBlack) * 2) : Math.max(0, 1 - (t - respawnAt) * 3));
-  // 襲われた瞬間: 視界が沈む(カメラを少し下げて傾ける)
-  if (t < DEATH.toBlack) {
-    const k = Math.min(1, t / 0.5);
-    player.object.position.y = floorY + PLAYER_EYE - 0.5 * k * k;
-    player.object.rotation.z = 0.35 * k;
-  }
+  // (襲われた瞬間のカメラの沈み・傾きは襲撃ムービー側が行う)
   if (!death.respawned && t >= respawnAt) {
     death.respawned = true;
     door410.angle = 0; door410.target = 0; door410.locked = false; door410.speedMul = 1;
     if (door410.collision) door410.collision.disabled = false;
+    movie.end();
     player.object.rotation.z = 0;
     player.crouch = false;
     player.setPose(CHECKPOINT.x, CHECKPOINT.z, CHECKPOINT.yaw, 0);
@@ -426,7 +477,6 @@ function updateDeath(dt) {
   if (t >= respawnAt + DEATH.fadeIn) { death = null; overlay.style.opacity = '0'; flash.style.opacity = '0'; caption.style.opacity = '0'; }
 }
 let deathCount = 0;
-const PLAYER_EYE = 1.62;
 renderer.domElement.addEventListener('click', () => { if (!player.isLocked()) player.lock(); });
 player.controls.addEventListener('lock', () => document.body.classList.add('locked'));
 player.controls.addEventListener('unlock', () => document.body.classList.remove('locked'));
@@ -444,6 +494,7 @@ function step(dt) {
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   ai.update(dt);
   enemy.update(dt, camera);
+  movie.update(dt);
   updateDoors(dt);
   enemyAudio.update(dt);
   updateDeath(dt);
@@ -460,6 +511,10 @@ function frame(now) {
   while (frameTimes.length && now - frameTimes[0][0] > 1000) frameTimes.shift();
   requestAnimationFrame(frame);
 }
+// P2c: 襲撃ムービーの血(ShaderPass)と血煙(Points)のシェーダを先にコンパイルしておく(初回発動時の 50ms 級の引っかかり対策)
+movie.pass.enabled = true; movie.mist.points.visible = true;
+render();
+movie.pass.enabled = false; movie.mist.points.visible = false;
 requestAnimationFrame(frame);
 
 // ---------------------------------------------------------------- debug hook
@@ -482,6 +537,7 @@ function stats() {
 window.__n2 = {
   THREE, scene, camera, renderer, player, composer, doors, collisions, manifest, LOOK,
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME,
+  movie, ambientFloor, get doorScope() { return doorScope; }, peepHintVisible: () => peepHint.style.opacity === '1',
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
   peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },
@@ -489,10 +545,11 @@ window.__n2 = {
   deaths: () => deathCount,
   enemy: {
     place(x, z, yaw = 0) { enemy.place(x, z, yaw); return ai.stats(); },
-    setState(s) {
+    // opts: LURK のとき { spot: 隠れ場所 id, standNow: true でその場で潜伏 }
+    setState(s, opts = {}) {
       if (s === 'ATTACK' || s === 'CHASE' || s === 'ALERT') ai.lastKnown = { x: player.pos.x, z: player.pos.z };
       ai.uninterruptible = false;
-      ai.setState(s, { force: true, log: true, react: s === 'ALERT' });
+      ai.setState(s, { force: true, log: true, react: s === 'ALERT', ...opts });
       return ai.stats();
     },
     play(name) { ai.setState('SCRIPTED', { force: true }); enemy.play(name, { restart: true }); return name; },

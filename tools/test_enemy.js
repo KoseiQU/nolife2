@@ -3,6 +3,8 @@
 // 結果: window.__N2.testResult と画面左上の <pre>。?test=enemy&fps=1 で 1080p の fps 実測も行う(タブが前面にあること)。
 
 const DT = 1 / 60;
+// 消灯時の黒つぶれ判定(画面中央 50% 領域の平均輝度、表示値 0..1)。P2b 時点: 410 室内 0.007 / 廊下 0.16
+const DARK_MIN = { room: 0.035, corridor: 0.12 };
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
@@ -76,20 +78,24 @@ export async function run(N) {
     N.enemy.place(6.9, 8.8, Math.PI);    // 1.2m
     N.ai.lastKnown = { x: 6.9, z: 7.6 };
     N.ai.setState('CHASE', { force: true, log: true });
-    let t = 0, attackAt = null, hitAt = null, maxAttackFaceWindup = 0, deathSeen = false;
+    let t = 0, attackAt = null, hitAt = null, maxAttackFaceWindup = 0, deathSeen = false, movieFov = null, movieFrozen = null;
     for (let i = 0; i < 300 && hitAt === null; i++) {
       N.pump(DT, 1, false); t += DT;
       if (attackAt === null && N.ai.state === 'ATTACK') attackAt = t;
+      if (attackAt !== null && movieFov === null && t - attackAt >= 0.4) { movieFov = N.camera.fov; movieFrozen = N.player.frozen; }
       if (attackAt !== null && N.enemyObj.current === 'attack_downward' && N.enemyObj.actionTime() < 0.8) maxAttackFaceWindup = Math.max(maxAttackFaceWindup, N.enemyObj.face.attack);
       if (N.deathState()) { hitAt = t; deathSeen = true; }
     }
+    const bloodOn = N.movie.pass.enabled;
     const deathsBefore = N.deaths();
-    for (let i = 0; i < Math.round(5.3 / DT); i++) N.pump(DT, 1, false);
+    for (let i = 0; i < Math.round(6.0 / DT); i++) N.pump(DT, 1, false);
     const p = N.player.pos, cp = N.CHECKPOINT;
     const respawnErr = Math.hypot(p.x - cp.x, p.z - cp.z);
     const st = N.ai.stats();
     return {
-      pass: attackAt !== null && deathSeen && N.deaths() === deathsBefore + 1 && respawnErr < 1e-3 && st.state === 'PATROL' && maxAttackFaceWindup > 0.95 && N.deathState() === null,
+      pass: attackAt !== null && deathSeen && N.deaths() === deathsBefore + 1 && respawnErr < 1e-3 && st.state === 'PATROL' && maxAttackFaceWindup > 0.95 && N.deathState() === null
+        && movieFov !== null && movieFov < 50 && movieFrozen && bloodOn && N.camera.fov === 68 && !N.movie.active,
+      movie: { fovAt04s: movieFov && +movieFov.toFixed(1), inputFrozen: movieFrozen, bloodAtHit: bloodOn, fovAfterRespawn: N.camera.fov },
       attackAfter_s: attackAt && +attackAt.toFixed(3), hitAfter_s: hitAt && +hitAt.toFixed(3), attackFaceMaxInWindup: +maxAttackFaceWindup.toFixed(2),
       deaths: N.deaths(), respawnErr_m: +respawnErr.toFixed(4), enemyStateAfter: st.state, enemyPosAfter: st.pos, deathOverlayCleared: N.deathState() === null,
     };
@@ -146,6 +152,47 @@ export async function run(N) {
     return { pass, before: { fov: before.fov }, on, offP: { ...offP, posErr: +offP.posErr.toExponential(1), rotErr: +offP.rotErr.toExponential(1) }, onE, offE: { ...offE, posErr: +offE.posErr.toExponential(1) }, shortE };
   });
 
+  T('7_lurk_ambush_attack', () => {
+    W.reset();
+    N.setView(6.9, 12.0, Math.PI, 0); N.setFlashlight(false);
+    N.enemy.place(8.98, 8.38, -2.33);
+    N.ai.setState('LURK', { force: true, log: true, spot: 'r410_back', standNow: true });
+    const ev0 = N.ai.events.length;
+    // ① 離れて(扉は閉)いる間は潜伏のまま・消灯
+    for (let i = 0; i < Math.round(3 / DT); i++) N.pump(DT, 1, false);
+    const still = { state: N.ai.state, flashlightOn: N.enemyObj.flashlight.on, action: N.enemyObj.current, found: N.ai.lurkFound };
+    // ② 扉を開けて戸口に立つ(2m・遮蔽なし)→ 発見 → grin → 無言で接近 → ATTACK → ヒット
+    N.doorApi.open('410'); for (let i = 0; i < 60; i++) N.pump(DT, 1, false);
+    N.setView(7.3, 7.25, -Math.PI / 2, 0);
+    let t = 0, foundAt = null, attackAt = null, hitAt = null, grinAtAttack = null, flashDuringApproach = false, approachClip = null;
+    for (let i = 0; i < Math.round(12 / DT) && hitAt === null; i++) {
+      N.pump(DT, 1, false); t += DT;
+      const evs = N.ai.events.slice(ev0);
+      if (foundAt === null && evs.some((e) => e.ev === 'lurk_found')) foundAt = t;
+      if (foundAt !== null && attackAt === null) { if (N.enemyObj.flashlight.on) flashDuringApproach = true; if (N.enemyObj.current !== 'look_idle') approachClip = N.enemyObj.current; }
+      if (attackAt === null && N.ai.state === 'ATTACK') { attackAt = t; grinAtAttack = N.enemyObj.face.grin; }
+      if (N.deathState()) hitAt = t;
+    }
+    const found = N.ai.events.slice(ev0).find((e) => e.ev === 'lurk_found');
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    return {
+      pass: still.state === 'LURK' && !still.flashlightOn && !still.found && foundAt !== null && attackAt !== null && hitAt !== null && !flashDuringApproach && approachClip === 'walk_brutal' && grinAtAttack > 0.3,
+      beforeDoorOpen: still, foundAfter_s: foundAt && +foundAt.toFixed(2), foundWhy: found && found.why, approachClip, enemyFlashlightDuringApproach: flashDuringApproach,
+      grinAtAttack: grinAtAttack && +grinAtAttack.toFixed(2), attackAfter_s: attackAt && +attackAt.toFixed(2), hitAfter_s: hitAt && +hitAt.toFixed(2),
+    };
+  });
+
+  T('8_dark_visibility', () => {
+    W.reset();
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 21.0, Math.PI);
+    const res = {};
+    const shots = { room_off: [8.9, 8.2, Math.PI / 2 - 0.45, false], room_on: [8.9, 8.2, Math.PI / 2 - 0.45, true], corridor_off: [6.9, 7.6, Math.PI, false], corridor_on: [6.9, 7.6, Math.PI, true] };
+    for (const [k, [x, z, yaw, fl]] of Object.entries(shots)) { N.setView(x, z, yaw, 0); N.setFlashlight(fl); N.pump(DT, 3, false); res[k] = W.centerLuma(); }
+    N.setFlashlight(false);
+    const pass = res.room_off >= DARK_MIN.room && res.corridor_off >= DARK_MIN.corridor;
+    return { pass, meanLumaCenter50: res, threshold: DARK_MIN };
+  });
+
   W.reset();
   N.render();
   if (new URLSearchParams(location.search).get('fps') === '1') { out.fps = await measureFps(N); show(); }
@@ -170,6 +217,15 @@ function harness(N) {
       }
       return m;
     },
+    // 960×540 で描いて画面中央 50% の平均輝度(sRGB 表示値の Rec.709 輝度、0..1)
+    centerLuma() {
+      N.setRenderSize(960, 540); N.render();
+      const gl = N.renderer.getContext(); const w = 480, h = 270; const px = new Uint8Array(w * h * 4);
+      gl.readPixels(240, 135, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let s = 0; for (let i = 0; i < px.length; i += 4) s += (0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]) / 255;
+      N.setRenderSize(0);
+      return +(s / (w * h)).toFixed(4);
+    },
     reset() {
       for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'KeyE', 'KeyP', 'KeyL']) this.key(k, false);
       N.peephole(false);
@@ -177,6 +233,7 @@ function harness(N) {
       d.angle = 0; d.target = 0; d.locked = false; d.speedMul = 1; if (d.collision) d.collision.disabled = false;
       d.node.rotation.y = 0;
       N.player.frozen = false;
+      N.movie.end();
       // 死亡演出が残っていれば流し切る
       for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
       N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw);
