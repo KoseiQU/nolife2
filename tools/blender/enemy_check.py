@@ -10,7 +10,7 @@
 #  6) 眼球: 虹彩テクスチャ(彩度のある画素)の平均が灰白でない(暗く・色がある)
 #  7) 帽子: つばの下端が目の中心より上(正面の目線)。さらに正面(3.2m/目の高さ)と覗き穴(0.6m/1.50m)から
 #     目の中心へのレイが帽子に遮られない
-#  8) 帽子のクラウンの高さ(下の帯の上端〜天井)≤ 60mm
+#  8) 帽子のクラウン: 天井(外面)が頭頂 +10mm 以内(=頭に密着したドーム)
 #  9) ハンマー: 三角形 ≤3k・全長 0.38〜0.42m・テクスチャ ≤2048・原点=握り・hammer.fbx/.glb が読み直せる
 # 10) FBX の体に形状キー grin があり、値 1 で口まわりが ≥8mm 動く
 
@@ -141,12 +141,14 @@ for label, dist, hgt in (('正面3.2m', 3.2, eye_z), ('廊下の目線1.62m', 3.
             blocked.append(label)
 rec('目へのレイが帽子に遮られない', not blocked, blocked or 'なし', 'なし')
 
-# 8) 帽子のクラウンの高さ(下の帯の上端〜天井、レスト)
+# 8) 帽子のクラウン: 頭に密着したドーム = 天井(外面)が頭頂(縁の平面から測る)の +10mm 以内
 rig.data.pose_position = 'REST'; bpy.context.view_layer.update(); dg = bpy.context.evaluated_depsgraph_get()
-upv = np.array(cap['n2_cap_up']); dpl = cap['n2_cap_d']; band = cap['n2_cap_band']
+upv = np.array(cap['n2_cap_up']); dpl = cap['n2_cap_d']
 crco, _, _, _ = eval_world(cap)
 hmax = max(float(np.dot(np.array(p), upv)) - dpl for p in crco)
-rec('帽子クラウンの高さ(帯上端〜天井, mm)', hmax - band <= 0.060, round((hmax - band) * 1000, 1), '≤60')
+gap = hmax - float(cap['n2_cap_head_top'])
+rec('帽子の天井 − 頭頂(mm, 縁の平面から)', 0.0 < gap <= 0.010, round(gap * 1000, 1), '0〜10')
+rec('帽子の縁〜天井(mm, 参考)', True, round(hmax * 1000, 1), '—')
 rig.data.pose_position = 'POSE'; bpy.context.view_layer.update(); dg = bpy.context.evaluated_depsgraph_get()
 
 # 9) ハンマー(別ファイル)

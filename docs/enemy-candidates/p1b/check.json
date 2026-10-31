@@ -40,7 +40,7 @@
   {
    "check": "つば下端 − 目の中心(m)",
    "ok": true,
-   "value": 0.0229,
+   "value": 0.0016,
    "limit": "> 0"
   },
   {
@@ -50,15 +50,21 @@
    "limit": "なし"
   },
   {
-   "check": "帽子クラウンの高さ(帯上端〜天井, mm)",
+   "check": "帽子の天井 − 頭頂(mm, 縁の平面から)",
    "ok": true,
-   "value": 58.6,
-   "limit": "≤60"
+   "value": 8.0,
+   "limit": "0〜10"
+  },
+  {
+   "check": "帽子の縁〜天井(mm, 参考)",
+   "ok": true,
+   "value": 102.2,
+   "limit": "—"
   },
   {
    "check": "ハンマー三角形数",
    "ok": true,
-   "value": 640,
+   "value": 672,
    "limit": "≤3000"
   },
   {
@@ -82,14 +88,14 @@
   {
    "check": "hammer.fbx 再読込(三角形数一致)",
    "ok": true,
-   "value": 640,
-   "limit": 640
+   "value": 672,
+   "limit": 672
   },
   {
    "check": "hammer.glb 再読込(三角形数一致)",
    "ok": true,
-   "value": 640,
-   "limit": 640
+   "value": 672,
+   "limit": 672
   },
   {
    "check": "三角形数(FBX)",
@@ -124,7 +130,7 @@
   {
    "check": "FBX サイズ(MB)",
    "ok": true,
-   "value": 21.16,
+   "value": 21.17,
    "limit": "≤50"
   }
  ]

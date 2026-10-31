@@ -892,8 +892,9 @@ def cap_texture(size=1024):
         return np.clip(1 - np.abs(coord - c) / w, 0, 1)
     # クラウン側面 v∈[0,0.36]: 上端と下端に 1 本ずつ、前の縦の縫い目 2 本
     side = (yy < 0.36)
-    stitch += side * stitch_row(line(yy, 0.012, 0.0016) + line(yy, 0.345, 0.0016), xx * 260)
-    stitch += side * stitch_row(line(xx, 0.42, 0.0013) + line(xx, 0.58, 0.0013), yy * 260)
+    stitch += side * stitch_row(line(yy, 0.010, 0.0016), xx * 260)
+    for k6 in range(6):    # 6 枚はぎの縫い目(頂点で集まる)
+        stitch += side * stitch_row(line(xx, (k6 + 0.5) / 6, 0.0013), yy * 260)
     # 天井 [0,0.5]x[0.5,1]: 縁から少し内側に円のステッチ
     cx, cy = 0.25, 0.75
     rr = np.hypot(xx - cx, yy - cy)
@@ -912,7 +913,7 @@ def cap_texture(size=1024):
     navy = np.array([0.105, 0.125, 0.215], np.float32)   # sRGB(つなぎの紺に合わせる)
     col = navy[None, None, :] * (0.94 + 0.08 * twill[..., None] + 0.05 * fiber[..., None])
     col = col * (1 - 0.35 * stitch[..., None])                          # 糸の溝は暗く
-    col[band] = (col[band] * 0.90)                                     # 下の帯(側面の下半分)は同じ紺でわずかに濃い
+    # 縁の帯は同じ紺(色を変えない)
     # 使い込み: クラウン上端の縁・つばの先が擦れて色が抜け、全体に薄いくすみ
     edge_wear = np.zeros_like(xx)
     edge_wear += side * np.clip(1 - np.abs(yy - 0.355) / 0.012, 0, 1)
@@ -947,21 +948,15 @@ def cap_texture(size=1024):
             mk(f'{CID}_cap_rough', np.repeat(rough[..., None], 3, -1), True))
 
 
-CAP_BAND = 0.030          # 下の帯(側面の下 3cm。外側はステッチで区切ったトリム、内側は汗止め)の高さ
-CAP_CROWN_MAX = 0.054     # 帯の上端〜天井(機械チェックは ≤60mm)
+CAP_BAND = 0.006          # 縁: 同色の細いステッチ帯(高さ 6mm、ほぼ面一)
+CAP_TOP_GAP = 0.0055      # 頭頂から天井(外面)までのすき間(機械チェックは ≤10mm)
 
 
 def make_cap(body, rig, F):
-    """P1 の 04(ワークキャップ)型: クラウンは頭に沿って低く、天井は平たく、前立ては張り、つばは前へ。
-    帯の上端〜天井が CAP_CROWN_MAX を超えないよう、縁の位置を自動で上げる。"""
-    fo, bo = 0.048, 0.022
-    for _ in range(6):
-        nrm, dpl, hv, Fp, Bp = cap_plane_from_head(body, F, fo, bo)
-        h = hv @ nrm - dpl
-        crown = float(h.max()) + 0.0065 - CAP_BAND
-        if crown <= CAP_CROWN_MAX:
-            break
-        fo += crown - CAP_CROWN_MAX + 0.001; bo += crown - CAP_CROWN_MAX + 0.001
+    """P1 の 04 の帽子: 頭蓋に沿ったドーム型クラウン(6 枚はぎ)＋前だけの湾曲したつば。
+    天井は平らにしない・側面も垂直にしない(=頭の包絡そのもの＋ゆとり)。縁は額の眉上 4cm。"""
+    nrm, dpl, hv, Fp, Bp = cap_plane_from_head(body, F, 0.040, 0.008)
+    h = hv @ nrm - dpl
     up = Vector(nrm)
     fwd = Vector((0, -1, 0)); fwd = (fwd - up * fwd.dot(up)).normalized()
     side = fwd.cross(up).normalized()
@@ -975,10 +970,12 @@ def make_cap(body, rig, F):
     rad_v = np.hypot(lx, ly)
     NA = 64
     azs = np.linspace(-np.pi, np.pi, NA, endpoint=False)
-    top = float(lz.max()) + 0.0065
-    NR = 9
-    hs = np.linspace(0.0, top, NR)
-    # 各高さ・方位の頭の半径(その高さ以上の最大 = 下から被せられる包絡)
+    head_top = float(lz.max())
+    top = head_top + CAP_TOP_GAP
+    NR = 12
+    # 高さは上ほど細かく(ドームの丸みを出す)
+    hs = np.sin(np.linspace(0, np.pi / 2, NR + 1)[:-1]) * top     # 最上段は頭頂の手前(最後は中心の 1 点で閉じる)
+    # 各高さ・方位の頭の半径(その高さ以上の最大)＋ゆとり = 頭蓋に密着するドーム
     R = np.zeros((NR, NA))
     for j, hh in enumerate(hs):
         selh = lz >= hh - 0.004
@@ -988,16 +985,18 @@ def make_cap(body, rig, F):
             R[j, i] = rad_v[sel].max() if sel.any() else 0.0
     for j in range(NR - 2, -1, -1):
         R[j] = np.maximum(R[j], R[j + 1])
-    for _ in range(3):
+    for _ in range(4):
         R = np.maximum(R, (np.roll(R, 1, 1) + np.roll(R, -1, 1) + 2 * R) / 4)
-    R += 0.007
+    R += 0.0075
+    # 上部は楕円のドームで滑らかに閉じる(頭の包絡より内側には入れない=密着しつつ尖り・ねじれを出さない)
+    j0 = int(NR * 0.45)
+    h0 = hs[j0]
+    for j in range(j0 + 1, NR):
+        t = (hs[j] - h0) / max(top - h0, 1e-6)
+        R[j] = np.maximum(R[j0] * np.sqrt(max(1 - t * t, 0.0)), R[j])
+    for _ in range(2):
+        R[j0:] = np.maximum(R[j0:], (np.roll(R[j0:], 1, 1) + np.roll(R[j0:], -1, 1) + 2 * R[j0:]) / 4)
     r_side = R[0].copy()
-    # 天井を平たく広めに(パトロールキャップの張り)、前立ては少し起こす
-    front = np.clip(1 - np.abs(azs) / np.radians(45), 0, 1)
-    for j in range(NR):
-        t = j / (NR - 1)
-        R[j] = np.maximum(R[j], r_side * (0.90 + 0.10 * (1 - t)))       # 側面はほぼ垂直、天井は広く平ら
-        R[j] += front * 0.003 * np.sin(np.pi * t)
     verts, faces, uvs, mats = [], [], [], []
     def P(a_idx, r, hh):
         a = azs[a_idx % NA]
@@ -1015,41 +1014,23 @@ def make_cap(body, rig, F):
             u0, u1 = i / NA, (i + 1) / NA
             v0, v1 = 0.36 * j / (NR - 1), 0.36 * (j + 1) / (NR - 1)
             uvs.append([(u0, v0), (u1, v0), (u1, v1), (u0, v1)])
-    # 天井: 平らな面(縁はわずかに丸める)
-    rings = [rows[-1]]
-    for fr, dz in ((0.93, 0.0022), (0.6, 0.0030), (0.25, 0.0032)):
-        rings.append([len(verts) + i for i in range(NA)])
-        for i in range(NA):
-            verts.append(P(i, R[-1, i] * fr, top + dz))
-    cidx = len(verts); verts.append(Vector(cen) + up * (top + 0.003))
-    def top_uv(v):
-        q = v - Vector(cen)
-        rmax = R[-1].max() * 1.02
-        return (0.25 + 0.24 * q.dot(side) / rmax, 0.75 + 0.24 * q.dot(fwd) / rmax)
-    for k in range(len(rings) - 1):
-        for i in range(NA):
-            a, b = rings[k][i], rings[k][(i + 1) % NA]
-            c, d = rings[k + 1][(i + 1) % NA], rings[k + 1][i]
-            faces.append((a, b, c, d)); mats.append(0)
-            uvs.append([top_uv(verts[x]) for x in (a, b, cidx if False else c, d)])
+    cidx = len(verts); verts.append(Vector(cen) + up * top)
     for i in range(NA):
-        a, b = rings[-1][i], rings[-1][(i + 1) % NA]
+        a, b = rows[-1][i], rows[-1][(i + 1) % NA]
         faces.append((a, b, cidx)); mats.append(0)
-        uvs.append([top_uv(verts[x]) for x in (a, b, cidx)])
-    # 縁の帯(高さ 18mm、1.5mm 浮かす)
-    j1 = 1
+        uvs.append([(i / NA, 0.36), ((i + 1) / NA, 0.36), ((i + 0.5) / NA, 0.36)])
+    # 縁: 同色の細いステッチ帯(6mm、0.6mm だけ浮かす)
     b0 = [len(verts) + i for i in range(NA)]
     for i in range(NA):
-        verts.append(P(i, R[0, i] + 0.0015, -0.001))
+        verts.append(P(i, R[0, i] + 0.0006, -0.001))
     b1 = [len(verts) + i for i in range(NA)]
     for i in range(NA):
-        rb = np.interp(CAP_BAND, hs, R[:, i]) + 0.0015
-        verts.append(P(i, rb, CAP_BAND))
+        verts.append(P(i, np.interp(CAP_BAND, hs, R[:, i]) + 0.0006, CAP_BAND))
     for i in range(NA):
         faces.append((b0[i], b0[(i + 1) % NA], b1[(i + 1) % NA], b1[i])); mats.append(1)
         uvs.append([(i / NA, 0.37), ((i + 1) / NA, 0.37), ((i + 1) / NA, 0.45), (i / NA, 0.45)])
-    # つば: 前 ±55°、長さ 7cm、ほぼ水平(下向き 4°)＋ 左右にわずかな反り(ワークキャップのつば)
-    BA = np.radians(55)
+    # つば: 前だけ ±50°、幅(出) 6.5cm。横から見て弧(先へ行くほど下がる)＋ 左右の端も下がる
+    BA = np.radians(50)
     NB, NS = 33, 6
     brim_rows = []
     for si in range(NS):
@@ -1057,13 +1038,13 @@ def make_cap(body, rig, F):
         row = []
         for bi in range(NB):
             a = -BA + 2 * BA * bi / (NB - 1)
-            L = 0.070 * max(0.0, math.cos(a / BA * math.pi / 2)) ** 0.7
+            L = 0.065 * max(0.0, math.cos(a / BA * math.pi / 2)) ** 0.7
             i_f = (a + np.pi) / (2 * np.pi) * NA
             r0 = np.interp(i_f, np.arange(NA + 1), np.append(r_side, r_side[0])) - 0.002 + 0.0042 * min(1.0, s_ * 4)
             base = Vector(cen) + side * (math.sin(a) * r0) + fwd * (math.cos(a) * r0)
             out = (side * math.sin(a) + fwd * math.cos(a)).normalized()
             dist = L * s_
-            p = base + up * (0.002 * (1 - min(1.0, s_ * 4))) + out * dist - up * (math.tan(math.radians(4)) * dist + 0.007 * (a / BA) ** 2 * s_)
+            p = base + up * (0.002 * (1 - min(1.0, s_ * 4))) + out * dist - up * (math.tan(math.radians(3)) * dist + 2.6 * dist * dist + 0.010 * (a / BA) ** 2 * s_)
             row.append(len(verts)); verts.append(p)
         brim_rows.append(row)
     for si in range(NS - 1):
@@ -1119,10 +1100,10 @@ def make_cap(body, rig, F):
         vg = o.vertex_groups.new(name='head'); vg.add(list(range(len(o.data.vertices))), 1.0, 'REPLACE')
         md = o.modifiers.new('Armature', 'ARMATURE'); md.object = rig
         sd = o.modifiers.new('Subdivision', 'SUBSURF'); sd.levels = 0; sd.render_levels = 1
-    obj['n2_cap_band'] = CAP_BAND
     obj['n2_cap_up'] = [float(v) for v in up]; obj['n2_cap_d'] = float(dpl)
-    LOG(f'cap: work-cap r={r_side.min():.3f}..{r_side.max():.3f} crown(帯上端〜天井)={(top + 0.003 - CAP_BAND) * 1000:.0f}mm '
-        f'edge front=eye+{fo * 1000:.0f}mm faces={len(me.polygons)}')
+    obj['n2_cap_head_top'] = head_top
+    LOG(f'cap: dome r={r_side.min():.3f}..{r_side.max():.3f} 縁〜天井={top * 1000:.0f}mm '
+        f'(頭頂+{(top - head_top) * 1000:.1f}mm) faces={len(me.polygons)}')
     return obj, None, (np.array(up), float(dpl))
 
 
@@ -1484,10 +1465,10 @@ def make_hammer():
     bm = bmesh.new()
     part = bm.verts.layers.float.new('n2_part')       # 0=木, 1=鉄, 2=テープ
     SEG = 16
-    head_y = HAM_TOTAL - 0.019                        # 頭の中心(柄尻基準)
+    head_y = HAM_TOTAL - 0.0245                       # 頭の中心(柄尻基準)。頭の上端が全長 40cm
     # 柄: 楕円断面、柄尻はふくらむ、頭の手前で細る
-    prof = [(0.000, 0.0145, 0.0105), (0.006, 0.0160, 0.0118), (0.018, 0.0150, 0.0110), (0.060, 0.0138, 0.0102),
-            (0.140, 0.0132, 0.0098), (0.220, 0.0124, 0.0092), (0.300, 0.0116, 0.0087), (head_y - 0.02, 0.0110, 0.0083),
+    prof = [(0.000, 0.0150, 0.0110), (0.006, 0.0165, 0.0122), (0.018, 0.0155, 0.0114), (0.060, 0.0150, 0.0110),
+            (0.140, 0.0156, 0.0114), (0.220, 0.0150, 0.0110), (0.300, 0.0132, 0.0098), (head_y - 0.02, 0.0120, 0.0090),
             (HAM_TOTAL - 0.001, 0.0108, 0.0082)]
     rings = [_ring(bm, y, rx, rz, SEG) for y, rx, rz in prof]
     for r0, r1 in zip(rings[:-1], rings[1:]):
@@ -1502,19 +1483,20 @@ def make_hammer():
     tv = set(v for r in trings for v in r)
     for r0, r1 in zip(trings[:-1], trings[1:]):
         _bridge(bm, r0, r1)
-    # 頭: 八角柱(X 方向に長さ 10.5cm、幅 3.4cm)。両端は面取りした打撃面
-    OCT = 8; hw = 0.0175
-    def oct_ring(x, s):
-        return [bm.verts.new((x, head_y + hw * s * math.cos(2 * math.pi * (i + 0.5) / OCT) / math.cos(math.pi / OCT),
-                              hw * s * math.sin(2 * math.pi * (i + 0.5) / OCT) / math.cos(math.pi / OCT))) for i in range(OCT)]
+    # 頭: 角材のような太い鉄塊(X 方向に長さ 10.5cm、断面 4.5×4.5cm の面取り四角)。両端の打面は少し広がる
+    hw = 0.0225; ch = 0.30                            # 半幅・面取り率
+    def sq_ring(x, s):
+        pts = [(1, 1 - ch), (1 - ch, 1), (-(1 - ch), 1), (-1, 1 - ch), (-1, -(1 - ch)), (-(1 - ch), -1), (1 - ch, -1), (1, -(1 - ch))]
+        return [bm.verts.new((x, head_y + hw * s * py, hw * s * pz)) for py, pz in pts]
     L2 = HAM_HEAD_LEN / 2
-    hr = [oct_ring(-L2, 0.86), oct_ring(-L2 + 0.004, 1.0), oct_ring(-0.012, 0.97), oct_ring(0.012, 0.97),
-          oct_ring(L2 - 0.004, 1.0), oct_ring(L2, 0.86)]
+    hr = [sq_ring(-L2, 0.90), sq_ring(-L2 + 0.004, 1.06), sq_ring(-L2 + 0.014, 1.0), sq_ring(-0.010, 0.97),
+          sq_ring(0.010, 0.97), sq_ring(L2 - 0.014, 1.0), sq_ring(L2 - 0.004, 1.06), sq_ring(L2, 0.90)]
+    OCT = 8
     hv = set(v for r in hr for v in r)
     for r0, r1 in zip(hr[:-1], hr[1:]):
         _bridge(bm, r0, r1)
     for r, flip in ((hr[0], True), (hr[-1], False)):
-        c = bm.verts.new((r[0].co.x * 1.0 + (-0.0015 if flip else 0.0015), head_y, 0))   # 打撃面はわずかに膨らむ
+        c = bm.verts.new((r[0].co.x + (-0.0015 if flip else 0.0015), head_y, 0))   # 打面はわずかに膨らむ
         hv.add(c)
         for i in range(OCT):
             bm.faces.new((r[(i + 1) % OCT], r[i], c) if flip else (r[i], r[(i + 1) % OCT], c))
@@ -1542,16 +1524,16 @@ def make_hammer():
     grain = n.new('ShaderNodeTexWave', wave_type='BANDS', bands_direction='X')
     n.link(oc, grain.inputs['Vector']); grain.inputs['Scale'].default_value = 60.0; grain.inputs['Distortion'].default_value = 9.0
     grain.inputs['Detail'].default_value = 3.0
-    wcol = n.mix((0.19, 0.12, 0.065, 1), (0.11, 0.07, 0.04, 1), n.math('MULTIPLY', grain.outputs['Fac'], 0.8))   # 使い込んで黒ずんだ木
+    wcol = n.mix((0.065, 0.038, 0.020, 1), (0.035, 0.021, 0.012, 1), n.math('MULTIPLY', grain.outputs['Fac'], 0.8))   # 暗い焦げ茶(使い込んだ木)
     wcol = n.mix(wcol, (0.12, 0.09, 0.06, 1), n.math('MULTIPLY', n.ramp(n.noise(oc, 25.0, 3.0), 0.5, 0.8), 0.5))
     # 鉄: 暗い地金に錆(縁と面取りに寄る)・打撃面は擦れて明るい
     rust_n = n.ramp(n.noise(oc, 45.0, 4.0, 0.6), 0.42, 0.62)
     rust_b = n.ramp(n.voronoi(oc, 90.0, 1.0), 0.35, 0.15)
     rust = n.math('MAXIMUM', rust_n, n.math('MULTIPLY', rust_b, 0.6), clamp=True)
-    scol = n.mix((0.20, 0.20, 0.21, 1), n.mix((0.38, 0.18, 0.08, 1), (0.22, 0.10, 0.05, 1), n.noise(oc, 120.0)), rust)
+    scol = n.mix((0.045, 0.045, 0.048, 1), n.mix((0.42, 0.19, 0.07, 1), (0.25, 0.10, 0.04, 1), n.noise(oc, 120.0)), n.math('MULTIPLY', rust, 0.55))   # 黒皮の鉄＋錆
     sep = n.new('ShaderNodeSeparateXYZ'); n.link(oc, sep.inputs['Vector'])
-    face = n.ramp(n.math('ABSOLUTE', sep.outputs['X']), L2 - 0.004, L2 - 0.0005)
-    scol = n.mix(scol, (0.45, 0.45, 0.46, 1), n.math('MULTIPLY', face, 0.7))
+    face = n.ramp(n.math('ABSOLUTE', sep.outputs['X']), L2 - 0.0035, L2 - 0.0005)
+    scol = n.mix(scol, (0.26, 0.26, 0.27, 1), n.math('MULTIPLY', face, 0.6))
     # テープ: 黒、巻きの段(らせん)、端が少しめくれ汚れる
     tcol = n.mix((0.025, 0.025, 0.028, 1), (0.06, 0.06, 0.065, 1), n.ramp(n.noise(oc, 200.0), 0.4, 0.7))
     col = n.mix(n.mix(wcol, scol, steel), tcol, tape)
