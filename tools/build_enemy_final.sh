@@ -1,9 +1,10 @@
 #!/bin/bash
 # tools/build_enemy_final.sh — P1b 管理人の確定像(07)を1コマンドで再現する(無人実行)。
 #   enemy_setup.py → enemy_build.py --id 07(質感向上 enemy_p1b.py を含む)→ enemy_check.py(機械チェック)
-#   → enemy_render.py: 07_portrait / 07_insitu / 07_peephole / 07_threequarter ＋ compare_before_after
+#   → enemy_render.py: 07_portrait / grin_portrait / insitu / insitu_far / peephole / grin_peephole / threequarter /
+#     portrait_export_hair ＋ compare_before_after(P1b 初版 → 差し戻し後)。ハンマーは build/enemy/hammer.fbx / .glb
 # 使い方: tools/build_enemy_final.sh [--samples-scale K] [--device GPU|CPU] [--no-render]
-# 前提: build/p0_baked.blend(tools/build.sh)と、比較用の P1 画像 docs/enemy-candidates/02_insitu.jpg・04_portrait.jpg
+# 前提: build/p0_baked.blend(tools/build.sh)と git(比較用に P1b 初版の画像をコミット 849e92c から取り出す)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BLENDER="${BLENDER:-/Applications/Blender.app/Contents/MacOS/Blender}"
@@ -34,11 +35,17 @@ python3 -I -c "import json,sys; r=json.load(open('$OUT/check.json'))['results'];
 echo "== 4/4 render"
 R() { "$BLENDER" -b "$1" -P tools/blender/enemy_render.py -- "${@:2}" --device "$DEVICE" 2>&1 | grep -E '^\[n2|Error|Traceback' || true; }
 R "$B" --mode portrait --samples $((256 * K)) --out "$OUT/07_portrait.jpg"
+R "$B" --mode portrait --grin --samples $((256 * K)) --out "$OUT/07_grin_portrait.jpg"
 R build/p0_baked.blend --mode insitu --enemy "$B" --samples $((512 * K)) --out "$OUT/07_insitu.jpg"
+R build/p0_baked.blend --mode insitu --far --enemy "$B" --samples $((512 * K)) --out "$OUT/07_insitu_far.jpg"
 R build/p0_baked.blend --mode peephole --enemy "$B" --samples $((512 * K)) --out "$OUT/07_peephole.jpg"
+R build/p0_baked.blend --mode peephole --grin --enemy "$B" --samples $((512 * K)) --out "$OUT/07_grin_peephole.jpg"
 R "$B" --mode threequarter --samples $((256 * K)) --out "$OUT/07_threequarter.jpg"
 R "$B" --mode portrait --strips --samples $((256 * K)) --out "$OUT/07_portrait_export_hair.jpg"
+# 前後比較: P1b 初版(コミット 849e92c の画像)→ 差し戻し後
+for f in 07_insitu 07_portrait; do git show 849e92c:$OUT/$f.jpg > build/enemy/p1b_v1_$f.jpg; done
 "$BLENDER" -b --factory-startup -P tools/blender/enemy_render.py -- --mode compare \
-  --inputs docs/enemy-candidates/02_insitu.jpg,$OUT/07_insitu.jpg,docs/enemy-candidates/04_portrait.jpg,$OUT/07_portrait.jpg \
+  --inputs build/enemy/p1b_v1_07_insitu.jpg,$OUT/07_insitu.jpg,build/enemy/p1b_v1_07_portrait.jpg,$OUT/07_portrait.jpg \
+  --labels "前（P1b 初版）|後（差し戻し後: 帽子・痩せた顔・ハンマー）" \
   --out "$OUT/compare_before_after.jpg" 2>&1 | grep -E '^\[n2|Error|Traceback' || true
 echo "== done in $(( $(date +%s) - T0 ))s"

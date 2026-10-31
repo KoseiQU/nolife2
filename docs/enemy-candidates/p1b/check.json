@@ -4,7 +4,7 @@
   {
    "check": "身長(m)",
    "ok": true,
-   "value": 1.796,
+   "value": 1.798,
    "limit": "1.80±0.02"
   },
   {
@@ -40,7 +40,7 @@
   {
    "check": "つば下端 − 目の中心(m)",
    "ok": true,
-   "value": 0.0147,
+   "value": 0.0229,
    "limit": "> 0"
   },
   {
@@ -50,16 +50,64 @@
    "limit": "なし"
   },
   {
+   "check": "帽子クラウンの高さ(帯上端〜天井, mm)",
+   "ok": true,
+   "value": 58.6,
+   "limit": "≤60"
+  },
+  {
+   "check": "ハンマー三角形数",
+   "ok": true,
+   "value": 640,
+   "limit": "≤3000"
+  },
+  {
+   "check": "ハンマー全長(m)",
+   "ok": true,
+   "value": 0.399,
+   "limit": "0.38〜0.42"
+  },
+  {
+   "check": "ハンマーのテクスチャ最大(px)",
+   "ok": true,
+   "value": 2048,
+   "limit": "≤2048"
+  },
+  {
+   "check": "ハンマー原点=握り(柄尻が −Y 側 5〜10cm)",
+   "ok": true,
+   "value": -0.075,
+   "limit": "−0.10〜−0.05"
+  },
+  {
+   "check": "hammer.fbx 再読込(三角形数一致)",
+   "ok": true,
+   "value": 640,
+   "limit": 640
+  },
+  {
+   "check": "hammer.glb 再読込(三角形数一致)",
+   "ok": true,
+   "value": 640,
+   "limit": 640
+  },
+  {
    "check": "三角形数(FBX)",
    "ok": true,
-   "value": 55104,
+   "value": 57879,
    "limit": "≤60000"
+  },
+  {
+   "check": "grin シェイプキー(FBX): 口まわりの最大移動(mm)",
+   "ok": true,
+   "value": 20.6,
+   "limit": "≥8"
   },
   {
    "check": "FBX 再読込: メッシュ数",
    "ok": true,
-   "value": 10,
-   "limit": 10
+   "value": 11,
+   "limit": 11
   },
   {
    "check": "FBX 再読込: 頂点数・素材数の一致",
@@ -76,7 +124,7 @@
   {
    "check": "FBX サイズ(MB)",
    "ok": true,
-   "value": 18.02,
+   "value": 21.16,
    "limit": "≤50"
   }
  ]

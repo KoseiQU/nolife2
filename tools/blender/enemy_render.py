@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
-ARGS = parse_args({'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
+ARGS = parse_args({'far': False, 'labels': '', 'face': False, 'grin': False, 'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
 MODE = ARGS['mode']
 
 # --- 廊下(P0b)での立ち位置とカメラ。Blender 座標 = (x, -z, y)(build_scene.py と同じ)。床 z=8.7 ---
@@ -164,6 +164,11 @@ def portrait():
     if ARGS.get('side'):   # 調整用: 真横(キャラの右側)から全身
         cam.location = (h0.x - 6.0, h0.y, 0.95); cam.data.lens = 50
         look_at(cam, (h0.x, h0.y, 0.95))
+    elif ARGS.get('face'):   # 調整用: 顔の正面 0.5m(目と口が入る)
+        e = (rig.matrix_world @ rig.pose.bones['eye.L'].head + rig.matrix_world @ rig.pose.bones['eye.R'].head) / 2
+        fc = e + Vector((0, -0.02, -0.035))
+        cam.location = fc + Vector((0.0, -0.5, 0.0))
+        look_at(cam, fc)
     elif ARGS.get('orbit'):   # 調整用: 頭のまわりを回って寄る(度。90=キャラの左)
         a = math.radians(float(ARGS['orbit']))
         hc = Vector((h0.x, h0.y, (h0.z + h1.z) / 2))
@@ -236,7 +241,8 @@ def insitu(peephole=False):
         if o is not None and o.type in ('ARMATURE', 'MESH', 'CURVES'):
             col.objects.link(o)
     rig = enemy_root(scene)
-    rig.location = (ENEMY_XY[0], ENEMY_XY[1], FLOOR_Z)
+    ey = CAM_XY[1] - 8.0 if ARGS.get('far') else ENEMY_XY[1]      # --far: 8m 先(遠目のシルエット確認)
+    rig.location = (ENEMY_XY[0], ey, FLOOR_Z)
     rig.rotation_euler = (0, 0, math.radians(180))   # MPFB の正面(-Y)をカメラ(+Y 側)へ
     bpy.context.view_layer.update()
     cam = bpy.data.objects.new('N2_Cam', bpy.data.cameras.new('N2_Cam'))
@@ -245,7 +251,7 @@ def insitu(peephole=False):
     cam.data.lens = 12 / math.tan(math.radians(GAME_VFOV) / 2)
     cam.data.clip_start = 0.05
     cam.location = (CAM_XY[0], CAM_XY[1], FLOOR_Z + EYE_H)
-    look_at(cam, (ENEMY_XY[0], ENEMY_XY[1], FLOOR_Z + 1.25))
+    look_at(cam, (ENEMY_XY[0], ey, FLOOR_Z + 1.25))
     if peephole:
         # 覗き穴: 顔の 0.6m 手前、扉の覗き穴の高さ(1.50m)から見上げる。光は腰の高さ(1.0m)から上へ
         h0, h1 = head_point(rig)
@@ -255,16 +261,16 @@ def insitu(peephole=False):
         look_at(cam, face)
         bpy.context.view_layer.update()
         ld = bpy.data.lights.new('N2_Peep_Flash', 'SPOT')
-        ld.energy = 2.0; ld.color = (1.0, 0.93, 0.87); ld.spot_size = math.radians(50); ld.spot_blend = 0.6
+        ld.energy = 3.0; ld.color = (1.0, 0.93, 0.87); ld.spot_size = math.radians(50); ld.spot_blend = 0.6
         ld.shadow_soft_size = 0.012
         o = bpy.data.objects.new('N2_Peep_Flash', ld); scene.collection.objects.link(o)
-        o.location = (face.x + 0.10, face.y + 0.35, FLOOR_Z + 1.0)
+        o.location = (face.x + 0.10, face.y + 0.50, FLOOR_Z + 1.0)
         look_at(o, face)
         return scene
     # 懐中電灯: 腰の高さ(床から約1.05m)の右手に下げて持ち、敵の胸へ向ける = DESIGN §3.4「下からの照らし」
     bpy.context.view_layer.update()   # matrix_world を確定させてから手元の位置を出す
     fl_loc = cam.matrix_world @ Vector((0.16, -0.55, -0.15))
-    target = Vector((ENEMY_XY[0], ENEMY_XY[1], FLOOR_Z + 1.15))
+    target = Vector((ENEMY_XY[0], ey, FLOOR_Z + 1.15))
     for name, size, blend, power in (('N2_Flash_Wide', 82, 0.45, 3.0), ('N2_Flash_Core', 22, 0.6, 12.0)):
         ld = bpy.data.lights.new(name, 'SPOT')
         ld.energy = power; ld.color = (1.0, 0.93, 0.87)
@@ -345,8 +351,9 @@ def compare():
     canvas[0:540, 478 - pw // 2:478 - pw // 2 + pw] = load(f[2], pw, 540)
     canvas[0:540, 1442 - pw // 2:1442 - pw // 2 + pw] = load(f[3], pw, 540)
     tmp = os.path.join(ROOT, 'build', '_cmp_label.png')
-    canvas[1080:1180, 0:956] = text_tile('前（P1: 02 の服 / 04 の顔）', 956, 100, tmp)
-    canvas[1080:1180, 964:1920] = text_tile('後（P1b: 07 確定像）', 956, 100, tmp)
+    la, lb = (ARGS['labels'] or '前（P1: 02 の服 / 04 の顔）|後（P1b: 07 確定像）').split('|')
+    canvas[1080:1180, 0:956] = text_tile(la, 956, 100, tmp)
+    canvas[1080:1180, 964:1920] = text_tile(lb, 956, 100, tmp)
     out = bpy.data.images.new('N2_Cmp', W, H)
     out.pixels.foreach_set(canvas.ravel())
     path = os.path.join(ROOT, ARGS['out'])
@@ -354,6 +361,20 @@ def compare():
     bpy.context.scene.render.image_settings.quality = 90
     out.save()
     log(f'saved {path} ({os.path.getsize(path) / 1e6:.2f} MB)')
+
+
+def apply_grin(scene):
+    """笑い顔: 体・眉/まつ毛の帯の grin を 1 に、ヘアカーブ(眉・まつ毛)は記録した移動量を足す。"""
+    import numpy as np
+    for o in scene.objects:
+        if o.type == 'MESH' and o.data.shape_keys and 'grin' in o.data.shape_keys.key_blocks:
+            o.data.shape_keys.key_blocks['grin'].value = 1.0
+        if o.type == 'CURVES' and 'n2_grin' in o.data.attributes:
+            n = len(o.data.points)
+            p = np.empty(n * 3, np.float32); d = np.empty(n * 3, np.float32)
+            o.data.attributes['position'].data.foreach_get('vector', p)
+            o.data.attributes['n2_grin'].data.foreach_get('vector', d)
+            o.data.attributes['position'].data.foreach_set('vector', p + d)
 
 
 def show_export_hair(scene):
@@ -376,6 +397,8 @@ def main():
              'threequarter': threequarter}[MODE]()
     if ARGS.get('strips'):
         show_export_hair(scene)
+    if ARGS.get('grin'):
+        apply_grin(scene)
     if ARGS.get('debug_lights'):
         for o in scene.objects:
             if o.type == 'LIGHT': print('LIGHT', o.name, o.data.type, o.data.energy, tuple(round(v, 2) for v in o.matrix_world.translation), o.hide_render)

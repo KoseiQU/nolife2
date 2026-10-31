@@ -50,6 +50,10 @@ def make_human():
     hi['eyebrows'] = C['eyebrows'] + '.mhclo'
     hi['eyelashes'] = C['eyelashes'] + '.mhclo'
     hi['hair'] = (C['hair'] + '.mhclo') if C['hair'] else ''
+    if C.get('teeth'):
+        hi['teeth'] = C['teeth'] + '.mhclo'
+    if C.get('tongue'):
+        hi['tongue'] = C['tongue'] + '.mhclo'
     hi['clothes'] = [c + '.mhclo' for c in C['clothes']]
     hi['skin_mhmat'] = C['skin'] + '.mhmat'
     hi['skin_material_type'] = 'ENHANCED_SSS'
@@ -533,11 +537,25 @@ def apply_pose(rig):
         aim_bone(rig, f'lowerarm01.{side}', (sgn * math.sin(out * 0.6), -math.sin(bend), -math.cos(bend)))
         lo = rig.pose.bones[f'lowerarm02.{side}']
         aim_bone(rig, f'wrist.{side}', (lo.tail - lo.head).normalized() + Vector((0, 0.05, 0)))
+        grip = side == 'R' and p.get('grip_r')
         for f in range(2, 6):
             for k in (1, 2, 3):
                 bn = f'finger{f}-{k}.{side}'
                 if bn in rig.pose.bones:
-                    rotate_bone(rig, bn, fwd, -(8 + 5 * k))
+                    # 握る手は指を深く曲げる(指の骨の軸まわり = 骨の X 軸)
+                    if grip:
+                        b_ = rig.pose.bones[bn]
+                        bpy.context.view_layer.update()
+                        rotate_bone(rig, bn, tuple(b_.matrix.to_3x3() @ Vector((1, 0, 0))), 38 + 14 * k)
+                    else:
+                        rotate_bone(rig, bn, fwd, -(8 + 5 * k))
+        if grip:
+            for k in (2, 3):
+                bn = f'finger1-{k}.{side}'
+                if bn in rig.pose.bones:
+                    b_ = rig.pose.bones[bn]
+                    bpy.context.view_layer.update()
+                    rotate_bone(rig, bn, tuple(b_.matrix.to_3x3() @ Vector((1, 0, 0))), 30)
     # 視線: 頭を前傾させたぶん目を上げて、プレイヤーを見据える(上げすぎると瞼に隠れるので上限あり)
     up = min(p['slouch'] * 0.5 + p['neck'] + p['head_tilt'], 12) if 'eye_up' not in p else p['eye_up']
     for side in ('L', 'R'):
@@ -622,11 +640,74 @@ def fbx_material(m, tex_dir):
     return nm
 
 
+def export_copy(o):
+    """書き出し用の複製: モディファイア(マスク・アーマチュア・細分化 0)を適用した形にし、形状キーは grin だけ残す。
+    MPFB の体型ターゲット(形状キー)は基本形へ焼き込む。FBX が形状キーを落とさないよう、複製にはモディファイアを残さない。"""
+    me = o.data
+    keys = me.shape_keys.key_blocks if me.shape_keys else None
+    if not keys:
+        dg = bpy.context.evaluated_depsgraph_get()
+        nm = bpy.data.meshes.new_from_object(o.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg)
+        c = bpy.data.objects.new(o.name + '_x', nm)
+        bpy.context.scene.collection.objects.link(c)
+        c.matrix_world = o.matrix_world
+        return c
+    n = len(me.vertices)
+    basis = me.shape_keys.reference_key
+    b = np.empty(n * 3, np.float32); basis.data.foreach_get('co', b)
+    mix = b.copy()
+    grin = None
+    for k in keys:
+        if k is basis:
+            continue
+        c = np.empty(n * 3, np.float32); k.data.foreach_get('co', c)
+        if k.name == 'grin':
+            grin = c - b
+        else:
+            mix += (c - b) * k.value
+    nm = me.copy()
+    c = bpy.data.objects.new(o.name + '_x', nm)
+    bpy.context.scene.collection.objects.link(c)
+    c.matrix_world = o.matrix_world
+    c.shape_key_clear()
+    nm.vertices.foreach_set('co', mix)
+    # マスク(補助形状・服の下の削除グループ)を頂点削除で再現
+    drop = np.zeros(n, bool)
+    for md in o.modifiers:
+        if md.type == 'MASK' and md.show_viewport and md.vertex_group in o.vertex_groups:
+            gi = o.vertex_groups[md.vertex_group].index
+            inn = np.zeros(n, bool)
+            for v in me.vertices:
+                for g in v.groups:
+                    if g.group == gi and g.weight > 0.0:
+                        inn[v.index] = True
+            drop |= inn if md.invert_vertex_group else ~inn
+    if grin is not None:
+        c.shape_key_add(name='Basis', from_mix=False)
+        gk = c.shape_key_add(name='grin', from_mix=False)
+        gk.data.foreach_set('co', mix + grin); gk.value = 0.0
+    if drop.any():
+        bm = bmesh.new(); bm.from_mesh(nm)
+        bm.verts.ensure_lookup_table()
+        bmesh.ops.delete(bm, geom=[bm.verts[i] for i in np.where(drop)[0]], context='VERTS')
+        bm.to_mesh(nm); bm.free()
+    return c
+
+
 def export_fbx(rig):
     tex_dir = os.path.join(OUT, 'fbx_tex', C['id'])
     os.makedirs(tex_dir, exist_ok=True)
     rig.data.pose_position = 'REST'
+    bpy.context.view_layer.update()
     meshes = [o for o in rig.children if o.type == 'MESH' and not o.get('n2_no_export')]
+    final = C.get('final')
+    if final:   # 形状キー grin を FBX に乗せるため、モディファイアを適用した複製を書き出す
+        src = meshes
+        meshes = [export_copy(o) for o in src]
+        for o, c in zip(src, meshes):      # 書き出し名は元の名前のまま(元は退避名へ)
+            nm_ = o.name
+            o.name = nm_ + '_src'
+            c.name = nm_
     cache = {}
     for o in meshes:
         for slot in o.material_slots:
@@ -642,20 +723,24 @@ def export_fbx(rig):
     stats = {}
     for o in meshes:
         ev = o.evaluated_get(dg); me = ev.to_mesh(); me.calc_loop_triangles()
-        stats[o.name] = dict(verts=len(me.vertices), tris=len(me.loop_triangles), mats=len(o.material_slots))
+        stats[o.name] = dict(verts=len(me.vertices), tris=len(me.loop_triangles), mats=len(o.material_slots),
+                             keys=[k.name for k in o.data.shape_keys.key_blocks] if o.data.shape_keys else [])
         ev.to_mesh_clear()
     for o in bpy.context.scene.objects:
         o.select_set(o in meshes)
     bpy.context.view_layer.objects.active = meshes[0]
     path = os.path.join(OUT, C['name'] + '.fbx')
     bpy.ops.export_scene.fbx(filepath=path, use_selection=True, object_types={'MESH'},
-                             use_mesh_modifiers=True, mesh_smooth_type='FACE', add_leaf_bones=False,
+                             use_mesh_modifiers=not final, mesh_smooth_type='FACE', add_leaf_bones=False,
                              path_mode='COPY', embed_textures=True, bake_anim=False)
     mb = os.path.getsize(path) / 1e6
+    info = dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats, tris=sum(v['tris'] for v in stats.values()))
+    if final:
+        e = (rig.matrix_world @ rig.data.bones['eye.L'].head_local + rig.matrix_world @ rig.data.bones['eye.R'].head_local) / 2
+        info['eye_center_rest'] = list(e)
     with open(os.path.join(OUT, C['name'] + '_export.json'), 'w') as f:
-        json.dump(dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats,
-                       tris=sum(v['tris'] for v in stats.values())), f, indent=1, ensure_ascii=False)
-    log(f'fbx {path} ({mb:.1f} MB, {len(meshes)} meshes, {len(cache)} mats, {sum(v["tris"] for v in stats.values())} tris)')
+        json.dump(info, f, indent=1, ensure_ascii=False)
+    log(f'fbx {path} ({mb:.1f} MB, {len(meshes)} meshes, {len(cache)} mats, {info["tris"]} tris)')
     assert mb <= 50, f'FBX が 50MB を超えた: {mb:.1f}MB'
 
 
@@ -704,6 +789,8 @@ def main():
         enemy_p1b.upgrade(C, body, rig, objs, extras)
     # Aポーズ(レスト)の状態を記録してからポーズ
     apply_pose(rig)
+    if C.get('final') and rig.get('n2_hammer'):
+        enemy_p1b.attach_hammer(rig, bpy.data.objects[rig['n2_hammer']])
     bpy.context.view_layer.objects.active = rig
     os.makedirs(OUT, exist_ok=True)
     blend = os.path.join(OUT, C['name'] + '.blend')

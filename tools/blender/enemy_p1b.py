@@ -217,7 +217,7 @@ def bake(obj, uv_name, outputs, size, tag, margin=8):
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     res = {}
-    for key in ('albedo', 'rough', 'normal', 'height'):
+    for key in ('albedo', 'rough', 'metal', 'normal', 'height'):
         if key not in outputs:
             continue
         img = new_image(f'{CID}_{tag}_{key}', size, non_color=(key != 'albedo'), float_buffer=(key == 'height'))
@@ -352,6 +352,46 @@ def skin_masks(body, rig, eyes_obj):
     scalp = smoothstep(-0.006, 0.004, z - ez - hairline_z(np.degrees(np.arctan2(q[:, 0], -q[:, 1])))) * \
         (head > 0.3) * (group_mask(body, 'ears') < 0.05)
     set_point_attr(body, 'n2_scalp', scalp)
+    # くぼみ(凹面): 近傍の平均位置が法線の内側にあるほど凹。眼窩・頬のこけ・こめかみの影に使う
+    me_ = body.data
+    ev_ = np.empty(len(me_.edges) * 2, np.int32); me_.edges.foreach_get('vertices', ev_); ev_ = ev_.reshape(-1, 2)
+    acc = np.zeros_like(co); cnt = np.zeros(len(co), np.float32); el = np.zeros(len(co), np.float32)
+    for a_, b_ in ((0, 1), (1, 0)):
+        np.add.at(acc, ev_[:, a_], co[ev_[:, b_]]); np.add.at(cnt, ev_[:, a_], 1)
+        np.add.at(el, ev_[:, a_], np.linalg.norm(co[ev_[:, 0]] - co[ev_[:, 1]], axis=1))
+    lap = acc / np.maximum(cnt, 1)[:, None] - co
+    cav = (lap * nr).sum(1) / np.maximum(el / np.maximum(cnt, 1), 1e-5)
+    for _ in range(3):
+        sm = np.zeros(len(co), np.float32)
+        np.add.at(sm, ev_[:, 0], cav[ev_[:, 1]]); np.add.at(sm, ev_[:, 1], cav[ev_[:, 0]])
+        cav = 0.5 * cav + 0.5 * sm / np.maximum(cnt, 1)
+    cav = np.clip(cav / 0.12, 0, 1) * (head > 0.05)
+    # 手: 甲(A ポーズで上を向く面)・関節(指の付け根と第2関節)
+    hand = np.zeros(len(co), np.float32)
+    for g in body.vertex_groups:
+        if g.name.startswith(('wrist', 'metacarpal', 'finger')):
+            hand = np.maximum(hand, group_mask(body, g.name))
+    hand *= (group_mask(body, 'body') > 0.5)
+    back = hand * smoothstep(0.0, 0.35, nr[:, 2])
+    knuck = np.zeros(len(co), np.float32)
+    for side_ in ('L', 'R'):
+        for f in range(1, 6):
+            for k in (1, 2):
+                bn = f'finger{f}-{k}.{side_}'
+                if bn in rig.data.bones:
+                    knuck = np.maximum(knuck, smoothstep(0.014, 0.004, np.linalg.norm(co - bone_head(rig, bn), axis=1)))
+    knuck *= hand
+    # 首筋の腱(胸鎖乳突筋): 耳の後ろ → 胸骨の上
+    tend = np.zeros(len(co), np.float32)
+    hh_, n1 = bone_head(rig, 'head'), bone_head(rig, 'neck01')
+    for sx in (1, -1):
+        a_ = np.array([sx * 0.048, hh_[1] + 0.015, hh_[2] - 0.005], np.float32)
+        b_ = np.array([sx * 0.014, n1[1] - 0.045, n1[2] + 0.01], np.float32)
+        a_ = co[np.argmin(np.linalg.norm(co - a_, axis=1))]; b_ = co[np.argmin(np.linalg.norm(co - b_, axis=1))]
+        t_, d_ = seg_param(co, a_, b_)
+        tend = np.maximum(tend, np.exp(-(d_ / 0.008) ** 2) * (t_ > 0.05) * (t_ < 0.95))
+    for name_, v_ in (('n2_cav', cav), ('n2_hand', hand), ('n2_handback', back), ('n2_knuck', knuck), ('n2_tendon', tend)):
+        set_point_attr(body, name_, v_)
     forehead = np.clip(smoothstep(ez + 0.03, ez + 0.045, z) * smoothstep(ez + 0.095, ez + 0.075, z) *
                        smoothstep(0.075, 0.045, np.abs(x)) * front * face, 0, 1)
     for name, v in (('n2_fore', forehead), ('n2_tzone', tz), ('n2_stubble', stub), ('n2_rim', rim), ('n2_under', under),
@@ -392,16 +432,26 @@ def upgrade_skin(body, rig, eyes_obj, size=4096):
     # まぶた縁の赤み(粘膜寄り)
     col = n.mix(col, (0.60, 0.36, 0.34, 1), n.math('MULTIPLY', rim, 0.28))
     # 無精ひげ: 1mm 弱の点(白黒まじり)＋剃り跡の青黒い影
-    dots = n.ramp(n.voronoi(oc, 1500.0, 1.0), 0.30, 0.12)
+    dots = n.ramp(n.voronoi(oc, 2200.0, 1.0), 0.28, 0.12)
     salt = n.ramp(n.noise(oc, 900.0, 0.0), 0.5, 0.56)
-    hair_col = n.mix((0.07, 0.065, 0.06, 1), (0.62, 0.61, 0.58, 1), salt)
+    hair_col = n.mix((0.07, 0.065, 0.06, 1), (0.42, 0.41, 0.39, 1), salt)
     stub_d = n.math('MULTIPLY', stub, n.ramp(n.noise(oc, 30.0, 2.0), 0.35, 0.55))
     col = n.mix(col, n.mix(col, (0.55, 0.56, 0.60, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', stub, 0.55))
-    col = n.mix(col, hair_col, n.math('MULTIPLY', dots, n.math('MULTIPLY', stub_d, 0.85)))
+    col = n.mix(col, hair_col, n.math('MULTIPLY', dots, n.math('MULTIPLY', stub_d, 0.6)))
     # 髪の生える所の地肌: MakeHuman の描き込み(茶色の短髪)を消し、灰色がかった地肌＋毛根の点に
     scalp = n.attr('n2_scalp')
     sc_col = n.mix(n.mix(col, (0.36, 0.33, 0.31, 1), 0.7), (0.14, 0.13, 0.12, 1), n.math('MULTIPLY', dots, 0.6))
     col = n.mix(col, sc_col, n.math('MULTIPLY', scalp, 0.85))
+    # 彫りの影: 眼窩・こけた頬・こめかみのくぼみを少し暗く紫がかった色に
+    cav = n.attr('n2_cav')
+    col = n.mix(col, n.mix(col, (0.62, 0.52, 0.52, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', cav, 0.7))
+    # 手: 甲の血管(青紫の筋)・関節の赤み・しみを顔と同じ老け具合に
+    handb, knk = n.attr('n2_handback'), n.attr('n2_knuck')
+    rid = n.math('SUBTRACT', 1.0, n.math('ABSOLUTE', n.math('SUBTRACT', n.math('MULTIPLY', n.noise(oc, 38.0, 2.0, 0.5), 2.0), 1.0)))
+    vein = n.math('MULTIPLY', n.ramp(rid, 0.90, 0.985), handb)
+    col = n.mix(col, n.mix(col, (0.55, 0.58, 0.78, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', vein, 0.55))
+    col = n.mix(col, n.mix(col, (0.95, 0.70, 0.66, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', knk, 0.65))
+    col = n.mix(col, n.mix(col, (0.86, 0.80, 0.70, 1), 1.0, 'MULTIPLY'), n.math('MULTIPLY', n.attr('n2_hand'), 0.6))
     # --- 粗さ: 基本 0.52、T字部は脂でムラに光る、まぶた縁は濡れ、唇はやや艶 ---
     oil = n.math('MULTIPLY', tz, n.ramp(n.noise(oc, 40.0, 3.0), 0.35, 0.65))
     rough = n.fmix(0.58, 0.30, oil)
@@ -421,7 +471,12 @@ def upgrade_skin(body, rig, eyes_obj, size=4096):
     brk = n.ramp(n.noise(oc, 60.0, 1.0), 0.40, 0.55)
     hgt = n.math('SUBTRACT', hgt, n.math('MULTIPLY', n.math('MULTIPLY', line, n.math('MULTIPLY', n.attr('n2_fore'), brk)), 0.00035))
     hgt = n.math('ADD', hgt, n.math('MULTIPLY', sp, 0.00004))
-    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', dots, stub_d), 0.00008))
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', dots, stub_d), 0.00006))
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', vein, 0.0006))                       # 手の甲の血管
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.attr('n2_tendon'), 0.0018))         # 首筋の腱
+    knw = n.new('ShaderNodeTexWave', wave_type='BANDS', bands_direction='Z')
+    n.link(oc, knw.inputs['Vector']); knw.inputs['Scale'].default_value = 40.0; knw.inputs['Distortion'].default_value = 3.0
+    hgt = n.math('SUBTRACT', hgt, n.math('MULTIPLY', n.math('MULTIPLY', n.ramp(knw.outputs['Fac'], 0.7, 0.95), knk), 0.0004))
     out = bake(body, 'UVMap', {'_mat': bm, 'albedo': col, 'rough': rough, 'height': hgt}, size, 'skin')
     mpu = meters_per_uv(body, 'UVMap', np.asarray(group_mask(body, 'head') > 0.5, np.float32))
     out['normal'] = height_to_normal(out['height'], mpu, os.path.join(TEX_OUT, f'{CID}_skin_normal.png'), f'{CID}_skin_normal')
@@ -803,12 +858,12 @@ def make_brows_lashes(objs, rig, F, rng):
 # ---------------------------------------------------------------------------
 # ④ 制帽(自作): 芯のある円筒形のクラウン＋平らな天井＋硬いつば＋鉢巻＋帽章。テクスチャは numpy で描く
 # ---------------------------------------------------------------------------
-def cap_plane_from_head(body, F):
+def cap_plane_from_head(body, F, fz_off=0.046, bz_off=0.014):
     co, _ = rest_mesh_arrays(body)
     headw = group_mask(body, 'head') * (group_mask(body, 'body') > 0.5) * (group_mask(body, 'ears') < 0.05)
     hv = co[headw > 0.3]
     ez = F['eye_z']
-    fz, bz = ez + 0.046, ez + 0.014                       # 鉢巻の下端: 額は眉の上 3cm、後ろはやや低い
+    fz, bz = ez + fz_off, ez + bz_off                     # 帽子の縁: 額の前と後頭部の高さ
     fy = hv[(np.abs(hv[:, 0]) < 0.02) & (np.abs(hv[:, 2] - fz) < 0.01)][:, 1].min()
     by = hv[(np.abs(hv[:, 0]) < 0.02) & (np.abs(hv[:, 2] - bz) < 0.01)][:, 1].max()
     Fp = np.array([0, fy, fz], np.float32); Bp = np.array([0, by, bz], np.float32)
@@ -857,7 +912,7 @@ def cap_texture(size=1024):
     navy = np.array([0.105, 0.125, 0.215], np.float32)   # sRGB(つなぎの紺に合わせる)
     col = navy[None, None, :] * (0.94 + 0.08 * twill[..., None] + 0.05 * fiber[..., None])
     col = col * (1 - 0.35 * stitch[..., None])                          # 糸の溝は暗く
-    col[band] = (col[band] * 0.55)                                     # 鉢巻は濃い(黒に近い紺)
+    col[band] = (col[band] * 0.90)                                     # 下の帯(側面の下半分)は同じ紺でわずかに濃い
     # 使い込み: クラウン上端の縁・つばの先が擦れて色が抜け、全体に薄いくすみ
     edge_wear = np.zeros_like(xx)
     edge_wear += side * np.clip(1 - np.abs(yy - 0.355) / 0.012, 0, 1)
@@ -892,48 +947,66 @@ def cap_texture(size=1024):
             mk(f'{CID}_cap_rough', np.repeat(rough[..., None], 3, -1), True))
 
 
+CAP_BAND = 0.030          # 下の帯(側面の下 3cm。外側はステッチで区切ったトリム、内側は汗止め)の高さ
+CAP_CROWN_MAX = 0.054     # 帯の上端〜天井(機械チェックは ≤60mm)
+
+
 def make_cap(body, rig, F):
-    nrm, dpl, hv, Fp, Bp = cap_plane_from_head(body, F)
+    """P1 の 04(ワークキャップ)型: クラウンは頭に沿って低く、天井は平たく、前立ては張り、つばは前へ。
+    帯の上端〜天井が CAP_CROWN_MAX を超えないよう、縁の位置を自動で上げる。"""
+    fo, bo = 0.048, 0.022
+    for _ in range(6):
+        nrm, dpl, hv, Fp, Bp = cap_plane_from_head(body, F, fo, bo)
+        h = hv @ nrm - dpl
+        crown = float(h.max()) + 0.0065 - CAP_BAND
+        if crown <= CAP_CROWN_MAX:
+            break
+        fo += crown - CAP_CROWN_MAX + 0.001; bo += crown - CAP_CROWN_MAX + 0.001
     up = Vector(nrm)
     fwd = Vector((0, -1, 0)); fwd = (fwd - up * fwd.dot(up)).normalized()
-    side = fwd.cross(up).normalized()           # キャラ右(-X)向きになるので符号に注意
-    h = hv @ nrm - dpl
+    side = fwd.cross(up).normalized()
     above = hv[h > -0.002]
-    # 中心軸: 鉢巻の高さでの頭の中心
     ring = hv[(h > -0.004) & (h < 0.02)]
     cen = Vector(((ring[:, 0].max() + ring[:, 0].min()) / 2, (ring[:, 1].max() + ring[:, 1].min()) / 2, 0))
     cen.z = (dpl - nrm[0] * cen.x - nrm[1] * cen.y) / nrm[2]   # 鉛直に動かして平面上へ
     rel = above - np.array(cen)
     lx = rel @ np.array(side); ly = rel @ np.array(fwd); lz = rel @ nrm
-    az_v = np.arctan2(lx, ly)                    # 0=前
+    az_v = np.arctan2(lx, ly)
     rad_v = np.hypot(lx, ly)
     NA = 64
     azs = np.linspace(-np.pi, np.pi, NA, endpoint=False)
-    r_side = np.zeros(NA)
-    for i, a in enumerate(azs):
-        dd = np.abs((az_v - a + np.pi) % (2 * np.pi) - np.pi)
-        sel = dd < np.radians(9)
-        r_side[i] = rad_v[sel].max() if sel.any() else rad_v.max()
-    # 円周方向に平滑化して、髪の厚み＋ゆとりを足す(張りのある円筒)
-    for _ in range(3):
-        r_side = np.maximum(r_side, (np.roll(r_side, 1) + np.roll(r_side, -1) + 2 * r_side) / 4)
-    r_side = r_side + 0.007
-    top = float(lz.max()) + 0.013
-    NR = 7
+    top = float(lz.max()) + 0.0065
+    NR = 9
     hs = np.linspace(0.0, top, NR)
+    # 各高さ・方位の頭の半径(その高さ以上の最大 = 下から被せられる包絡)
+    R = np.zeros((NR, NA))
+    for j, hh in enumerate(hs):
+        selh = lz >= hh - 0.004
+        for i, a in enumerate(azs):
+            dd = np.abs((az_v - a + np.pi) % (2 * np.pi) - np.pi)
+            sel = selh & (dd < np.radians(10))
+            R[j, i] = rad_v[sel].max() if sel.any() else 0.0
+    for j in range(NR - 2, -1, -1):
+        R[j] = np.maximum(R[j], R[j + 1])
+    for _ in range(3):
+        R = np.maximum(R, (np.roll(R, 1, 1) + np.roll(R, -1, 1) + 2 * R) / 4)
+    R += 0.007
+    r_side = R[0].copy()
+    # 天井を平たく広めに(パトロールキャップの張り)、前立ては少し起こす
+    front = np.clip(1 - np.abs(azs) / np.radians(45), 0, 1)
+    for j in range(NR):
+        t = j / (NR - 1)
+        R[j] = np.maximum(R[j], r_side * (0.90 + 0.10 * (1 - t)))       # 側面はほぼ垂直、天井は広く平ら
+        R[j] += front * 0.003 * np.sin(np.pi * t)
     verts, faces, uvs, mats = [], [], [], []
     def P(a_idx, r, hh):
         a = azs[a_idx % NA]
         return Vector(cen) + side * (math.sin(a) * r) + fwd * (math.cos(a) * r) + up * hh
-    # クラウン側面(上へ 5% 開く)
     rows = []
     for j, hh in enumerate(hs):
-        f = 1 - 0.045 * hh / top
-        if j == NR - 1:
-            f *= 0.985
         rows.append([len(verts) + i for i in range(NA)])
         for i in range(NA):
-            verts.append(P(i, r_side[i] * f, hh - 0.003 * (j == NR - 1)))
+            verts.append(P(i, R[j, i], hh))
     for j in range(NR - 1):
         for i in range(NA):
             a, b = rows[j][i], rows[j][(i + 1) % NA]
@@ -942,41 +1015,41 @@ def make_cap(body, rig, F):
             u0, u1 = i / NA, (i + 1) / NA
             v0, v1 = 0.36 * j / (NR - 1), 0.36 * (j + 1) / (NR - 1)
             uvs.append([(u0, v0), (u1, v0), (u1, v1), (u0, v1)])
-    # 天井: 縁を丸め、中心へ(わずかに盛り上がる)
-    rtop = rows[-1]
-    rings = [rtop]
-    for k, (fr, dz) in enumerate(((0.90, 0.0055), (0.6, 0.0085), (0.25, 0.0095))):
+    # 天井: 平らな面(縁はわずかに丸める)
+    rings = [rows[-1]]
+    for fr, dz in ((0.93, 0.0022), (0.6, 0.0030), (0.25, 0.0032)):
         rings.append([len(verts) + i for i in range(NA)])
         for i in range(NA):
-            verts.append(P(i, r_side[i] * 0.955 * 0.985 * fr, top - 0.003 + dz))
-    cidx = len(verts); verts.append(Vector(cen) + up * (top + 0.0065))
+            verts.append(P(i, R[-1, i] * fr, top + dz))
+    cidx = len(verts); verts.append(Vector(cen) + up * (top + 0.003))
     def top_uv(v):
         q = v - Vector(cen)
-        rmax = r_side.max() * 1.06
+        rmax = R[-1].max() * 1.02
         return (0.25 + 0.24 * q.dot(side) / rmax, 0.75 + 0.24 * q.dot(fwd) / rmax)
     for k in range(len(rings) - 1):
         for i in range(NA):
             a, b = rings[k][i], rings[k][(i + 1) % NA]
             c, d = rings[k + 1][(i + 1) % NA], rings[k + 1][i]
             faces.append((a, b, c, d)); mats.append(0)
-            uvs.append([top_uv(verts[x]) for x in (a, b, c, d)])
+            uvs.append([top_uv(verts[x]) for x in (a, b, cidx if False else c, d)])
     for i in range(NA):
         a, b = rings[-1][i], rings[-1][(i + 1) % NA]
         faces.append((a, b, cidx)); mats.append(0)
         uvs.append([top_uv(verts[x]) for x in (a, b, cidx)])
-    crown_faces = len(faces)
-    # 鉢巻(高さ 3cm、2mm 浮かす)
+    # 縁の帯(高さ 18mm、1.5mm 浮かす)
+    j1 = 1
     b0 = [len(verts) + i for i in range(NA)]
     for i in range(NA):
-        verts.append(P(i, r_side[i] * 1.0 + 0.0022, -0.001))
+        verts.append(P(i, R[0, i] + 0.0015, -0.001))
     b1 = [len(verts) + i for i in range(NA)]
     for i in range(NA):
-        verts.append(P(i, r_side[i] * (1 - 0.03 * 0.03 / top) + 0.0022, 0.030))
+        rb = np.interp(CAP_BAND, hs, R[:, i]) + 0.0015
+        verts.append(P(i, rb, CAP_BAND))
     for i in range(NA):
         faces.append((b0[i], b0[(i + 1) % NA], b1[(i + 1) % NA], b1[i])); mats.append(1)
         uvs.append([(i / NA, 0.37), ((i + 1) / NA, 0.37), ((i + 1) / NA, 0.45), (i / NA, 0.45)])
-    # つば: 前 ±78°、長さ 6.5cm、下向き 12° ＋ 左右に反り
-    BA = np.radians(68)
+    # つば: 前 ±55°、長さ 7cm、ほぼ水平(下向き 4°)＋ 左右にわずかな反り(ワークキャップのつば)
+    BA = np.radians(55)
     NB, NS = 33, 6
     brim_rows = []
     for si in range(NS):
@@ -984,13 +1057,13 @@ def make_cap(body, rig, F):
         row = []
         for bi in range(NB):
             a = -BA + 2 * BA * bi / (NB - 1)
-            L = 0.062 * max(0.0, math.cos(a / BA * math.pi / 2)) ** 0.7
+            L = 0.070 * max(0.0, math.cos(a / BA * math.pi / 2)) ** 0.7
             i_f = (a + np.pi) / (2 * np.pi) * NA
             r0 = np.interp(i_f, np.arange(NA + 1), np.append(r_side, r_side[0])) - 0.002 + 0.0042 * min(1.0, s_ * 4)
             base = Vector(cen) + side * (math.sin(a) * r0) + fwd * (math.cos(a) * r0)
             out = (side * math.sin(a) + fwd * math.cos(a)).normalized()
             dist = L * s_
-            p = base + up * (0.002 * (1 - min(1.0, s_ * 4))) + out * dist - up * (math.tan(math.radians(7)) * dist + 0.008 * (a / BA) ** 2 * s_)
+            p = base + up * (0.002 * (1 - min(1.0, s_ * 4))) + out * dist - up * (math.tan(math.radians(4)) * dist + 0.007 * (a / BA) ** 2 * s_)
             row.append(len(verts)); verts.append(p)
         brim_rows.append(row)
     for si in range(NS - 1):
@@ -1022,25 +1095,6 @@ def make_cap(body, rig, F):
         p_.use_smooth = True
     obj = bpy.data.objects.new(f'N2E_{CID}.cap', me)
     bpy.context.scene.collection.objects.link(obj)
-    # 帽章: 鉢巻の正面に小さな真鍮の楕円(4 × 2.8cm)
-    em = bpy.data.meshes.new(f'N2E_{CID}_emblem')
-    bme = bmesh.new()
-    a0 = 0.0
-    c0 = P(0, r_side[NA // 2] + 0.0045, 0.033)
-    i_front = NA // 2   # azs[NA//2] = 0 = 前
-    c0 = Vector(cen) + fwd * (r_side[i_front] * (1 - 0.03 * 0.045 / top) + 0.0040) + up * 0.045
-    # 平たい楕円のドーム(放射状の稜線が出ないよう、極のない icosphere を潰して作る)
-    bmesh.ops.create_icosphere(bme, subdivisions=3, radius=1.0)
-    rot = Matrix((side, fwd, up)).transposed()           # ローカル X=横, Y=前, Z=上
-    for v in bme.verts:
-        x, y, z = v.co
-        y = max(y, -0.2)                                  # 裏は平ら(鉢巻に密着)
-        v.co = c0 + rot @ Vector((x * 0.020, y * 0.0030, z * 0.014))
-    bme.to_mesh(em); bme.free()
-    for p_ in em.polygons:      # 放射状の面の陰影が菊の紋章のように見えないよう、なめらかな楕円の板にする
-        p_.use_smooth = True
-    emo = bpy.data.objects.new(f'N2E_{CID}.cap_emblem', em)
-    bpy.context.scene.collection.objects.link(emo)
     # 素材
     alb, nmi, rgh = cap_texture()
     def capmat(name, rough_override=None, darker=1.0):
@@ -1060,18 +1114,16 @@ def make_cap(body, rig, F):
     me.materials.append(mc)        # クラウン・鉢巻・つばは同じアトラス(UV で描き分け)。素材は部位ごとに分けて残す
     for part in ('band', 'brim'):
         mm = mc.copy(); mm.name = f'N2E_{CID}_cap_{part}'; me.materials.append(mm)
-    brass = bpy.data.materials.new(f'N2E_{CID}_emblem')
-    bb = brass.node_tree.nodes['Principled BSDF']
-    bb.inputs['Base Color'].default_value = (0.42, 0.30, 0.12, 1); bb.inputs['Metallic'].default_value = 0.9
-    bb.inputs['Roughness'].default_value = 0.42
-    em.materials.append(brass)
-    for o in (obj, emo):
+    for o in (obj,):
         o.parent = rig
         vg = o.vertex_groups.new(name='head'); vg.add(list(range(len(o.data.vertices))), 1.0, 'REPLACE')
         md = o.modifiers.new('Armature', 'ARMATURE'); md.object = rig
         sd = o.modifiers.new('Subdivision', 'SUBSURF'); sd.levels = 0; sd.render_levels = 1
-    LOG(f'cap: crown r={r_side.min():.3f}..{r_side.max():.3f} top={top:.3f} faces={len(me.polygons)}')
-    return obj, emo, (np.array(up), float(dpl))
+    obj['n2_cap_band'] = CAP_BAND
+    obj['n2_cap_up'] = [float(v) for v in up]; obj['n2_cap_d'] = float(dpl)
+    LOG(f'cap: work-cap r={r_side.min():.3f}..{r_side.max():.3f} crown(帯上端〜天井)={(top + 0.003 - CAP_BAND) * 1000:.0f}mm '
+        f'edge front=eye+{fo * 1000:.0f}mm faces={len(me.polygons)}')
+    return obj, None, (np.array(up), float(dpl))
 
 
 # ---------------------------------------------------------------------------
@@ -1221,17 +1273,23 @@ def upgrade_coverall(obj, rig, size=4096, target_tris=12500):
         nrm_src = n.new('ShaderNodeNewGeometry').outputs['Normal']
     # 高さ(m): 関節の圧縮皺(肢の軸に沿った縞を揺らす)＋全体のたるみ＋布目
     dist = n.noise(oc, 14.0, 2.0, 0.5)
-    phase = n.math('ADD', n.math('MULTIPLY', ft, 2 * math.pi / 0.048), n.math('MULTIPLY', dist, 12.0))
-    ridge = n.math('POWER', n.math('SUBTRACT', 1.0, n.math('ABSOLUTE', n.math('SINE', phase))), 2.0)
-    brk = n.ramp(n.noise(oc, 22.0, 2.0), 0.35, 0.6)
-    hgt = n.math('MULTIPLY', ridge, n.math('MULTIPLY', n.math('MULTIPLY', fw, brk), 0.0018))
+    # 皺: 肢の軸に沿った座標を主にしたノイズの「稜線」= 本数が少なく、幅・向き・深さが不規則な折れ皺
+    sep = n.new('ShaderNodeSeparateXYZ'); n.link(oc, sep.inputs['Vector'])
+    cv = n.new('ShaderNodeCombineXYZ')
+    n.link(n.math('MULTIPLY', ft, 16.0), cv.inputs['X'])
+    n.link(n.math('MULTIPLY', sep.outputs['X'], 4.0), cv.inputs['Y'])
+    n.link(n.math('MULTIPLY', sep.outputs['Y'], 4.0), cv.inputs['Z'])
+    fnz = n.noise(cv.outputs['Vector'], 1.0, 1.0, 0.5)
+    ridge = n.ramp(n.math('SUBTRACT', 1.0, n.math('ABSOLUTE', n.math('SUBTRACT', n.math('MULTIPLY', fnz, 2.0), 1.0))), 0.80, 0.97)
+    brk = n.ramp(n.noise(oc, 9.0, 1.0), 0.30, 0.70)                 # 皺ごとの深さのばらつき(浅い所は消える)
+    hgt = n.math('MULTIPLY', ridge, n.math('MULTIPLY', n.math('MULTIPLY', fw, brk), 0.0020))
     hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.noise(oc, 4.0, 1.0, 0.4), 0.0008))
     # 縦のたるみ皺(肩から落ちる布): Z 方向に引き伸ばしたノイズ
     st_ = n.new('ShaderNodeMapping'); n.link(oc, st_.inputs['Vector']); st_.inputs['Scale'].default_value = (1.0, 1.0, 0.08)
     drape = n.noise(st_.outputs['Vector'], 22.0, 2.0, 0.5)
     hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.ramp(drape, 0.3, 0.7), 0.0009))
     # 腰まわり(ベルト位置)の横皺
-    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', ridge, n.attr('n2_waist')), 0.0016))
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', n.math('MULTIPLY', ridge, brk), n.attr('n2_waist')), 0.0012))
     hgt = n.math('ADD', hgt, n.math('MULTIPLY', fiber, 0.00004))
     out = bake(obj, 'N2Bake', {'_mat': bm, 'albedo': col, 'rough': rough, 'normal': nrm_src, 'height': hgt}, size, 'coverall')
     mpu = meters_per_uv(obj, 'N2Bake')
@@ -1303,10 +1361,281 @@ def upgrade_armband(obj):
     obj.modifiers.move(len(obj.modifiers) - 1, 0)
     LOG('armband: stitched')
 
+
+# ---------------------------------------------------------------------------
+# 表情 2 状態: 無表情(基本形) と 不気味な笑い(シェイプキー grin)
+# ---------------------------------------------------------------------------
+def age_mouth(objs):
+    """口の中: 歯を黄ばませて歯間を暗く、歯茎・舌は血色を落とす(笑うと見えるため)。"""
+    for key, mul in (('teeth_base', (0.80, 0.73, 0.58)), ('tongue01', (0.62, 0.50, 0.50))):
+        o = objs.get(key)
+        if not o:
+            continue
+        for sl in o.material_slots:
+            for nd in sl.material.node_tree.nodes:
+                if nd.bl_idname == 'ShaderNodeTexImage' and nd.image:
+                    im = nd.image; w, h = im.size
+                    a = np.empty(w * h * 4, np.float32); im.pixels.foreach_get(a); a = a.reshape(h, w, 4)
+                    rgb = a[..., :3]
+                    red = (rgb[..., 0] > rgb[..., 1] * 1.25)[..., None]          # 歯茎(赤い所)
+                    out = rgb * np.array(mul, np.float32)
+                    out = np.where(red, rgb * np.array([0.55, 0.40, 0.40], np.float32), out)
+                    a[..., :3] = np.clip(out, 0, 1)
+                    im2 = bpy.data.images.new(f'{CID}_{key}', w, h, alpha=True); im2.pixels.foreach_set(a.ravel())
+                    save_image(im2, os.path.join(TEX_OUT, f'{CID}_{key}.png'))
+                    nd.image = im2
+            b = next((x for x in sl.material.node_tree.nodes if x.bl_idname == 'ShaderNodeBsdfPrincipled'), None)
+            if b:
+                b.inputs['Roughness'].default_value = 0.35
+    t = objs.get('teeth_base')
+    if t:   # 歯は 7k 三角形あるので、口の中で見える程度まで間引く(三角形予算 60k)
+        md = t.modifiers.new('N2_Decimate', 'DECIMATE'); md.ratio = 0.3
+        apply_modifier_first(t, md)
+    LOG('mouth: teeth yellowed, gums dulled, teeth decimated')
+
+
+def make_grin(body, units):
+    from bl_ext.user_default.mpfb.services import TargetService, LocationService
+    d = os.path.join(LocationService.get_mpfb_data('targets'), 'expression', 'units', 'asian')
+    kb = body.data.shape_keys.key_blocks
+    basis = body.data.shape_keys.reference_key
+    n = len(body.data.vertices)
+    b = np.empty(n * 3, np.float32); basis.data.foreach_get('co', b)
+    delta = np.zeros(n * 3, np.float32)
+    for name, w in units.items():
+        p = os.path.join(d, name + '.target.gz')
+        assert os.path.exists(p), p
+        k = TargetService.load_target(body, p, weight=0.0, name='n2tmp-' + name)
+        k = kb['n2tmp-' + name] if not isinstance(k, bpy.types.ShapeKey) else k
+        c = np.empty(n * 3, np.float32); k.data.foreach_get('co', c)
+        delta += (c - b) * w
+        body.shape_key_remove(k)
+    g = body.shape_key_add(name='grin', from_mix=False)
+    g.relative_key = basis
+    g.data.foreach_set('co', b + delta)
+    g.value = 0.0; g.slider_max = 1.0
+    mv = np.linalg.norm(delta.reshape(-1, 3), axis=1)
+    LOG(f'grin: {len(units)} units, max move {mv.max() * 1000:.1f} mm')
+    return g
+
+
+def grin_deltas(body):
+    """体の各頂点の grin の移動量(レストのワールド座標)。"""
+    k = body.data.shape_keys.key_blocks['grin']
+    k.value = 0.0; a, _ = rest_mesh_arrays(body)
+    k.value = 1.0; b, _ = rest_mesh_arrays(body)
+    k.value = 0.0
+    return a, b - a
+
+
+def transfer_grin(body, meshes, curves):
+    """眉・まつ毛(帯メッシュとヘアカーブ)を、近くの肌の動きに合わせて grin に追従させる。"""
+    from mathutils.kdtree import KDTree
+    co, dl = grin_deltas(body)
+    sel = np.where(np.linalg.norm(dl, axis=1) > 1e-6)[0]
+    kd = KDTree(len(sel))
+    for j, i in enumerate(sel):
+        kd.insert(Vector(co[i]), j)
+    kd.balance()
+    def field(points):
+        out = np.zeros_like(points)
+        for i, p in enumerate(points):
+            hits = kd.find_n(Vector(p), 4)
+            w = np.array([1.0 / max(h[2], 1e-4) for h in hits]); w /= w.sum()
+            out[i] = sum(wi * dl[sel[h[1]]] for wi, h in zip(w, hits))
+        return out
+    for m in meshes:
+        me = m.data
+        pts = np.empty(len(me.vertices) * 3, np.float32); me.vertices.foreach_get('co', pts); pts = pts.reshape(-1, 3)
+        d = field(pts)
+        if not me.shape_keys:
+            m.shape_key_add(name='Basis', from_mix=False)
+        k = m.shape_key_add(name='grin', from_mix=False)
+        k.data.foreach_set('co', (pts + d).ravel())
+        k.value = 0.0
+    for c in curves:
+        pos = np.empty(len(c.data.points) * 3, np.float32)
+        c.data.attributes['position'].data.foreach_get('vector', pos)
+        d = field(pos.reshape(-1, 3))
+        at = c.data.attributes.new('n2_grin', 'FLOAT_VECTOR', 'POINT')
+        at.data.foreach_set('vector', d.astype(np.float32).ravel())
+    LOG(f'grin transfer: {len(meshes)} meshes, {len(curves)} curves')
+
+
+# ---------------------------------------------------------------------------
+# 凶器: ハンマー(自作。全長 40cm、頭 10.5cm の八角の鉄、柄は木で手元に黒テープ)
+#   原点 = 握り位置、+Y = 柄の先 → 頭の向き、+X = 頭の長さ方向。書き出しは別ファイル(07 本体の FBX に混ぜない)
+# ---------------------------------------------------------------------------
+HAM_TOTAL = 0.400
+HAM_GRIP = 0.075          # 握りの中心(柄尻から)
+HAM_HEAD_LEN = 0.105
+
+
+def _ring(bm, y, rx, rz, seg, x0=0.0):
+    return [bm.verts.new((x0 + rx * math.cos(2 * math.pi * i / seg), y, rz * math.sin(2 * math.pi * i / seg))) for i in range(seg)]
+
+
+def _bridge(bm, r0, r1):
+    n = len(r0)
+    return [bm.faces.new((r0[i], r0[(i + 1) % n], r1[(i + 1) % n], r1[i])) for i in range(n)]
+
+
+def make_hammer():
+    bm = bmesh.new()
+    part = bm.verts.layers.float.new('n2_part')       # 0=木, 1=鉄, 2=テープ
+    SEG = 16
+    head_y = HAM_TOTAL - 0.019                        # 頭の中心(柄尻基準)
+    # 柄: 楕円断面、柄尻はふくらむ、頭の手前で細る
+    prof = [(0.000, 0.0145, 0.0105), (0.006, 0.0160, 0.0118), (0.018, 0.0150, 0.0110), (0.060, 0.0138, 0.0102),
+            (0.140, 0.0132, 0.0098), (0.220, 0.0124, 0.0092), (0.300, 0.0116, 0.0087), (head_y - 0.02, 0.0110, 0.0083),
+            (HAM_TOTAL - 0.001, 0.0108, 0.0082)]
+    rings = [_ring(bm, y, rx, rz, SEG) for y, rx, rz in prof]
+    for r0, r1 in zip(rings[:-1], rings[1:]):
+        _bridge(bm, r0, r1)
+    for r in (rings[0], rings[-1]):
+        c = bm.verts.new((0, r[0].co.y, 0))
+        for i in range(SEG):
+            bm.faces.new((r[i], r[(i + 1) % SEG], c) if r is rings[-1] else (r[(i + 1) % SEG], r[i], c))
+    # テープ(手元 15cm、柄より 1.2mm 太い)
+    tprof = [(0.012, 0.0164, 0.0123), (0.020, 0.0162, 0.0122)] + [(0.02 + 0.13 * k / 6, 0.0152 - 0.001 * k / 6, 0.0114 - 0.0008 * k / 6) for k in range(1, 7)] + [(0.158, 0.0141, 0.0105)]
+    trings = [_ring(bm, y, rx, rz, SEG) for y, rx, rz in tprof]
+    tv = set(v for r in trings for v in r)
+    for r0, r1 in zip(trings[:-1], trings[1:]):
+        _bridge(bm, r0, r1)
+    # 頭: 八角柱(X 方向に長さ 10.5cm、幅 3.4cm)。両端は面取りした打撃面
+    OCT = 8; hw = 0.0175
+    def oct_ring(x, s):
+        return [bm.verts.new((x, head_y + hw * s * math.cos(2 * math.pi * (i + 0.5) / OCT) / math.cos(math.pi / OCT),
+                              hw * s * math.sin(2 * math.pi * (i + 0.5) / OCT) / math.cos(math.pi / OCT))) for i in range(OCT)]
+    L2 = HAM_HEAD_LEN / 2
+    hr = [oct_ring(-L2, 0.86), oct_ring(-L2 + 0.004, 1.0), oct_ring(-0.012, 0.97), oct_ring(0.012, 0.97),
+          oct_ring(L2 - 0.004, 1.0), oct_ring(L2, 0.86)]
+    hv = set(v for r in hr for v in r)
+    for r0, r1 in zip(hr[:-1], hr[1:]):
+        _bridge(bm, r0, r1)
+    for r, flip in ((hr[0], True), (hr[-1], False)):
+        c = bm.verts.new((r[0].co.x * 1.0 + (-0.0015 if flip else 0.0015), head_y, 0))   # 打撃面はわずかに膨らむ
+        hv.add(c)
+        for i in range(OCT):
+            bm.faces.new((r[(i + 1) % OCT], r[i], c) if flip else (r[i], r[(i + 1) % OCT], c))
+    for v in bm.verts:
+        v[part] = 1.0 if v in hv else (2.0 if v in tv else 0.0)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    for v in bm.verts:
+        v.co.y -= HAM_GRIP                            # 原点 = 握り
+    me = bpy.data.meshes.new('N2_hammer')
+    bm.to_mesh(me); bm.free()
+    for p_ in me.polygons:
+        p_.use_smooth = True
+    # 点の属性(Attribute ノード用)
+    obj = bpy.data.objects.new('N2E_hammer', me)
+    bpy.context.scene.collection.objects.link(obj)
+    smart_uv(obj, 'UVMap', margin=0.01)
+    me.uv_layers.active = me.uv_layers['UVMap']
+    # 焼き込み素材
+    bmat = bpy.data.materials.new('N2_HammerBake')
+    n = N(bmat)
+    oc = n.obj_coord()
+    pt = n.attr('n2_part')
+    steel = n.ramp(pt, 0.5, 0.6); tape = n.ramp(pt, 1.5, 1.6); wood = n.math('MULTIPLY', n.math('SUBTRACT', 1.0, steel), n.math('SUBTRACT', 1.0, tape))
+    # 木: 縦の木目、手垢と頭の近くの汚れ
+    grain = n.new('ShaderNodeTexWave', wave_type='BANDS', bands_direction='X')
+    n.link(oc, grain.inputs['Vector']); grain.inputs['Scale'].default_value = 60.0; grain.inputs['Distortion'].default_value = 9.0
+    grain.inputs['Detail'].default_value = 3.0
+    wcol = n.mix((0.19, 0.12, 0.065, 1), (0.11, 0.07, 0.04, 1), n.math('MULTIPLY', grain.outputs['Fac'], 0.8))   # 使い込んで黒ずんだ木
+    wcol = n.mix(wcol, (0.12, 0.09, 0.06, 1), n.math('MULTIPLY', n.ramp(n.noise(oc, 25.0, 3.0), 0.5, 0.8), 0.5))
+    # 鉄: 暗い地金に錆(縁と面取りに寄る)・打撃面は擦れて明るい
+    rust_n = n.ramp(n.noise(oc, 45.0, 4.0, 0.6), 0.42, 0.62)
+    rust_b = n.ramp(n.voronoi(oc, 90.0, 1.0), 0.35, 0.15)
+    rust = n.math('MAXIMUM', rust_n, n.math('MULTIPLY', rust_b, 0.6), clamp=True)
+    scol = n.mix((0.20, 0.20, 0.21, 1), n.mix((0.38, 0.18, 0.08, 1), (0.22, 0.10, 0.05, 1), n.noise(oc, 120.0)), rust)
+    sep = n.new('ShaderNodeSeparateXYZ'); n.link(oc, sep.inputs['Vector'])
+    face = n.ramp(n.math('ABSOLUTE', sep.outputs['X']), L2 - 0.004, L2 - 0.0005)
+    scol = n.mix(scol, (0.45, 0.45, 0.46, 1), n.math('MULTIPLY', face, 0.7))
+    # テープ: 黒、巻きの段(らせん)、端が少しめくれ汚れる
+    tcol = n.mix((0.025, 0.025, 0.028, 1), (0.06, 0.06, 0.065, 1), n.ramp(n.noise(oc, 200.0), 0.4, 0.7))
+    col = n.mix(n.mix(wcol, scol, steel), tcol, tape)
+    rough = n.fmix(n.fmix(0.62, n.fmix(0.38, 0.85, rust), steel), 0.55, tape)
+    rough = n.fmix(rough, 0.25, n.math('MULTIPLY', face, steel))
+    metal = n.math('MULTIPLY', steel, n.math('SUBTRACT', 1.0, n.math('MULTIPLY', rust, 0.95)))
+    # 高さ: 打痕(鉄)・木目の溝・テープの巻き段
+    dents = n.math('MULTIPLY', n.ramp(n.voronoi(oc, 160.0, 1.0), 0.18, 0.0), -0.0005)
+    hgt = n.math('MULTIPLY', dents, steel)
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', rust_n, 0.00015), steel))
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', grain.outputs['Fac'], 0.00012), wood))
+    wrap = n.new('ShaderNodeTexWave', wave_type='BANDS', bands_direction='Y', wave_profile='SAW')
+    n.link(oc, wrap.inputs['Vector']); wrap.inputs['Scale'].default_value = 8.0; wrap.inputs['Distortion'].default_value = 0.5
+    hgt = n.math('ADD', hgt, n.math('MULTIPLY', n.math('MULTIPLY', wrap.outputs['Fac'], 0.0003), tape))
+    me.materials.append(bmat)
+    out = bake(obj, 'UVMap', {'_mat': bmat, 'albedo': col, 'rough': rough, 'metal': metal, 'height': hgt}, 2048, 'hammer', margin=6)
+    mpu = meters_per_uv(obj, 'UVMap')
+    out['normal'] = height_to_normal(out['height'], mpu, os.path.join(TEX_OUT, 'hammer_normal.png'), 'hammer_normal')
+    m = bpy.data.materials.new('N2_hammer')
+    nt = m.node_tree; b = nt.nodes['Principled BSDF']
+    t1 = nt.nodes.new('ShaderNodeTexImage'); t1.image = out['albedo']
+    t2 = nt.nodes.new('ShaderNodeTexImage'); t2.image = out['normal']
+    t3 = nt.nodes.new('ShaderNodeTexImage'); t3.image = out['rough']
+    t4 = nt.nodes.new('ShaderNodeTexImage'); t4.image = out['metal']
+    nmn = nt.nodes.new('ShaderNodeNormalMap')
+    nt.links.new(t1.outputs['Color'], b.inputs['Base Color'])
+    nt.links.new(t2.outputs['Color'], nmn.inputs['Color']); nt.links.new(nmn.outputs['Normal'], b.inputs['Normal'])
+    nt.links.new(t3.outputs['Color'], b.inputs['Roughness'])
+    nt.links.new(t4.outputs['Color'], b.inputs['Metallic'])
+    me.materials.clear(); me.materials.append(m)
+    obj['n2_no_export'] = True      # 07 本体の FBX には入れない
+    me.calc_loop_triangles()
+    LOG(f'hammer: {len(me.loop_triangles)} tris, total {HAM_TOTAL * 100:.0f}cm, head {HAM_HEAD_LEN * 100:.1f}cm')
+    return obj
+
+
+def export_hammer(obj, out_dir):
+    """hammer.fbx / hammer.glb を書き出す(原点 = 握り、+Y = 柄の先→頭)。"""
+    for o in bpy.context.scene.objects:
+        o.select_set(o is obj)
+    bpy.context.view_layer.objects.active = obj
+    fbx = os.path.join(out_dir, 'hammer.fbx')
+    bpy.ops.export_scene.fbx(filepath=fbx, use_selection=True, object_types={'MESH'}, use_mesh_modifiers=True,
+                             mesh_smooth_type='FACE', path_mode='COPY', embed_textures=True, bake_anim=False,
+                             axis_forward='-Z', axis_up='Y')
+    glb = os.path.join(out_dir, 'hammer.glb')
+    bpy.ops.export_scene.gltf(filepath=glb, export_format='GLB', use_selection=True, export_yup=False,
+                              export_apply=True, export_animations=False)
+    LOG(f'hammer export: {os.path.getsize(fbx) / 1e6:.1f}MB fbx, {os.path.getsize(glb) / 1e6:.1f}MB glb')
+
+
+def attach_hammer(rig, obj):
+    """ポーズ後に右手へ握らせる(柄は手から斜め前下へ垂れ、頭は斜め前を向く)。"""
+    bpy.context.view_layer.update()
+    pb = lambda n: rig.matrix_world @ rig.pose.bones[n].head
+    palm = (pb('metacarpal2.R') + pb('metacarpal3.R') + pb('finger2-1.R') + pb('finger3-1.R') + pb('finger4-1.R')) / 5
+    knuck = (pb('finger2-1.R') + pb('finger3-1.R') + pb('finger4-1.R') + pb('finger5-1.R')) / 4
+    wrist = pb('wrist.R')
+    down = (knuck - wrist).normalized()
+    inward = Vector((1, 0, 0))                      # 右手の掌は体側(+X)を向く
+    grip = palm + inward * 0.012 + down * 0.012
+    ydir = Vector((-0.42, -0.35, -1.0)).normalized()  # 柄の先(頭)は外側・斜め前下へ(脚から離して遠目でも形が抜ける)
+    xdir = Vector((1.0, -0.3, 0.0)); xdir = (xdir - ydir * xdir.dot(ydir)).normalized()   # 頭は左右向き(正面から T 字に見える)
+    zdir = xdir.cross(ydir)
+    M = Matrix((xdir, ydir, zdir)).transposed().to_4x4()
+    M.translation = grip
+    obj.matrix_world = M
+    bpy.context.view_layer.update()
+    mw = obj.matrix_world.copy()
+    obj.parent = rig; obj.parent_type = 'BONE'; obj.parent_bone = 'wrist.R'
+    bpy.context.view_layer.update()
+    pbw = rig.pose.bones['wrist.R']
+    obj.matrix_parent_inverse = (rig.matrix_world @ pbw.matrix @ Matrix.Translation((0, pbw.length, 0))).inverted()
+    obj.matrix_basis = Matrix.Identity(4)
+    obj.matrix_world = mw
+    LOG('hammer: in right hand')
+
 # ---------------------------------------------------------------------------
 def upgrade(C, body, rig, objs, extras):
     rng = np.random.default_rng(1967)
     eyes = objs['high-poly']
+    if C.get('grin'):
+        make_grin(body, C['grin'])
+    age_mouth(objs)
     F = upgrade_skin(body, rig, eyes)
     upgrade_eyes(eyes)
     upgrade_coverall(objs['elvs_male_coveralls_1'], rig)
@@ -1316,5 +1645,11 @@ def upgrade(C, body, rig, objs, extras):
     cap, emblem, plane = make_cap(body, rig, F)
     hair, hstrip = make_hair(body, rig, F, plane, rng)
     curves, strips = make_brows_lashes(objs, rig, F, rng)
-    extras += [cap, emblem, hstrip] + strips
+    if C.get('grin'):
+        transfer_grin(body, strips, curves)
+    if C.get('hammer'):
+        h = make_hammer()
+        export_hammer(h, os.path.dirname(TEX_OUT))
+        rig['n2_hammer'] = h.name
+    extras += [cap, hstrip] + strips
     rig['n2_cap_plane'] = [float(v) for v in plane[0]] + [float(plane[1])]

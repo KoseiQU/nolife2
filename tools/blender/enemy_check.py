@@ -10,6 +10,9 @@
 #  6) 眼球: 虹彩テクスチャ(彩度のある画素)の平均が灰白でない(暗く・色がある)
 #  7) 帽子: つばの下端が目の中心より上(正面の目線)。さらに正面(3.2m/目の高さ)と覗き穴(0.6m/1.50m)から
 #     目の中心へのレイが帽子に遮られない
+#  8) 帽子のクラウンの高さ(下の帯の上端〜天井)≤ 60mm
+#  9) ハンマー: 三角形 ≤3k・全長 0.38〜0.42m・テクスチャ ≤2048・原点=握り・hammer.fbx/.glb が読み直せる
+# 10) FBX の体に形状キー grin があり、値 1 で口まわりが ≥8mm 動く
 
 import bpy, json, math, os, sys
 import numpy as np
@@ -138,6 +141,42 @@ for label, dist, hgt in (('正面3.2m', 3.2, eye_z), ('廊下の目線1.62m', 3.
             blocked.append(label)
 rec('目へのレイが帽子に遮られない', not blocked, blocked or 'なし', 'なし')
 
+# 8) 帽子のクラウンの高さ(下の帯の上端〜天井、レスト)
+rig.data.pose_position = 'REST'; bpy.context.view_layer.update(); dg = bpy.context.evaluated_depsgraph_get()
+upv = np.array(cap['n2_cap_up']); dpl = cap['n2_cap_d']; band = cap['n2_cap_band']
+crco, _, _, _ = eval_world(cap)
+hmax = max(float(np.dot(np.array(p), upv)) - dpl for p in crco)
+rec('帽子クラウンの高さ(帯上端〜天井, mm)', hmax - band <= 0.060, round((hmax - band) * 1000, 1), '≤60')
+rig.data.pose_position = 'POSE'; bpy.context.view_layer.update(); dg = bpy.context.evaluated_depsgraph_get()
+
+# 9) ハンマー(別ファイル)
+ham = bpy.data.objects.get(rig.get('n2_hammer', ''))
+if ham is None:
+    rec('ハンマー', False, 'なし', 'あり')
+else:
+    hm = ham.data; hm.calc_loop_triangles()
+    ys = [v.co.y for v in hm.vertices]
+    hlen = max(ys) - min(ys)
+    himgs = [nd.image for s_ in ham.material_slots for nd in s_.material.node_tree.nodes if nd.bl_idname == 'ShaderNodeTexImage' and nd.image]
+    rec('ハンマー三角形数', len(hm.loop_triangles) <= 3000, len(hm.loop_triangles), '≤3000')
+    rec('ハンマー全長(m)', 0.38 <= hlen <= 0.42, round(hlen, 3), '0.38〜0.42')
+    rec('ハンマーのテクスチャ最大(px)', max(max(i.size) for i in himgs) <= 2048, max(max(i.size) for i in himgs), '≤2048')
+    rec('ハンマー原点=握り(柄尻が −Y 側 5〜10cm)', -0.10 <= min(ys) <= -0.05 and max(ys) > 0.3, round(min(ys), 3), '−0.10〜−0.05')
+    for ext in ('fbx', 'glb'):
+        pth = os.path.join(blend_dir, 'hammer.' + ext)
+        b4 = set(bpy.data.objects)
+        if ext == 'fbx':
+            bpy.ops.import_scene.fbx(filepath=pth)
+        else:
+            bpy.ops.import_scene.gltf(filepath=pth)
+        nw = [o for o in bpy.data.objects if o not in b4 and o.type == 'MESH']
+        t_ = 0
+        for o in nw:
+            o.data.calc_loop_triangles(); t_ += len(o.data.loop_triangles)
+        rec(f'hammer.{ext} 再読込(三角形数一致)', len(nw) == 1 and t_ == len(hm.loop_triangles), t_, len(hm.loop_triangles))
+        for o in nw:
+            bpy.data.objects.remove(o)
+
 # 2) 4) FBX 再読込
 fbx = os.path.join(blend_dir, export['fbx'])
 before = set(bpy.data.objects)
@@ -152,6 +191,20 @@ for o in new:
     if ref is None or ref['verts'] != len(o.data.vertices) or ref['mats'] != len(o.material_slots):
         mism.append((o.name, len(o.data.vertices), len(o.material_slots), ref))
 rec('三角形数(FBX)', tris <= 60000, tris, '≤60000')
+fbody = next((o for o in new if o.name.startswith(body.name.split('_src')[0].split('.body')[0] + '.body')), None)
+gk = fbody.data.shape_keys.key_blocks.get('grin') if fbody is not None and fbody.data.shape_keys else None
+if gk is None:
+    rec('grin シェイプキー(FBX)', False, 'なし', 'あり・口角 ≥8mm')
+else:
+    ec_ = Vector(export['eye_center_rest'])
+    bk = fbody.data.shape_keys.reference_key
+    mw_ = fbody.matrix_world
+    mv = 0.0
+    for a_, b_ in zip(bk.data, gk.data):
+        p_ = mw_ @ a_.co
+        if ec_.z - 0.11 < p_.z < ec_.z - 0.04 and abs(p_.x - ec_.x) < 0.065 and p_.y < ec_.y + 0.03:
+            mv = max(mv, ((mw_ @ b_.co) - p_).length)
+    rec('grin シェイプキー(FBX): 口まわりの最大移動(mm)', mv >= 0.008, round(mv * 1000, 1), '≥8')
 rec('FBX 再読込: メッシュ数', len(new) == len(export['meshes']), len(new), len(export['meshes']))
 rec('FBX 再読込: 頂点数・素材数の一致', not mism, mism or '全一致', '全一致')
 fimgs = {i for i in bpy.data.images if i.users and i.packed_file is not None or i.filepath.endswith(('.jpg', '.png'))}

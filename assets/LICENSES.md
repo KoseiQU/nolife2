@@ -18,3 +18,5 @@
 | build/enemy/07_*（P1b 確定像。肌・服の焼き込みテクスチャ、制帽、髪・眉・まつ毛の毛束テクスチャ） | 自作（tools/blender/enemy_p1b.py が Cycles の手続き的シェーダ／numpy で描く。元は上記 MakeHuman の CC0 肌・CC-BY のつなぎ） | 自作部分は CC0 扱い／つなぎの改変物は CC-BY（帰属: Elvaerwyn） | 2026-10-31 |
 | build/enemy/07_*: 黒の作業靴（shoes03） | MakeHuman system assets（上記と同じパック） | CC0 1.0 | 2026-10-31 |
 | docs/enemy-candidates/p1b/*.jpg（P1b のレンダ） | 自作（tools/build_enemy_final.sh） | 上記各アセットのライセンスに従う（CC-BY 分は帰属表示が必要: Elvaerwyn） | 2026-10-31 |
+| build/enemy/07_*: 歯・舌（teeth_base, tongue01。色の黄ばみ・間引きの改変あり） | MakeHuman system assets（上記と同じパック） | CC0 1.0 | 2026-10-31 |
+| build/enemy/hammer.fbx / hammer.glb・build/enemy/tex/07_hammer_*（凶器のハンマー。形・テクスチャとも自作） | 自作（tools/blender/enemy_p1b.py `make_hammer`。実在製品の形・ロゴは模していない） | 自作（CC0扱い） | 2026-10-31 |
