@@ -28,6 +28,7 @@ import { AttackMovie } from './attack_movie.js';
 import { Hud } from './hud.js';
 import { Rooms } from './rooms.js';
 import { HUD_TEXT } from './hud_text.js';
+import { storyDecor, setLiveDrip } from './story_doors.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -268,6 +269,7 @@ function updateDoors(dt) {
     ...(ai && !ai.transit && !TOUR ? [{ level: ai.level, x: enemy.pos.x, z: enemy.pos.z }] : []),
   ]);
   for (const d of doors) if (!d.operable && d.rattle <= 0 && d.node) d.node.rotation.y = 0;
+  world.updateDecor(dt, playerLevel, player.pos.x, player.pos.z);
 }
 
 // ---------------------------------------------------------------- player
@@ -664,6 +666,7 @@ window.__n2 = {
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
+  storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
   peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },

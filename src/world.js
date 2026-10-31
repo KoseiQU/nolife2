@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { floorWallBoxes, GEOM, evOpeningCenter, doorWidth } from './walls.js';
+import { decorateStoryDoors, updateStoryDoors } from './story_doors.js';
 
 export const FH = GEOM.FLOOR_H;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7];
@@ -189,6 +190,7 @@ export class World {
       if (this.visible.has(level)) this.scene.add(rec.group);
       rec.state = 'ready';
       this._bind(level, rec);
+      decorateStoryDoors(this, level, rec);   // P3b-4: 進行解放の5室の扉の血痕(見た目だけ。読み終わった後に非同期で足す)
       // 風除室の静的環境は、この階の材質のテクスチャが読み終わってから描く(未読込の面は黒く写るため)
       if (man.envProbe) {
         const waits = [];
@@ -419,6 +421,9 @@ export class World {
     if (this.onBind) this.onBind(level, rec.binds);
     for (const d of this.doors) if (d.level === level && d.kind === 'auto') this._applyAuto(d);
   }
+
+  // P3b-4: 怖い扉の「生乾きの垂れ」(見た目だけ。扉の前に初めて来ると伸びる)
+  updateDecor(dt, levelKey, x, z) { updateStoryDoors(dt, levelKey, x, z); }
 
   _applyAuto(d) {
     for (const l of d.leaves) l.node.position.copy(l.base).addScaledVector(l.dir, l.dist * d.open01);
