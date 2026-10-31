@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, HERE)
 from n2common import parse_args, log  # noqa: E402
 
-ARGS = parse_args({'attack': False, 'far': False, 'labels': '', 'face': False, 'grin': False, 'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
+ARGS = parse_args({'action': '', 'frame': '', 'attack': False, 'far': False, 'labels': '', 'face': False, 'grin': False, 'strips': False, 'orbit': '', 'inputs': '', 'debug_lights': False, 'side': False, 'mode': 'portrait', 'out': '', 'enemy': '', 'samples': '', 'device': 'GPU', 'exposure': ''})
 MODE = ARGS['mode']
 
 # --- 廊下(P0b)での立ち位置とカメラ。Blender 座標 = (x, -z, y)(build_scene.py と同じ)。床 z=8.7 ---
@@ -96,8 +96,40 @@ def world_bbox(objs):
 
 
 def head_point(rig):
-    pb = rig.pose.bones['head']
+    pb = rig.pose.bones.get('head') or rig.pose.bones.get('mixamorig:Head')
     return rig.matrix_world @ pb.head, rig.matrix_world @ pb.tail
+
+
+def apply_anim(rig):
+    """--action 名 --frame (数|mid|peak_hand|max_head) で、リグ(P2a の Mixamo アーマチュア)をそのアニメのその瞬間にする。"""
+    name = ARGS.get('action')
+    if not name:
+        return None
+    act = bpy.data.actions[name]
+    rig.animation_data.action = act
+    if hasattr(rig.animation_data, 'action_slot') and getattr(act, 'slots', None) and len(act.slots):
+        rig.animation_data.action_slot = act.slots[0]
+    f0, f1 = int(act.frame_range[0]), int(act.frame_range[1])
+    fr = ARGS.get('frame') or 'mid'
+    if fr == 'mid':
+        f = (f0 + f1) // 2
+    elif fr in ('peak_hand', 'max_head'):
+        best, f = -1e9, f0
+        for k in range(f0, f1 + 1):
+            bpy.context.scene.frame_set(k)
+            if fr == 'peak_hand':
+                v = (rig.matrix_world @ rig.pose.bones['mixamorig:RightHand'].head).z
+            else:
+                q = (rig.matrix_world @ rig.pose.bones['mixamorig:Head'].matrix).to_quaternion()
+                v = abs(q.to_euler().z)
+            if v > best:
+                best, f = v, k
+    else:
+        f = int(fr)
+    bpy.context.scene.frame_set(f)
+    bpy.context.view_layer.update()
+    log(f'anim {name} frame {f} ({f0}..{f1})')
+    return f
 
 
 def look_at(obj, target):
@@ -142,6 +174,7 @@ def save_jpeg(scene, out):
 # ---------------------------------------------------------------------------
 def portrait():
     scene = bpy.context.scene
+    apply_anim(enemy_root(scene))
     setup_cycles(scene, int(ARGS['samples'] or 256))
     scene.render.resolution_x, scene.render.resolution_y = 1200, 1600
     scene.render.resolution_percentage = 100
@@ -202,12 +235,13 @@ def threequarter():
     scene.render.resolution_x, scene.render.resolution_y = 1200, 1600
     scene.view_settings.exposure = float(ARGS['exposure'] or PORTRAIT_EXPOSURE)
     rig = enemy_root(scene)
+    apply_anim(rig)
     mn, mx = world_bbox([o for o in rig.children if o.type == 'MESH' and not o.hide_render])
     c = Vector(((mn.x + mx.x) / 2, (mn.y + mx.y) / 2, mx.z / 2 + 0.02))
     cam = bpy.data.objects.new('N2_Cam', bpy.data.cameras.new('N2_Cam'))
     scene.collection.objects.link(cam); scene.camera = cam
     cam.data.lens = 50; cam.data.sensor_fit = 'VERTICAL'; cam.data.sensor_height = 24
-    dist = (mx.z * 1.12) / 2 / math.tan(math.atan(12 / 50))
+    dist = (max(mx.z, mx.z - mn.z) * 1.25) / 2 / math.tan(math.atan(12 / 50))
     d = Vector((math.sin(math.radians(45)), -math.cos(math.radians(45)), 0))
     cam.location = c + d * dist + Vector((0, 0, 0.15))
     look_at(cam, c)
@@ -242,9 +276,11 @@ def insitu(peephole=False):
             col.objects.link(o)
     rig = enemy_root(scene)
     ey = CAM_XY[1] - 8.0 if ARGS.get('far') else ENEMY_XY[1]      # --far: 8m 先(遠目のシルエット確認)
-    rig.location = (ENEMY_XY[0], ey, FLOOR_Z)
-    rig.rotation_euler = (0, 0, math.radians(180))   # MPFB の正面(-Y)をカメラ(+Y 側)へ
+    # 正面(-Y)をカメラ(+Y 側)へ向けて立たせる。リグ自身の変換(Mixamo は X 90°)の外側から掛ける
+    base = rig.matrix_world.copy()
+    rig.matrix_world = Matrix.Translation((ENEMY_XY[0], ey, FLOOR_Z)) @ Matrix.Rotation(math.radians(180), 4, 'Z') @ base
     bpy.context.view_layer.update()
+    apply_anim(rig)
     cam = bpy.data.objects.new('N2_Cam', bpy.data.cameras.new('N2_Cam'))
     scene.collection.objects.link(cam); scene.camera = cam
     cam.data.sensor_fit = 'VERTICAL'; cam.data.sensor_height = 24
