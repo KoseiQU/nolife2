@@ -1,0 +1,12 @@
+{
+ "skyK": 16.0,
+ "moonAzDeg": 135.0,
+ "moonElDeg": 36.0,
+ "cityAzDeg": [
+  -12.000000000000002,
+  40.0
+ ],
+ "cityHorizonRow": 142,
+ "cityRows": 256,
+ "treeVariants": 4
+}
