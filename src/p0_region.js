@@ -29,7 +29,7 @@ export function selectRegionBoxes(boxes, region) {
     const key = [ux0, uz0, ux1, uz1].map((v) => v.toFixed(4)).join(',');
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ minX: ux0, minZ: uz0, maxX: ux1, maxZ: uz1, kind: b.kind, src: b });
+    out.push({ minX: ux0, minZ: uz0, maxX: ux1, maxZ: uz1, kind: b.kind, part: b.part || null, roomId: b.roomId || null, src: b });
   }
   return out;
 }

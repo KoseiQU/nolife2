@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
@@ -31,7 +32,11 @@ export const LOOK = {
   vignette: 0.42,
   maxRenderPixels: 1920 * 1080,   // Retina でもこの画素数を上限に描く(60fps 目標)
   // 発光面の見た目だけの倍率(ベイク側の光量は Blender の値のまま)。窓は面で見ると白飛びするので抑える
-  emissiveScale: { M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0 },
+  emissiveScale: { M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0, M_CarCeiling: 0.0,  // カゴ照明=待機中は消灯
+    M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6 },   // 近くで見る発光面は白飛びしない程度に
+  // 金属とガラスだけに弱い環境反射(ライトマップは拡散だけなので、無いと SUS が真っ黒に見える)
+  metalEnv: 0.08,
+  glassEnv: 0.06,
 };
 
 const errBox = document.getElementById('err');
@@ -138,6 +143,9 @@ lightMap.minFilter = THREE.LinearMipmapLinearFilter;
 lightMap.magFilter = THREE.LinearFilter;
 
 const maxAniso = renderer.capabilities.getMaxAnisotropy();
+const pmrem = new THREE.PMREMGenerator(renderer);
+const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay']);
 const seenMats = new Set();
 const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton']);
 gltf.scene.traverse((o) => {
@@ -155,6 +163,10 @@ gltf.scene.traverse((o) => {
       if (m[k]) { m[k].anisotropy = maxAniso; m[k].needsUpdate = true; }
     }
     m.envMapIntensity = 0;
+    if (m.metalness > 0.5 || GLASS.has(m.name)) {
+      m.envMap = envTex;
+      m.envMapIntensity = m.metalness > 0.5 ? LOOK.metalEnv : LOOK.glassEnv;
+    }
     if (LOOK.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= LOOK.emissiveScale[m.name];
     m.needsUpdate = true;
   }
@@ -166,7 +178,8 @@ mergeStatic(gltf.scene);
 // 1フレーム 400 ドローコール超になっていたため。扉板はヒンジ回転するので個別のまま残す。
 function mergeStatic(root) {
   root.updateMatrixWorld(true);
-  const isDoor = (o) => { for (let p = o; p; p = p.parent) if (p.userData && p.userData.n2_kind === 'door') return true; return false; };
+  const MOVABLE = new Set(['door', 'evdoor']);   // 扉板・EV扉(左右)は後で動かすので結合しない
+  const isDoor = (o) => { for (let p = o; p; p = p.parent) if (p.userData && MOVABLE.has(p.userData.n2_kind)) return true; return false; };
   const groups = new Map();
   const victims = [];
   root.traverse((o) => {

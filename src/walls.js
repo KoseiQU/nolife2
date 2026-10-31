@@ -12,7 +12,9 @@
 //                      (8Fの封印扉も同様に塞がる)。プレイヤー自室(410)のドアだけは
 //                      level.jsが実行時に開閉可能化する(開いている間はこのAABBを無効化)
 
-export const GEOM = { FLOOR_H: 2.9, CEIL_H: 2.4, WALL_T: 0.12, DOOR_W: 0.9 };
+export const GEOM = { FLOOR_H: 2.9, CEIL_H: 2.4, WALL_T: 0.12, DOOR_W: 0.9,
+  // NOLIFE 2 P0b(DESIGN §2.2): EV扉は廊下壁から奥まったアルコーブに収まる(幅×奥行)
+  EV_ALCOVE_W: 1.0, EV_ALCOVE_D: 0.27 };
 const T = GEOM.WALL_T;
 
 // 区間[lo,hi]から gaps[{center,width}] を引いた区間リスト
@@ -172,14 +174,29 @@ function doorBlockerBoxes(floor, boxes) {
   }
 }
 
+// EVシャフトの塊。扉があれば扉面に幅 EV_ALCOVE_W・奥行 EV_ALCOVE_D のアルコーブを掘る。
+// part: 'evBack'(アルコーブ奥の塊・扉はこの面に付く) / 'evSide'(左右の袖)
+export function elevatorBlocks(room) {
+  const [x, z, w, d] = room.rect;
+  const box = (x0, z0, x1, z1, part) => ({ cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, kind: 'solid', part, roomId: room.id });
+  if (!room.door) return [box(x, z, x + w, z + d, 'evBack')];
+  const AW = GEOM.EV_ALCOVE_W, AD = GEOM.EV_ALCOVE_D;
+  const [px, pz] = room.door.pos;
+  switch (room.door.facing) {
+    case 'N': return [box(x, z + AD, x + w, z + d, 'evBack'), box(x, z, px - AW / 2, z + AD, 'evSide'), box(px + AW / 2, z, x + w, z + AD, 'evSide')];
+    case 'S': return [box(x, z, x + w, z + d - AD, 'evBack'), box(x, z + d - AD, px - AW / 2, z + d, 'evSide'), box(px + AW / 2, z + d - AD, x + w, z + d, 'evSide')];
+    case 'W': return [box(x + AD, z, x + w, z + d, 'evBack'), box(x, z, x + AD, pz - AW / 2, 'evSide'), box(x, pz + AW / 2, x + AD, z + d, 'evSide')];
+    default:  return [box(x, z, x + w - AD, z + d, 'evBack'), box(x + w - AD, z, x + w, pz - AW / 2, 'evSide'), box(x + w - AD, pz + AW / 2, x + w, z + d, 'evSide')];
+  }
+}
+
 // 1フロア分の壁ボックス一覧(描画・衝突・テスト共通のソース)
 export function floorWallBoxes(floor) {
   const boxes = [];
   for (const room of floor.rooms) {
     if (room.kind === 'elevator') {
-      // EVシャフトは塊(全面衝突・侵入不可)
-      const [x, z, w, d] = room.rect;
-      boxes.push({ cx: x + w / 2, cz: z + d / 2, w, d, kind: 'solid' });
+      // EVシャフトは塊(全面衝突・侵入不可)。扉面にはアルコーブを掘る(奥の塊+左右の袖の3分割)
+      for (const b of elevatorBlocks(room)) boxes.push(b);
       continue;
     }
     roomWallBoxes(room, boxes);
