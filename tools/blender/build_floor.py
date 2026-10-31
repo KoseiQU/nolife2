@@ -500,6 +500,8 @@ def build_materials():
     pbr_material('M_Screen', base=(0.55, 0.55, 0.55), rough=0.9)
     pbr_material('M_BracketCover', base=(0.95, 0.9, 0.8), rough=0.4, emit=(1.0, 0.78, 0.52), emit_strength=6.0)
     pbr_material('M_Machine', base=(0.40, 0.41, 0.40), rough=0.6)
+    # P3b-A: カゴの操作盤の階数表示(8列×3段のアトラス。実行時にカゴの現在地のマスへずらす)
+    pbr_material('M_EVCarDisplay', rough=0.05, emit_tex=load_img(tex('ev_car_display.png'), False), emit_strength=2.5)
     # p0b の材質の実行時テクスチャ(n2tex.save_png を差し替え済みなので画像は build/tex を指す)
     for n in ('M_WireGlass', 'M_WireGlassOut', 'M_EVDisplay', 'M_EVPlate', 'M_CarStone', 'M_ExitSignSq'):
         m = MATS[n]
@@ -846,13 +848,9 @@ def build_glass_line(x0, x1, z, door_x0, door_x1, col, name):
 EV_BUTTONS = []
 
 def fix_ev_display(rid):
-    ob = bpy.data.objects.get(f'EVCallDisplay_{rid}')
-    if not ob:
-        return
-    uv = ob.data.uv_layers['UVMap']
-    for l in uv.data:
-        u, v = l.uv
-        l.uv = ((LEVEL - 1 + u) / 8.0, v)
+    """P3b-A: 呼びパネルの階数表示の UV は 0..1 のまま(アトラス ev_display.png の1マス分)。
+    どのマス(階・矢印)を出すかは実行時に elevator.js がテクスチャの repeat/offset で決める(カゴの現在地に追従)。"""
+    return
 
 
 def build_car_panel(dd):
@@ -873,6 +871,22 @@ def build_car_panel(dd):
         uvs.append(((dd_ - pd0) / (pd1 - pd0), (yy - py0) / (py1 - py0)))
     set_uv(f, mb, uvs)
     mb.finish(bpy.data.collections['P3a'], {'n2_kind': 'evcarpanel', 'n2_room': dd['id']})
+    # P3b-A: 盤の上の黒い窓(テクスチャの 40..216 × 30..110 px)に階数表示の面を重ねる(アトラス ev_car_display.png)
+    W_, H_ = CAR_PANEL['size']
+    tu0, tu1 = 40 / W_, 216 / W_
+    tv0, tv1 = 1 - 110 / H_, 1 - 30 / H_
+    dmb = MeshBuilder(f'EVCarDisplay_{dd["id"]}')
+    qd0, qd1 = pd0 + tu0 * (pd1 - pd0), pd0 + tu1 * (pd1 - pd0)
+    qy0, qy1 = py0 + tv0 * (py1 - py0), py0 + tv1 * (py1 - py0)
+    f2 = L.quad_side(dmb, u + 0.0015, qy0, qy1, qd0, qd1, +1, 'M_EVCarDisplay')
+    uv2 = []
+    for loop in f2.loops:
+        co = loop.vert.co
+        gx, gy, gz = co.x, co.z, -co.y
+        dd_ = (gx - L.px) * L.fx + (gz - L.pz) * L.fz
+        uv2.append(((dd_ - qd0) / (qd1 - qd0), (gy - BASE_Y - qy0) / (qy1 - qy0)))
+    set_uv(f2, dmb, uv2)
+    dmb.finish(bpy.data.collections['P3a'], {'n2_kind': 'evdisplay', 'n2_room': dd['id']})
     for k, (tu, tv) in CAR_PANEL['buttons'].items():
         d_ = pd0 + tu * (pd1 - pd0)
         y_ = py1 - tv * (py1 - py0)

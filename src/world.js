@@ -220,7 +220,7 @@ export class World {
   // ------------------------------------------------------------ 材質・結合
   _prepare(root, man, rec) {
     const L = this.look;
-    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_GlassClear']);
+    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_EVCarDisplay', 'M_GlassClear']);
     const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton', 'glass', 'glassedge', 'decal', 'rail', 'backdrop']);
     // P3a-2: 風除室の透明ガラスは物理材質(透過・屈折・薄い青緑の吸収・低い粗さ＋指紋/汚れの粗さマップ)に置き換える
     const phys = new Map();
@@ -424,7 +424,7 @@ function specularOnlyEnv(m) {
 }
 const PHYS_GLASS = new Set(['M_GlassClear']);
 const PROBE_HIDE = new Set(['M_GlassEdge']);
-const NO_LIGHTMAP = new Set(['M_EVFrame', 'M_CarBeige', 'M_CarStone', 'M_CarFloor', 'M_CarPanel', 'M_Mirror', 'M_GlassEdge', 'M_Decal']);
+const NO_LIGHTMAP = new Set(['M_EVFrame', 'M_CarBeige', 'M_CarStone', 'M_CarFloor', 'M_CarPanel', 'M_EVCarDisplay', 'M_Mirror', 'M_GlassEdge', 'M_Decal']);
 
 function disposeTree(root) {
   root.traverse((o) => {

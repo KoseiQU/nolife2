@@ -53,7 +53,7 @@ export const LOOK = {
   maxRenderPixels: 1920 * 1080,   // Retina でもこの画素数を上限に描く(60fps 目標)
   // 発光面の見た目だけの倍率(ベイク側の光量は Blender の値のまま)。窓は面で見ると白飛びするので抑える
   emissiveScale: { M_Window: 0.15, M_LampCover: 1.0, M_ExitSign: 1.0, M_Button: 1.0, M_CarCeiling: 0.0,  // カゴ照明=待機中は消灯
-    M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6,   // 近くで見る発光面は白飛びしない程度に
+    M_ExitSignSq: 0.22, M_WireGlassOut: 0.15, M_EVDisplay: 0.6, M_EVCarDisplay: 0.6,   // 近くで見る発光面は白飛びしない程度に
     M_Backdrop: 0.3, M_BracketCover: 0.5 },                         // P3a: 正面玄関の外の暗い街路・屋外の壁付け灯
   // 金属とガラスだけに弱い環境反射(ライトマップは拡散だけなので、無いと SUS が真っ黒に見える)
   metalEnv: 0.08,
@@ -473,6 +473,7 @@ const levelLog = [];
 const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel,
   setLevel: (key, o) => setPlayerLevel(key, o) });
 elevator.onRideStart = (to) => world.focus(to);     // 行き先(±1)を先に読み始める(到着は読み終わってから)
+ai.elevator = elevator;                              // P3b-A: 管理人も同じカゴで移動する(階数表示が動く)
 elevator.attach(scene);
 const stairs = new Stairs({ building, player, camera, getLevel: () => playerLevel,
   onStart: (from, to) => { world.focus(to); updateVisibility(); },

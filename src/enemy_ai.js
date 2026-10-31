@@ -228,7 +228,7 @@ export class EnemyAI {
     const p = this.enemy.pos;
     const r = AI.radius * 0.9;
     Object.assign(this.selfBox, { minX: p.x - r, maxX: p.x + r, minZ: p.z - r, maxZ: p.z + r, y0: p.y, y1: p.y + 1.8 });
-    this.selfBox.disabled = this.state === 'DEAD';
+    this.selfBox.disabled = this.state === 'DEAD' || this.transit;
     if (this.audio) this.audio.setOccluded(this.occluded);
   }
 
@@ -418,7 +418,8 @@ export class EnemyAI {
     dist.set(a, 0);
     const cost = (e, u, v) => {
       const nu = G.nodes[u], nv = G.nodes[v];
-      if (e.kind === 'ev') return 10 + 3 * Math.abs(nu.lv - nv.lv);
+      // P3b-A: EV は乗るまでの待ちを最初の1区間にだけ足す(1階なら階段、2階以上なら EV)
+      if (e.kind === 'ev') { const pe = prevEdge.get(u); return 3 * Math.abs(nu.lv - nv.lv) + (pe && pe.kind === 'ev' ? 0 : 8); }
       if (e.kind === 'stair') return 9;
       return Math.hypot(nu.x - nv.x, nu.z - nv.z);
     };
@@ -477,9 +478,15 @@ export class EnemyAI {
   }
 
   // 階を移る(EV/階段)。待つ→姿を消す→移動→次の階の点に現れる
+  // P3b-A: EV はプレイヤーと同じカゴを使う(呼ぶ→来て開いたら乗る→行き先を押す→着いたら降りる)。階数表示が動く。
+  //  カゴが来ない(プレイヤーが使い続けている等)ときは従来どおり(待つ→姿を消す→移動時間→現れる)
   *_transfer(wp) {
     const e = this.enemy;
     const from = this.level, to = wp.lv;
+    if (wp.via === 'ev' && this.elevator && typeof from === 'number' && typeof to === 'number') {
+      const r = yield* this._evRide(from, to, wp);
+      if (r) return;
+    }
     e.speed = 0;
     e.play('look_idle', { fade: 0.3 });
     this.log('transfer_start', { via: wp.via, from, to });
@@ -493,6 +500,56 @@ export class EnemyAI {
     this.log('transfer_end', { via: wp.via, to });
   }
 
+
+  *_evRide(from, to, wp) {
+    const ev = this.elevator, e = this.enemy, c = ev.car;
+    const room = ev.rooms[from].room;
+    const g = ev.rooms[from].geom;
+    this.log('transfer_start', { via: 'ev', from, to, car: c.level });
+    // 1) 呼ぶ(ホールの呼びボタンの前で待つ)
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.3 });
+    ev.call(from);
+    let t = 0;
+    while (!(c.level === from && c.state === 'open' && c.open >= 1)) {
+      t += this.dt;
+      if (t > 45) { this.log('ev_timeout', { phase: 'call' }); return false; }
+      if (c.state === 'idle' && c.level === from && !c.pending.includes(from)) ev.call(from);
+      yield;
+    }
+    // 2) 乗る(カゴの中へ歩く)
+    const inX = g.center[0] + 0.15, inZ = g.center[1];
+    for (let k = 0; k < 4 / Math.max(this.dt, 1e-3); k++) {
+      if (c.state === 'closing' || c.level !== from) break;
+      if (this._stepToward(inX, inZ, 1.0, 'walk_standard', 4.0, 0.15)) break;
+      yield;
+    }
+    void room;
+    yield* this._turnTo(Math.PI);   // 扉の方(北)を向く
+    // 3) 行き先を押す → 扉が閉まって動き出したら姿を消す(シャフトの中)
+    ev.npcSelect(to);
+    t = 0;
+    while (c.state !== 'moving') { t += this.dt; if (t > 20) { ev.npcLeave(); this.log('ev_timeout', { phase: 'close' }); return false; } yield; }
+    this.transit = true;
+    t = 0;
+    while (!(c.level === to && (c.state === 'opening' || c.state === 'open'))) {
+      t += this.dt;
+      if (t > 60) { ev.npcLeave(); this.log('ev_timeout', { phase: 'travel' }); break; }
+      yield;
+    }
+    // 4) 着いた階のカゴの中に現れ、扉が開いたら降りる
+    this.setLevel(to);
+    e.place(inX, inZ, Math.PI);
+    this.transit = false;
+    while (c.level === to && c.state === 'opening') yield;
+    ev.npcLeave();
+    for (let k = 0; k < 4 / Math.max(this.dt, 1e-3); k++) {
+      if (this._stepToward(wp.x, wp.z, 1.0, 'walk_standard', 4.0, 0.2)) break;
+      yield;
+    }
+    this.log('transfer_end', { via: 'ev', to });
+    return true;
+  }
 
   _resolve(x, z) {
     const r = AI.radius;

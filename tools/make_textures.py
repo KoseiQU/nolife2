@@ -65,22 +65,51 @@ save('car_stone.jpg', n2tex.car_stone(), q=88)
 save('exit_sign_sq.png', n2tex.exit_sign_square())
 
 
+SEGS = {1: 'bc', 2: 'abged', 3: 'abgcd', 4: 'bcfg', 5: 'afgcd', 6: 'afgedc', 7: 'abc', 8: 'abcdefg'}
+LED = (0.62, 0.86, 1.0)
+
+
+def _arrow(img, ax, ay, s, up, color, r=1.5):
+    """細い線の矢印(▲/▼ の向き)。s=半分の長さ"""
+    yy, xx = n2tex._grid(*img.shape[:2])
+    d = 1 if up else -1
+    m = n2tex._seg(xx, yy, ax, ay - s * d, ax, ay + s * d, r)
+    m |= n2tex._seg(xx, yy, ax, ay - s * d, ax - s * 0.66, ay - s * d * 0.33, r)
+    m |= n2tex._seg(xx, yy, ax, ay - s * d, ax + s * 0.66, ay - s * d * 0.33, r)
+    img[m] = color
+
+
 def ev_display_atlas():
-    """呼びパネルの階数表示(青白LED)。1..8 を横に並べたアトラス(1マス 96×234)。"""
-    cells = []
-    segs = {1: 'bc', 2: 'abged', 3: 'abgcd', 4: 'bcfg', 5: 'afgcd', 6: 'afgedc', 7: 'abc', 8: 'abcdefg'}
-    for n in range(1, 9):
-        img = np.zeros((234, 96, 3), np.float32); img[:] = (0.012, 0.012, 0.016)
-        led = (0.62, 0.86, 1.0)
-        yy, xx = n2tex._grid(234, 96)
-        ax, ay = 48, 234 * 0.20
-        m = n2tex._seg(xx, yy, ax, ay - 9, ax, ay + 9, 1.4) | n2tex._seg(xx, yy, ax, ay - 9, ax - 6, ay - 3, 1.4) | n2tex._seg(xx, yy, ax, ay - 9, ax + 6, ay - 3, 1.4)
-        img[m] = np.array(led) * 0.45
-        n2tex.seven_seg(img, 48 - 0.55 * 34 / 2, 234 * 0.30, 34, led, segs[n])
-        cells.append(img)
-    return np.concatenate(cells, axis=1)
+    """P3b-A: 呼びパネルの階数表示(青白LED)。8列(1..8階)×3段(矢印なし/▲/▼)のアトラス(1マス 96×234)。
+    実行時に elevator.js がテクスチャの offset/repeat をカゴの現在地へずらす(全階の表示が同じ1枚を見る)。"""
+    rows = []
+    for arrow in (0, 1, 2):
+        cells = []
+        for n in range(1, 9):
+            img = np.zeros((234, 96, 3), np.float32); img[:] = (0.012, 0.012, 0.016)
+            if arrow == 1: _arrow(img, 48, 234 * 0.18, 9, True, LED)
+            if arrow == 2: _arrow(img, 48, 234 * 0.55, 9, False, LED)
+            n2tex.seven_seg(img, 48 - 0.55 * 34 / 2, 234 * 0.27, 34, LED, SEGS[n])
+            cells.append(img)
+        rows.append(np.concatenate(cells, axis=1))
+    return np.concatenate(rows, axis=0)
 
 
+def ev_car_display_atlas():
+    """P3b-A: カゴの操作盤の階数表示(盤の上の黒い窓 176×80 に重ねる面)。8列×3段(矢印なし/▲/▼)、1マス 176×80。"""
+    rows = []
+    for arrow in (0, 1, 2):
+        cells = []
+        for n in range(1, 9):
+            img = np.zeros((80, 176, 3), np.float32); img[:] = (0.010, 0.011, 0.014)
+            if arrow: _arrow(img, 176 * 0.30, 40, 13, arrow == 1, LED, r=2.0)
+            n2tex.seven_seg(img, 176 * 0.50, 40 - 22, 44, LED, SEGS[n])
+            cells.append(img)
+        rows.append(np.concatenate(cells, axis=1))
+    return np.concatenate(rows, axis=0)
+
+
+save('ev_car_display.png', ev_car_display_atlas())
 save('ev_display.png', ev_display_atlas())
 
 

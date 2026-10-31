@@ -4,6 +4,11 @@
 //  扉の見た目は各階 GLB の EV 扉2枚(p0b_ev: 片寄せ2枚・左へ退避、手前の扉は2倍動く=n2_slide_dist)。
 //  当たりは world の 'evdoor' 箱(開いている間だけ無効)。カゴの中は world がシャフトを殻に置き換えてある。
 //  カゴの見た目は各階に同じものがあるので、移動=到着時にプレイヤーを行き先の階の同じ場所へ移す(Δy = 階高×階差)。
+//  P3b-A(DESIGN §2.2 末尾2項目): カゴの中は常に明るい(天井の乳白パネルはカゴのいる階で常時発光、扉が開いている間・
+//  乗っている間はカゴの PointLight(影なし)も点ける)。階数表示(全階のホールの呼びパネル上段＋カゴの操作盤)は
+//  カゴの現在地を表示し、移動中は通過階ごとに切り替わり ▲▼ が点く。アトラス(build/tex/ev_display.png・
+//  ev_car_display.png、8列=階 × 3段=矢印なし/▲/▼)の共有テクスチャの repeat/offset をずらす(全階が同じ1枚を見る)。
+//  管理人も同じカゴを使う(enemy_ai の _evRide: 呼ぶ→乗る→行き先を押す→降りる)。
 
 import * as THREE from 'three';
 import { levelY, evCarGeom } from './world.js';
@@ -15,6 +20,7 @@ export const EV = {
   travelPerFloor: 1.5,
   callReact: 0.5,      // 呼んでから動き出すまで
   carLightIntensity: 1.3,
+  carCeiling: 0.3,     // 天井の乳白パネルの発光の倍率(manifest の発光の強さ × これ)
   stops: [1, 2, 3, 4, 5, 6, 7],
 };
 
@@ -34,6 +40,9 @@ export class Elevator {
     this.light.visible = false;
     this.ctx3 = null;
     this.events = [];
+    this.shown = { floor: null, dir: null };     // 表示中の階数と矢印(0=なし 1=▲ 2=▼)
+    this.shownLog = [];                          // 表示が切り替わった履歴(テスト用)
+    this.npc = null;                             // 管理人が乗っている({ to })
     this._initAudio();
   }
 
@@ -149,7 +158,41 @@ export class Elevator {
         break;
     }
     this._apply();
+    this._applyDisplay();
     this._updateAudio(dt);
+  }
+
+  // 表示する階と矢印。移動中は通過階ごとに切り替える(出発階→…→行き先)
+  displayState() {
+    const c = this.car;
+    if (c.state === 'moving' && c.to !== null) {
+      const n = Math.abs(c.to - c.level), sg = Math.sign(c.to - c.level);
+      const frac = Math.min(1, Math.max(0, c.t / c.dur));
+      const k = Math.min(n, Math.floor(frac * n + 0.4));
+      return { floor: c.level + sg * k, dir: sg > 0 ? 1 : 2 };
+    }
+    return { floor: c.level, dir: 0 };
+  }
+  _displayTextures() {
+    if (this._dispTex) return this._dispTex;
+    const out = [];
+    const man = this.world.manifests[4] || Object.values(this.world.manifests)[0];
+    for (const name of ['M_EVDisplay', 'M_EVCarDisplay']) {
+      const def = man && man.materials && man.materials[name];
+      if (def && def.map) out.push(this.world.texture(def.map, true));
+    }
+    return (this._dispTex = out);
+  }
+  _applyDisplay() {
+    const d = this.displayState();
+    if (d.floor === this.shown.floor && d.dir === this.shown.dir) return;
+    this.shown = d;
+    this.shownLog.push({ floor: d.floor, dir: d.dir, npc: !!this.npc });
+    if (this.shownLog.length > 200) this.shownLog.shift();
+    for (const t of this._displayTextures()) {
+      t.repeat.set(1 / 8, 1 / 3);
+      t.offset.set((d.floor - 1) / 8, d.dir / 3);
+    }
   }
 
   // 扉の位置・当たり・カゴの灯り
@@ -161,10 +204,13 @@ export class Elevator {
       if (rec && rec.evLeaves) for (const l of rec.evLeaves) l.node.position.copy(l.base).addScaledVector(l.dir, l.dist * open);
       const col = this.world.collisions(lv).find((b) => b.kind === 'evdoor');
       if (col) col.disabled = open > 0.85;
-      // カゴの天井の発光(待機中は消灯)
-      if (rec) for (const m of rec.mats) if (m.name === 'M_CarCeiling') m.emissiveIntensity = (m.userData.n2Emissive ?? 1) * (lv === c.level && (open > 0 || c.riding) ? 0.3 : 0);
+      // カゴの天井の発光: カゴのいる階では常時点灯(P3b-A。深夜でも消えない。移動中は乗っている時だけ)
+      if (rec) for (const m of rec.mats) if (m.name === 'M_CarCeiling') m.emissiveIntensity = (m.userData.n2Emissive ?? 1) * (lv === c.level && (c.state !== 'moving' || c.riding) ? EV.carCeiling : 0);
     }
-    const lit = (c.open > 0 && c.state !== 'moving') || c.riding;
+    // カゴの灯り(PointLight・影なし): 扉が開いている間・乗っている間・カゴの中に立っている間。
+    // 閉じた扉の向こうで点けると壁越しに床を照らしてしまう(影なしの光)ので、それ以外は消す(天井の発光面は常時)
+    const p = this.player.pos;
+    const lit = (c.open > 0 && c.state !== 'moving') || c.riding || this.inCar(p.x, p.z, this.getLevel());
     const g = this.rooms[c.level].geom;
     this.light.visible = lit;
     this.light.intensity = lit ? EV.carLightIntensity : 0;
@@ -211,6 +257,15 @@ export class Elevator {
     if (riding) this.motor.position.copy(this.player.pos).sub(this.anchor.position).setY(1.4);
     else this.motor.position.set(0, 0, 0.6);
   }
+
+  // ------------------------------------------------------------ 管理人(enemy_ai の _evRide が使う)
+  // 管理人がカゴの中で行き先を押す。プレイヤーが乗っていれば(同じカゴ)一緒に動く
+  npcSelect(to) {
+    this.npc = { to };
+    this.log('npc_select', { to });
+    return this.select(to);
+  }
+  npcLeave() { this.npc = null; }
 
   state() {
     const c = this.car;

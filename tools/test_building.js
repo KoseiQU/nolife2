@@ -4,6 +4,7 @@
 //  1) 読み分け: 居る階 ±1 だけ読み、離れた階は解放(4F→1F→7F→4F)。解放→再読み込みでも扉・覗き穴が壊れない
 //  2) 各階の扉数(居室)= 図面の号室数。GLB の号室プレート・EV 扉・外階段の鉄扉が結び付いている
 //  3) EV: 4F で呼ぶ→カゴが来て開く→歩いて乗る→7 を押す→7F で開く→歩いて降りる。閉じた扉は通れない
+//  3c) P3b-A: 階数表示がカゴの現在地に追従(1→2→3→4、▲)。カゴの天井は常時点灯。管理人の EV 移動でも表示が動く
 //  4) 外階段: 4F の鉄扉→踊り場→上る(5F,6F,7F,屋上B)→屋上を歩く(落ちない)→下る(…→1F)。段の手前の当たりで階段へ踏み外さない
 //  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
@@ -156,6 +157,53 @@ export async function run(N) {
     return { pass: hint.includes('5階') && N.level === 5 && ev.car.level === 5, hint, level: N.level, sec: +t.toFixed(1) };
   });
 
+  await T('3c_ev_display_follows_car', async () => {
+    // P3b-A(DESIGN §2.2): ホールの呼びパネル・カゴの操作盤の階数表示はカゴの現在地。移動中は通過階ごとに切り替わり ▲▼ が点く。
+    // 管理人が EV で移動する時も同じカゴが動いて表示が変わる
+    const ev = N.elevator;
+    const dedupe = (a) => a.filter((v, i) => i === 0 || v !== a[i - 1]);
+    await N.teleport(4, 6.9, 20.6, Math.PI); await settle('3,4,5');
+    Object.assign(ev.car, { level: 1, state: 'idle', open: 0, pending: [], riding: false, to: null });
+    N.pump(DT, 2, false);
+    const n0 = ev.shownLog.length;
+    const tex = ev._displayTextures();
+    const off = () => tex.map((t) => [+(t.offset.x * 8 + 1).toFixed(3), +(t.offset.y * 3).toFixed(3)]);
+    const startTex = off();
+    ev.call(4);
+    let t = 0;
+    while (!(ev.car.level === 4 && ev.car.state === 'open') && t < 30) { N.pump(DT, 1, false); t += DT; }
+    const seq1 = ev.shownLog.slice(n0);
+    const floors1 = dedupe(seq1.map((s) => s.floor));
+    const arrows1 = seq1.filter((s) => s.floor < 4).every((s) => s.dir === 1) && seq1[seq1.length - 1].dir === 0;
+    const endTex = off();
+    // カゴの天井は常時点灯(扉が閉じて待機していても、カゴのいる階では発光)
+    while (ev.car.state !== 'idle' && t < 60) { N.pump(DT, 1, false); t += DT; }
+    const ceil = [...N.world.floors.get(4).mats].find((m) => m.name === 'M_CarCeiling');
+    const ceilingLitIdle = ev.car.state === 'idle' && ceil && ceil.emissiveIntensity > 0;
+    // 管理人: 2F から 6F へ(EV を使う)。カゴは 4F→2F へ迎えに行き、2F→6F へ
+    const ai = N.ai;
+    ai.reset(6.9, 20.9, Math.PI, 2);
+    const ev0 = ai.events.length;
+    const n1 = ev.shownLog.length;
+    ai.lastKnown = { x: 12.0, z: 21.2, lv: 6 };
+    ai.setState('ALERT', { force: true, log: true, react: false });
+    let t2 = 0;
+    while (t2 < 150) { N.pump(DT, 1, false); t2 += DT; if (ai.level === 6 && !ai.transit && ai.events.slice(ev0).some((e) => e.ev === 'transfer_end')) break; }
+    const seq2 = ev.shownLog.slice(n1);
+    const floors2 = dedupe(seq2.map((s) => s.floor));
+    const evs = ai.events.slice(ev0).filter((e) => /transfer|ev_/.test(e.ev)).map((e) => `${e.ev}:${e.via || ''}${e.phase || ''}`);
+    const npcRode = ev.events.some((e) => e.ev === 'npc_select' && e.to === 6);
+    const want2 = [4, 3, 2, 3, 4, 5, 6];
+    const sub = (a, b) => { let i = 0; for (const v of a) if (v === b[i]) i++; return i === b.length; };
+    ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4);
+    ai.setState('SCRIPTED', { force: true });
+    N.enemy.place(6.9, 19.0, Math.PI);
+    const pass = floors1.join(',') === '1,2,3,4' && arrows1 && startTex.every(([f]) => f === 1) && endTex.every(([f, r]) => f === 4 && r === 0)
+      && ceilingLitIdle && sub(floors2, want2) && floors2[floors2.length - 1] === 6 && npcRode && ai.level === 4 && evs.some((e) => e.startsWith('transfer_end:ev'));
+    return { pass, call4: { floors: floors1, arrowsUpWhileMoving: arrows1, texStart: startTex, texEnd: endTex, sec: +t.toFixed(1) }, ceilingLitIdle,
+      managerRide2to6: { floors: floors2, npcRode, events: evs, sec: +t2.toFixed(1) } };
+  });
+
   // 外階段の口に立って段の方を向き W(上り下りが終わるまで)
   async function climb(dir) {
     const g = N.building.stairs.find((s) => s.id === 'main').geom;
@@ -255,10 +303,10 @@ export async function run(N) {
     const door = N.doorApi.get('B1DOOR');
     N.setView(8.75, 1.45, Math.PI / 2, 0); N.pump(DT, 2, false);
     const hint = N.hudState().hint;
-    const nLog = N.enemyAudio.log.length;
+    N.enemyAudio.log.length = 0;   // (ログは 200 件で頭から捨てるので、件数の差では数えない)
     tap('KeyE'); N.pump(DT, 30, false);
     const toast = N.hudState().toast;
-    const rattle = N.enemyAudio.log.slice(nLog).some((l) => l.name === 'rattle');
+    const rattle = N.enemyAudio.log.some((l) => l.name === 'rattle');
     const stillClosed = !N.doorApi.isOpen('B1DOOR') && door.angle === 0 && !door.collision.disabled;
     const push = walk(Math.PI / 2, 120, 8.75, 1.45);                // 扉へ向かって歩いても抜けない
     const blocked = push.x > 7.8 + 0.2 && push.level === 'B1';
