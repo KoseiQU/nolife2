@@ -779,6 +779,16 @@ def export_fbx(rig):
                              use_mesh_modifiers=not final, mesh_smooth_type='FACE', add_leaf_bones=False,
                              path_mode='COPY', embed_textures=True, bake_anim=False)
     mb = os.path.getsize(path) / 1e6
+    if final:   # 予備: 形状キー(BlendShape Deformer)を完全に除いた版(Mixamo が形状キーで拒否する場合用)
+        meshes[0].shape_key_clear()
+        p2 = os.path.join(OUT, C['name'] + '_noshape.fbx')
+        bpy.ops.export_scene.fbx(filepath=p2, use_selection=True, object_types={'MESH'},
+                                 use_mesh_modifiers=False, mesh_smooth_type='FACE', add_leaf_bones=False,
+                                 path_mode='COPY', embed_textures=True, bake_anim=False)
+        raw = open(p2, 'rb').read()
+        assert b'BlendShape' not in raw and b'Deformer' not in raw, '予備 FBX に BlendShape/Deformer が残っている'
+        extra['noshape_fbx'] = os.path.basename(p2)
+        log(f'fbx (noshape) {p2} ({os.path.getsize(p2) / 1e6:.1f} MB)')
     info = dict(fbx=os.path.basename(path), mb=round(mb, 2), meshes=stats, tris=sum(v['tris'] for v in stats.values()), **extra)
     if final:
         e = (rig.matrix_world @ rig.data.bones['eye.L'].head_local + rig.matrix_world @ rig.data.bones['eye.R'].head_local) / 2

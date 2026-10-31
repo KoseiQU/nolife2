@@ -217,6 +217,22 @@
    "ok": true,
    "value": 21.7,
    "limit": "≤50"
+  },
+  {
+   "check": "予備 FBX(形状キーなし): BlendShape/Deformer なし・骨なし・頂点数一致",
+   "ok": true,
+   "value": {
+    "BlendShape": 0,
+    "Deformer": 0,
+    "objs": [
+     [
+      "MESH",
+      46295
+     ]
+    ],
+    "mb": 21.2
+   },
+   "limit": "0・0・MESH 1"
   }
  ]
 }

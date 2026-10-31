@@ -251,6 +251,20 @@ fbig = max((max(i.size) for o in new for s in o.material_slots if s.material for
 rec('テクスチャ最大(FBX, px)', 0 < fbig <= 4096, int(fbig), '≤4096')
 rec('FBX サイズ(MB)', export['mb'] <= 50, export['mb'], '≤50')
 
+# 13) 予備 FBX(形状キーなし): BlendShape / Deformer の文字列なし、骨なし、頂点数は本番と同じ
+if export.get('noshape_fbx'):
+    p2 = os.path.join(blend_dir, export['noshape_fbx'])
+    raw2 = open(p2, 'rb').read()
+    b4 = set(bpy.data.objects)
+    bpy.ops.import_scene.fbx(filepath=p2)
+    nw = [o for o in bpy.data.objects if o not in b4]
+    ok = (raw2.count(b'BlendShape') == 0 and raw2.count(b'Deformer') == 0 and all(o.type == 'MESH' for o in nw)
+          and len(nw) == 1 and not nw[0].data.shape_keys
+          and len(nw[0].data.vertices) == next(iter(export['meshes'].values()))['verts'])
+    rec('予備 FBX(形状キーなし): BlendShape/Deformer なし・骨なし・頂点数一致', ok,
+        dict(BlendShape=raw2.count(b'BlendShape'), Deformer=raw2.count(b'Deformer'), objs=[(o.type, len(o.data.vertices) if o.type == 'MESH' else 0) for o in nw],
+             mb=round(len(raw2) / 1e6, 1)), '0・0・MESH 1')
+
 out = os.path.join(ROOT, ARGS['out'])
 os.makedirs(os.path.dirname(out), exist_ok=True)
 json.dump(dict(candidate=cid, results=results), open(out, 'w'), indent=1, ensure_ascii=False)

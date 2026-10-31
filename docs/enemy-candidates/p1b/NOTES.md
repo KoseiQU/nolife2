@@ -250,3 +250,48 @@ tools/build_enemy_final.sh        # 取得・検証 → 07 生成 → 機械チ�
   - 最下点（靴底）を z=0 に揃えました。Y-up・A ポーズ・テクスチャ埋め込みで、形状キーは `grin` と `attack` です（BlendShape 3 = Basis＋2）。
   - 結合の前後で、attack で動く頂点数（4731）が変わらないことを確認しました。
 - **機械チェック**：28/28 通過です。Mixamo 用に、骨や空オブジェクトがないこと・回転とスケールが単位であること・足元が床であること・形状キーがあることの項目を足しました。
+
+## Mixamo の予備 FBX と、リグ済み FBX へのシェイプキー移植手順
+**予備 FBX**：`build/enemy/07_kanrinin_final_noshape.fbx`（21.2MB）
+- 本番と同じ 1 メッシュ（頂点 46,295）から形状キーを完全に除いたものです。
+- ファイル本体に "BlendShape" も "Deformer" も 0 件であることを確認済みです。本番の `07_kanrinin_final.fbx` は BlendShape 3 件・Deformer 7 件です。
+- Mixamo が本番の FBX を拒否したときは、こちらを上げてください。
+
+**移植の手順**（Mixamo から戻ったリグ済み FBX に `grin` / `attack` を戻す）
+
+前提：形状キーの出どころは `build/enemy/07_kanrinin_final.fbx`（形状キー入り）です。Mixamo の書き出しは cm 単位で、読み込むとオブジェクトのスケールが 0.01 になることがあります。比較する前に、両方をワールド座標で揃えてください（Apply › All Transforms、またはワールド座標で比較）。
+
+1. 両方の FBX を同じシーンに読み込みます。Mixamo 側（リグ済み、`mixamo.fbx` とする）は Armature＋メッシュ、本番側（`src`）は 1 メッシュです。
+2. Mixamo 側のアーマチュアをレストポーズにして（Pose Position = Rest）、頂点数を比べます。
+
+**A. 頂点数が同じで、各頂点の位置が一致する場合（誤差 < 0.1mm）**
+- 頂点順が同じなので、頂点番号で移植します。
+- GUI で行う場合：
+  1. src の `grin` だけを値 1、ほかを 0 にします。
+  2. src を選び、Mixamo 側のメッシュを最後に選んでアクティブにします。
+  3. Object › Shape Keys › **Join as Shapes** を実行し、できたキーを `grin` に改名します。
+  4. `attack` も同じように行います。
+- スクリプトで行う場合（同じ結果）：
+  ```python
+  import numpy as np
+  for name in ('grin', 'attack'):
+      s = src.data.shape_keys.key_blocks[name]; b = src.data.shape_keys.reference_key
+      d = np.array([ (sv.co - bv.co)[:] for sv, bv in zip(s.data, b.data) ])           # src の移動量(m)
+      if not dst.data.shape_keys: dst.shape_key_add(name='Basis', from_mix=False)
+      k = dst.shape_key_add(name=name, from_mix=False)
+      inv = dst.matrix_world.to_3x3().inverted()                                       # cm/回転の差を吸収
+      for i, v in enumerate(k.data): v.co = v.co + inv @ Vector(d[i])
+  ```
+
+**B. 頂点数や順番が違う場合（Mixamo が頂点を分割・並べ替えたとき）**
+
+Mixamo 側のメッシュに **Surface Deform** モディファイアを付けて転写します。
+1. Target を src にし、レストポーズで **Bind** します。
+2. src の `grin` を値 1 にし、Surface Deform の **Save as Shape Key** を押してから `grin` に改名します。
+3. src の `grin` を 0、`attack` を 1 にして同じ操作を行い、`attack` を作ります。
+4. 最後に Surface Deform を外します。Armature より上に置いたまま残さないでください。
+
+**確認**
+- 移植後、`attack`＝1 で顎先が 25mm 以上下がること、`grin`＝1 で口元が 8mm 以上動くことを確かめます。enemy_check.py の該当部分と同じ判定です。
+- 歯・舌・眉・まつ毛は 1 メッシュに結合済みなので、同じ手順で一緒に移ります。
+- GLB にするときは glTF の morph target として出ます（Blender の glTF 書き出しで Shape Keys を有効にする）。
