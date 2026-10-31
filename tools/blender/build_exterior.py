@@ -638,6 +638,12 @@ def boundary(mb):
     f1 = FLOORS[1]
     blds = list(f1['footprint']) + [r['balcony']['rect'] for r in f1['rooms'] if r.get('balcony')]
     gate = SITE['gate']
+    # 西棟の北(歩けない帯)の山側も同じ擁壁で受ける(北の擁壁を西の端まで延ばす。北階段・屋外通路から見える)
+    xw = min(r[0] for r in rects if abs(r[1] - B['N']) < 0.01)
+    zf = B['N'] - T / 2
+    mb.box((B['W'] - 0.3, -0.1, zf - 0.3), (xw, 2.85, zf + 0.06), 'XE_Concrete', keep=lambda k, c, n: k != '-y')
+    mb.box((B['W'] - 0.32, 2.85, zf - 0.32), (xw, 2.95, zf + 0.1), 'XE_Curb', keep=lambda k, c, n: k != '-y')
+    BOUNDARY.append(dict(kind='wall', axis='z', plane=B['N'], lo=B['W'] - 0.3, hi=xw, out=[0, -1], walkable=False))
     segs = BR._outline(rects)
     for (axis, plane, lo, hi, (ox, oz)) in segs:
         n = max(1, int(round((hi - lo) / 0.5)))
@@ -897,7 +903,7 @@ def write_instances(near, bb):
 
 # ---------------------------------------------------------------- 遠景(山並み・街)
 RIDGES = [dict(R=1250.0, haze=0.45, base=40.0, amp=70.0), dict(R=1750.0, haze=0.68, base=150.0, amp=150.0), dict(R=2400.0, haze=0.84, base=260.0, amp=200.0)]
-CITY = dict(R=1480.0, az0=TEXMETA['cityAzDeg'][0], az1=TEXMETA['cityAzDeg'][1], y0=-122.0, y1=-22.0)
+CITY = dict(R=1480.0, az0=TEXMETA['cityAzDeg'][0], az1=TEXMETA['cityAzDeg'][1], y0=-126.0, y1=-6.0)
 
 
 def ridge_profile(i, a):

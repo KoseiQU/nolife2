@@ -83,7 +83,7 @@ export const LOOK = {
     treeLight: [0.045, 0.052, 0.062],  // 中景の木(板)の明るさ
     ridgeBase: [0.0012, 0.0014, 0.0018],
     cityGlow: [0.0014, 0.0009, 0.0004],
-    cityGain: 2.2, cityBody: [0.0010, 0.0011, 0.0014],
+    cityGain: 2.8, cityBody: [0.0010, 0.0011, 0.0014],
     winGlow: [1.0, 0.72, 0.45], winGlowGain: 0.9,   // カーテン越しの灯り
     corrGlow: 0.035, lobbyGlow: 1.1, lampGlow: 3.0,
     poolPole: [0.05, 0.038, 0.024], poolPorch: [0.05, 0.04, 0.028], poolPilotis: [0.03, 0.024, 0.016],
