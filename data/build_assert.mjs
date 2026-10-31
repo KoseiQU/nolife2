@@ -2,7 +2,8 @@
 //  1) 全 104 室で unitInterior(図面 room_plan_1K 準拠のテンプレート)が通る(玄関→洋室→窓の通路に足元の家具が無い。4 方向の向き・鏡像すべて)
 //  2) building.json の入れる部屋: 内装・当たり・窓・隠れ場所(クローゼット/ロッカー)・落ちる物がある。当たりが通路と交差しない(JSON から再検査)
 //  3) 全居室にバルコニー(奥行 1.0m・外壁側・1〜3F は乳白ガラス、4F 以上は格子)。入れる部屋のバルコニーは footprint(歩ける)
-//  4) 屋上A(4F): 410 と 401 のバルコニーの北端に乗り越えの隔て板(gate)
+//  4) 屋上A(4F): 410 のバルコニーの北端だけに乗り越えの隔て板(gate)。P3b-3: 401 の北端は固定の隔て板(gate なし・壁の当たり)
+//  6) P3b-3: 入れる部屋の顔ぶれ(DESIGN §2.3)。物語の部屋 105・221・220・312・705 は story の印・内装なし・施錠
 //  5) P3b-2: 410 は図面の鏡像(玄関から奥を見て右=洗濯機・洗面・冷蔵庫・クローゼット・デスク、左=トイレ・バス・ベッド・シューズケース)。
 //     入れる居室の扉の振り(内開き 1.75rad・蝶番は低い側)に当たりが入らない。乗り越えの台(室外機)は隔て板の手前で、窓の開く側からの通り道を塞がない
 // 実行: node data/build_assert.mjs
@@ -93,11 +94,31 @@ for (const f of building.floors) {
   }
   if (f.level === 4) {
     const gs = (f.gates || []).map((g) => g.room).sort().join(',');
-    if (gs !== '401,410') fail(`4F: 屋上A の乗り越えの隔て板 ${gs}`);
+    if (gs !== '410') fail(`4F: 屋上A の乗り越えの隔て板 ${gs}(410 のみ)`);
+    // 401 の北端(屋上A との境)は固定の隔て板: 壁の当たり(fillWalls)が北端の線に沿ってバルコニーの幅いっぱいにある
+    const r401 = f.rooms.find((r) => r.id === '401');
+    const [bx, bz, bw] = r401.balcony.rect;
+    const wall = (f.fillWalls || []).find(([x0, z0, x1, z1]) => Math.abs(z0 - z1) < 1e-6 && Math.abs(z0 - (bz + 0.06)) < 0.02 && Math.min(x0, x1) <= bx + 0.05 && Math.max(x0, x1) >= bx + bw - 0.05);
+    if (!wall) fail('401: バルコニーの北端(屋上A 側)に固定の隔て板の当たりが無い');
+    if (r401.balcony.ends.lo !== 'partition') fail(`401: 北端が ${r401.balcony.ends.lo}`);
     if (!f.roofA || f.roofA.rects.length !== 2) fail('4F: 屋上A が無い');
   }
+}
+// P3b-3: 入れる部屋の顔ぶれ(最初から入れる 26 室＋管理室)と物語の部屋
+{
+  const WANT = '103,104,107,202,210,216,218,305,313,319,321,401,404,410,413,418,501,506,511,516,602,603,607,610,701,703,OFFICE';
+  const STORY = '105,220,221,312,705';
+  const all = building.floors.filter((f) => f.level <= 7).flatMap((f) => f.rooms);
+  const ent = all.filter((r) => r.door && r.door.enterable).map((r) => r.id).sort().join(',');
+  if (ent !== WANT) fail(`入れる部屋の顔ぶれ: ${ent}`);
+  const st = all.filter((r) => r.story);
+  if (st.map((r) => r.id).sort().join(',') !== STORY) fail(`物語の部屋: ${st.map((r) => r.id).join(',')}`);
+  for (const r of st) if (r.interior || r.window || (r.door && (r.door.enterable || !r.door.locked))) fail(`物語の部屋 ${r.id} に内装・窓・開く扉がある`);
+  const empty = all.filter((r) => r.kind === 'unit' && !(r.door && r.door.enterable));
+  if (empty.length !== 78) fail(`扉のみの居室 ${empty.length}(73＋物語の部屋 5 = 78)`);
+  for (const r of empty) if (r.interior || (r.door && !r.door.locked)) fail(`扉のみの居室 ${r.id} に内装/開く扉`);
 }
 if (units !== 104) fail(`居室数 ${units}`);
 if (balconies !== 104) fail(`バルコニー ${balconies}/104`);
 if (failures) { console.error(`\n内装アサート: ${failures} 件 NG`); process.exit(1); }
-console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 2`);
+console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 5`);

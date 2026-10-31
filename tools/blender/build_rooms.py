@@ -922,7 +922,7 @@ def build_balconies(col):
             else:
                 mn, mx = (sx0, y, sz0), (sx1, y + 0.55, sz1)
                 ac.pbox(mn, mx, 'lightgray', front='+x' if fx > 0 else '-x', front_uv=APPUV['acout'], front_mat='MR_Appl')   # 室外機=踏み台
-        # 室外機(高い側の端・外壁際。データ balcony.ac = 当たりと同じ矩形)。401 は北端の踏み台を兼ねる(上で作った)
+        # 室外機(高い側の端・外壁際。データ balcony.ac = 当たりと同じ矩形)。410 は北端の踏み台を兼ねる(上で作った。P3b-3: 401 は gate なし＝通常の室外機)
         if bal.get('ac'):
             a_ = bal['ac']
             mn, mx = (a_[0], y + 0.05, a_[1]), (a_[2], y + 0.6, a_[3])

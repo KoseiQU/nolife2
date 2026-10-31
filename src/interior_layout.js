@@ -53,14 +53,15 @@ export const FACING_VEC = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] };
 // curtain: 色(null=カーテンなし) / curtainState: open(両脇に寄せる)・half(開く側だけ開けて残りは閉)・closed(隙間だけ)
 // laundry: rail(カーテンレールに洗濯物)・rack(室内の物干しは通路を塞ぐので置かない→窓際の壁にハンガー)・balcony(物干し竿)
 // desk: 机の上 / floor: 床の物 / poster: 壁の架空のポスター(図柄のみ・文字なし)
+// P3b-3: 外した 109・201・222 のばらつきを 107・202・218 へ(隣の入れる部屋と同じにならない)。705 は物語の部屋になり内装を外した
 export const UNIT_VARIANTS = {
   103: { type: 'lived', curtain: 'beige', curtainState: 'half', bedding: 'blue', rug: 'gray', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: null, fall: ['vase', 'books'] },
   104: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box'], poster: null, fall: ['cans'] },
-  109: { type: 'messy', curtain: 'olive', curtainState: 'closed', bedding: 'charcoal', rug: 'rust', laundry: 'balcony', desk: ['monitor', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box', 'books'], poster: 'p3', fall: ['cans', 'mug'] },
-  201: { type: 'tidy', curtain: 'white', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p1', fall: ['vase', 'books'] },
+  107: { type: 'messy', curtain: 'olive', curtainState: 'closed', bedding: 'charcoal', rug: 'rust', laundry: 'balcony', desk: ['monitor', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box', 'books'], poster: 'p3', fall: ['cans', 'mug'] },
+  202: { type: 'tidy', curtain: 'white', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p1', fall: ['vase', 'books'] },
   210: { type: 'messy', curtain: 'navy', curtainState: 'half', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['monitor', 'cans', 'books', 'snack'], floor: ['clothes', 'clothes2', 'bag', 'trash'], poster: 'p5', fall: ['cans', 'books'] },
   216: { type: 'lived', curtain: 'wine', curtainState: 'half', bedding: 'terracotta', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['basket'], poster: 'p2', fall: ['vase', 'mug'] },
-  222: { type: 'vacant', curtain: 'oldgray', curtainState: 'closed', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
+  218: { type: 'vacant', curtain: 'oldgray', curtainState: 'closed', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
   305: { type: 'lived', curtain: 'lightblue', curtainState: 'open', bedding: 'sage', rug: 'green', laundry: 'rail', desk: ['laptop', 'books', 'cup'], floor: ['bag'], poster: 'p4', fall: ['books', 'cans'] },
   313: { type: 'tidy', curtain: 'gray', curtainState: 'half', bedding: 'beige', rug: 'beige', laundry: null, desk: ['monitor', 'lamp', 'plant'], floor: [], poster: null, fall: ['vase', 'mug'] },
   319: { type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'blue', rug: 'rust', laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'box', 'books', 'trash'], poster: 'p6', fall: ['cans', 'books'] },
@@ -80,7 +81,6 @@ export const UNIT_VARIANTS = {
   610: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['cans'] },
   701: { type: 'lived', curtain: 'wine', curtainState: 'half', bedding: 'charcoal', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['bag'], poster: 'p4', fall: ['vase', 'mug'] },
   703: { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['monitor', 'plant', 'lamp'], floor: [], poster: 'p5', fall: ['books', 'vase'] },
-  705: { type: 'messy', curtain: 'olive', curtainState: 'half', bedding: 'terracotta', rug: 'rust', laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'clothes2', 'box', 'trash'], poster: 'p2', fall: ['cans', 'books'] },
 };
 // 色(build_rooms.py のパレットのキー。値はガンマ補正前の sRGB 16 進)
 export const PALETTE = {
