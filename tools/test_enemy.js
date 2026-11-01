@@ -351,43 +351,48 @@ export async function run(N) {
   });
 
   // 13) 消灯で潜伏室(409)の前を通る → 4〜6m 離れた所で飛び出し、視点を固定する短いムービー(1.2〜1.8 秒・操作不能)→ 元の視点 → 追跡。走って逃げ切れる
+  //  P5a 監査: 飛び出す距離の乱数に依存しないよう、4.0 / 5.0 / 6.0m に固定して 3 回とも検査する。時間と距離は秒・m で明示
+  //  (逃げ切り = 追跡中に 2.5m より近づかれず、走り出してから 9 秒以内に見失われる(CHASE が終わる)・OUT なし)
   await T('13_room_lurk_dark_pass_chase_escape', () => {
-    W.reset(); N.ai.lurkEnabled = false;
-    N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
-    lurkIn('409');
-    const ev0 = evMark(), vl0 = N.viewLock.log.length;
-    W.key('KeyW', true);
-    let t = 0, burstAt = null, distAtBurst = null, lockStart = null, lockEnd = null, frozenDuring = true, rot0 = null, rotErr = null, chaseAt = null, distAtChase = null;
-    let minDChase = Infinity, lostAt = null, dead = false;
-    const st = { i: 0 }, wps = [[6.9, 21.2], [25.0, 21.2]];
-    for (let i = 0; i < Math.round(40 / DT); i++) {
-      if (chaseAt !== null) steer(wps, st);
-      N.pump(DT, 1, false); t += DT;
-      if (burstAt === null && has(ev0, 'lurk_burst')) {
-        burstAt = t; distAtBurst = Math.hypot(N.player.pos.x - 7.8, N.player.pos.z - 10.15); W.key('KeyW', false);
-        rot0 = N.player.object.rotation.clone();
+    const R = N.ai.cfg.roomLurk, DB = R.darkBurst.slice();
+    const one = (D) => {
+      W.reset(); N.ai.lurkEnabled = false;
+      R.darkBurst = [D, D];
+      N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
+      lurkIn('409');
+      const ev0 = evMark(), vl0 = N.viewLock.log.length;
+      W.key('KeyW', true);
+      let t = 0, burstAt = null, distAtBurst = null, lockStart = null, lockEnd = null, frozenDuring = true, rot0 = null, rotErr = null, chaseAt = null, distAtChase = null;
+      let minDChase = Infinity, lostAt = null, dead = false;
+      const st = { i: 0 }, wps = [[6.9, 21.2], [25.0, 21.2]];
+      for (let i = 0; i < Math.round(40 / DT); i++) {
+        if (W.running && !N.player.frozen) steer(wps, st);
+        N.pump(DT, 1, false); t += DT;
+        if (burstAt === null && has(ev0, 'lurk_burst')) { burstAt = t; distAtBurst = Math.hypot(N.player.pos.x - 7.8, N.player.pos.z - 10.15); W.key('KeyW', false); }
+        if (burstAt !== null && lockStart === null && N.viewLock.active) { lockStart = t; rot0 = N.viewLock.saved.euler.clone(); }
+        if (lockStart !== null && lockEnd === null) { if (N.viewLock.active) { if (!N.player.frozen) frozenDuring = false; } else { lockEnd = t; const wr = (a) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a))); rotErr = wr(N.player.object.rotation.y - rot0.y) + wr(N.player.object.rotation.x - rot0.x); } }
+        // 視点が戻ったら(操作が返ったら)すぐ走って逃げる
+        if (lockEnd !== null && chaseAt === null && !N.player.frozen && !W.running) { W.running = true; W.key('ShiftLeft', true); W.key('KeyW', true); }
+        if (chaseAt === null && N.ai.state === 'CHASE') { chaseAt = t; distAtChase = W.dist(); }
+        if (chaseAt !== null && lostAt === null) { if (N.ai.state === 'CHASE') minDChase = Math.min(minDChase, W.dist()); else lostAt = t; }
+        if (N.deathState()) dead = true;
+        if (lostAt !== null || dead) break;
       }
-      if (burstAt !== null && lockStart === null && N.viewLock.active) { lockStart = t; rot0 = N.viewLock.saved.euler.clone(); }
-      if (lockStart !== null && lockEnd === null) { if (N.viewLock.active) { if (!N.player.frozen) frozenDuring = false; } else { lockEnd = t; const wr = (a) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a))); rotErr = wr(N.player.object.rotation.y - rot0.y) + wr(N.player.object.rotation.x - rot0.x); } }
-      if (chaseAt === null && N.ai.state === 'CHASE') { chaseAt = t; distAtChase = W.dist(); W.key('ShiftLeft', true); W.key('KeyW', true); }
-      if (chaseAt !== null && lostAt === null) { if (N.ai.state === 'CHASE') minDChase = Math.min(minDChase, W.dist()); else lostAt = t; }
-      if (N.deathState()) dead = true;
-      if (lostAt !== null) break;
-    }
-    W.key('KeyW', false); W.key('ShiftLeft', false);
-    const passEv = evSince(ev0).find((e) => e.ev === 'lurk_pass');
-    const lockLen = lockEnd !== null && lockStart !== null ? lockEnd - lockStart : null;
-    const brokenNow = !!N.doorApi.get('409').broken;
-    N.doorApi.repairDoor('409');
-    const r = {
-      pass: passEv && passEv.lit === false && burstAt !== null && distAtBurst >= 4.0 && distAtBurst <= 6.3 && lockLen !== null && lockLen >= 1.2 && lockLen <= 1.85 && frozenDuring
-        && rotErr !== null && rotErr < 1e-3 && chaseAt !== null && distAtChase >= 3.5 && minDChase > 1.4 && lostAt !== null && lostAt - chaseAt < 12 && !dead && brokenNow,
-      burstAtDist_m: distAtBurst && +distAtBurst.toFixed(2), plannedBurstAt_m: passEv && passEv.burstAt, viewLock_s: lockLen && +lockLen.toFixed(2), inputFrozenDuringLock: frozenDuring,
-      viewRestoredErr_rad: rotErr && +rotErr.toExponential(1), distAtChaseStart_m: distAtChase && +distAtChase.toFixed(2), minDistDuringChase_m: +minDChase.toFixed(2),
-      chaseLostAfter_s: lostAt && +(lostAt - chaseAt).toFixed(1), stateAfter: N.ai.state, out: dead, viewLockLog: N.viewLock.log.slice(vl0).map((l) => l.ev + ':' + l.label),
+      W.running = false; W.key('KeyW', false); W.key('ShiftLeft', false);
+      const passEv = evSince(ev0).find((e) => e.ev === 'lurk_pass');
+      const lockLen = lockEnd !== null && lockStart !== null ? lockEnd - lockStart : null;
+      const brokenNow = !!N.doorApi.get('409').broken;
+      N.doorApi.repairDoor('409');
+      for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
+      const ok = passEv && passEv.lit === false && burstAt !== null && Math.abs(distAtBurst - D) < 0.15 && lockLen !== null && lockLen >= 1.2 && lockLen <= 1.85 && frozenDuring
+        && rotErr !== null && rotErr < 1e-3 && chaseAt !== null && minDChase >= 2.5 && lostAt !== null && lostAt - lockEnd < 9 && !dead && brokenNow;
+      return { ok, burstAtDist_m: distAtBurst && +distAtBurst.toFixed(2), viewLock_s: lockLen && +lockLen.toFixed(2), inputFrozenDuringLock: frozenDuring, viewRestoredErr_rad: rotErr && +rotErr.toExponential(1),
+        distAtChaseStart_m: distAtChase && +distAtChase.toFixed(2), minDistDuringChase_m: +minDChase.toFixed(2), lostAfterRunStart_s: lostAt && lockEnd && +(lostAt - lockEnd).toFixed(1), out: dead,
+        viewLockLog: N.viewLock.log.slice(vl0).map((l) => l.ev + ':' + l.label) };
     };
-    N.ai.lurkEnabled = true;
-    return r;
+    const runs = {};
+    try { for (const D of [4.0, 5.0, 6.0]) runs[D + 'm'] = one(D); } finally { R.darkBurst = DB; N.ai.lurkEnabled = true; }
+    return { pass: Object.values(runs).every((r) => r.ok), runs };
   });
 
   // 14) 壊れた扉は開いた扱い(通れる)のまま残り、死亡 → チェックポイント復帰の後も壊れたまま。戸口の奥(1.2m 先)には入れない

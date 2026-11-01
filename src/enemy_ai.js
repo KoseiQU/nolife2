@@ -78,7 +78,8 @@ export const AI = {
     litLunge: 4.2, litReach: 1.1,       // 点灯通過: 飛び出してプレイヤーへ詰める速さ(m/s)と ATTACK に入る距離
     darkLock: 1.5,               // 消灯通過: 視点を管理人に固定する長さ(秒。1.2〜1.8)
     darkStep: 0.9,               // 消灯通過: 戸口から廊下へ出る距離
-    chaseDelay: 0.3,             // 消灯通過: ムービーが終わってから追い始めるまで
+    chaseDelay: 0.6,             // 消灯通過: ムービーが終わってから追い始めるまで(飛び出した体勢を立て直す間。P5a 監査で 0.3→0.6)
+    darkChase: { speed: 2.5, time: 3.0 },   // 消灯通過: 追い始めて最初の time 秒はこの速さ(走り 3.6 m/s で確実に引き離せる。その後は CHASE 3.2)
     crash: { vol: [1.0, 0.32, 0.1], cutoff: [0, 700, 380], ref: 9.0 },   // 破壊音(同じ階・1 階差・2 階差)。ref が大きいほど同じ階の遠くまで届く
     doorOpen: 1.15, latchVol: 0.55,
   },
@@ -140,6 +141,7 @@ export class EnemyAI {
   // ctx: { enemy, audio, player, world, building, getPlayerLevel(), doors(API), doorInfo[], onKill, onLevel(lv) }
   constructor(ctx) {
     Object.assign(this, ctx);
+    this.cfg = AI;                   // P5a: テスト・デバッグから値を差し替えるため
     this.level = 4;
     this.transit = false;
     this.G = buildAIGraph(this.building);
@@ -279,7 +281,7 @@ export class EnemyAI {
     // P5a: 潜伏・EV の賭けの途中なら片付ける(開けかけの空室の扉は閉める。壊れた扉はそのまま残る)
     if (this._npcDoorId) { const d = this.doors.get(this._npcDoorId); if (d && !d.broken) this.doors.npcClose(this._npcDoorId, 3.0); this._npcDoorId = null; }
     if (this.elevator && this.elevator.npc && this.elevator.npc.ambush) this.elevator.npc = null;
-    this.concealed = false; this.lurkRoomId = null; this.lurkMode = null; this.lurkTargetRoom = null; this._lurkWake = null;
+    this.concealed = false; this.lurkRoomId = null; this.lurkMode = null; this.lurkTargetRoom = null; this._lurkWake = null; this._chaseSlowUntil = 0;
     this.setState('PATROL', { force: true, log: true });
   }
 
@@ -1114,7 +1116,7 @@ export class EnemyAI {
       e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.1, p.z);
       // 近いときは大股の歩き(walk_brutal)、離れていれば走る
       const close = dist < 3.0;
-      const sp = close ? 1.6 : AI.speed.CHASE;
+      const sp = close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? AI.roomLurk.darkChase.speed : AI.speed.CHASE);
       const clip = close ? 'walk_brutal' : 'run_intent';
       if (this._stepToward(wp.x, wp.z, sp, clip, AI.turnRate.CHASE, 0.3) && route.length) route.shift();
       yield;
@@ -1485,6 +1487,7 @@ export class EnemyAI {
     this.uninterruptible = false;
     this.lastKnown = { x: this.player.pos.x, z: this.player.pos.z, lv: this._plv() };
     this.lastSeenTime = this.time;
+    this._chaseSlowUntil = this.time + R.darkChase.time;
     this.setState('CHASE');
     yield;
   }
