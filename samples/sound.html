@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NOLIFE 2 音のサンプル盤</title>
+<style>
+  :root {
+    --bg: #0d0e10; --panel: #15171a; --line: #262a2f; --ink: #d9d3c8; --sub: #8a857d; --dim: #5d5a55;
+    --accent: #c9a76a; --sel: #2a2419; --sel-line: #8f7444; --play: #9fc2b4;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.6 -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif; }
+  header { padding: 28px 16px 18px; max-width: 980px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; letter-spacing: .12em; margin: 0 0 6px; }
+  header p { margin: 4px 0; color: var(--sub); font-size: 13px; }
+  nav { position: sticky; top: 0; z-index: 3; background: rgba(13,14,16,.94); border-bottom: 1px solid var(--line); backdrop-filter: blur(6px); }
+  nav .in { max-width: 980px; margin: 0 auto; padding: 8px 16px; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+  nav a { flex: none; color: var(--sub); text-decoration: none; font-size: 12px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; white-space: nowrap; }
+  nav a.done { color: var(--accent); border-color: var(--sel-line); }
+  main { max-width: 980px; margin: 0 auto; padding: 8px 16px 160px; }
+  h2 { font-size: 15px; font-weight: 600; letter-spacing: .1em; margin: 34px 0 10px; color: var(--accent); scroll-margin-top: 56px; }
+  .scene { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 14px 10px; margin: 10px 0; }
+  .scene.chosen { border-color: #3a3326; }
+  .sh { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .sh h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .sh code { color: var(--dim); font-size: 11px; }
+  .sh .all { margin-left: auto; }
+  .when { color: var(--sub); font-size: 12.5px; margin: 4px 0 8px; }
+  .meta { color: var(--dim); font-size: 11px; margin: 0 0 8px; word-break: break-all; }
+  .cand { display: grid; grid-template-columns: 22px 40px 1fr auto; align-items: center; gap: 10px; padding: 8px 8px; border-radius: 8px; border: 1px solid transparent; cursor: pointer; }
+  .cand + .cand { margin-top: 4px; }
+  .cand:hover { background: #1b1e22; }
+  .cand.sel { background: var(--sel); border-color: var(--sel-line); }
+  .cand input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+  .cand .nm { font-weight: 600; font-size: 13.5px; }
+  .cand .nm small { color: var(--dim); font-weight: 400; margin-left: 6px; }
+  .cand .ds { color: var(--sub); font-size: 12.5px; }
+  .cand .wav { color: var(--dim); font-size: 11px; text-decoration: none; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+  .cand .wav:hover { color: var(--ink); }
+  button { font: inherit; color: var(--ink); background: #1f2226; border: 1px solid #343940; border-radius: 6px; cursor: pointer; }
+  button:hover { border-color: #4a5058; }
+  button.pl { width: 40px; height: 32px; font-size: 13px; }
+  button.pl.on { color: var(--bg); background: var(--play); border-color: var(--play); }
+  button.all { font-size: 11.5px; padding: 3px 9px; color: var(--sub); }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; background: rgba(17,18,21,.97); border-top: 1px solid var(--line); }
+  .bar .in { max-width: 980px; margin: 0 auto; padding: 10px 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .bar .count { font-size: 13px; color: var(--sub); }
+  .bar .count b { color: var(--ink); }
+  .bar button { padding: 7px 14px; }
+  .bar button.main { background: var(--accent); color: #17140e; border-color: var(--accent); font-weight: 600; }
+  .bar .msg { font-size: 12px; color: var(--play); }
+  .out { max-width: 980px; margin: 0 auto; padding: 0 16px 10px; display: none; }
+  .out.show { display: block; }
+  .out textarea { width: 100%; height: 120px; background: #0b0c0e; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; font: 12px/1.5 ui-monospace, Menlo, monospace; padding: 8px; }
+  .busy { color: var(--dim); font-size: 11px; }
+  @media (max-width: 600px) {
+    .cand { grid-template-columns: 20px 36px 1fr; }
+    .cand .wav { grid-column: 3; justify-self: start; }
+    button.pl { width: 36px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>NOLIFE 2　音のサンプル盤</h1>
+  <p>場面ごとに 3 つの候補があります。▶ で試聴し、気に入った 1 つを選んでください(行のどこを押しても選べます)。選択はこのブラウザに自動で残ります。</p>
+  <p>全部選び終えたら、下の「選択を書き出す」を押してください(sound_choice.json の中身が出て、コピーと保存ができます)。音はすべてその場で合成した自作の音です。音量は候補どうしで揃えてあります。</p>
+  <p class="busy" id="stat"></p>
+</header>
+<nav><div class="in" id="nav"></div></nav>
+<main id="list"></main>
+<div class="bar">
+  <div class="out" id="out"><textarea id="json" readonly></textarea></div>
+  <div class="in">
+    <span class="count" id="count"></span>
+    <button class="main" id="export">選択を書き出す</button>
+    <button id="copy">コピー</button>
+    <button id="save">sound_choice.json を保存</button>
+    <button id="stop">停止</button>
+    <span class="msg" id="msg"></span>
+  </div>
+</div>
+<script type="module">
+import { SCENES, GROUPS, renderCandidate, encodeWav } from './sound_lib.js';
+
+const KEY = 'nolife2.sound_choice.v1';
+let choice = {};
+try { choice = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { choice = {}; }
+const saveChoice = () => { try { localStorage.setItem(KEY, JSON.stringify(choice)); } catch (e) { /* 保存できない環境でも動く */ } };
+
+let ac = null;
+const ctx = () => { if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 }); if (ac.state !== 'running') ac.resume(); return ac; };
+const cache = new Map();
+const bufferOf = (c) => { if (!cache.has(c)) cache.set(c, renderCandidate(c)); return cache.get(c); };
+let current = null;   // { src, btn }
+function stopAll() { if (current) { try { current.src.onended = null; current.src.stop(); } catch (e) { /* */ } if (current.btn) current.btn.classList.remove('on'); current = null; } queueToken++; }
+let queueToken = 0;
+async function play(c, btn) {
+  const was = current && current.btn === btn;
+  stopAll();
+  if (was) return null;
+  const a = ctx();
+  if (btn) btn.classList.add('on');
+  const buf = await bufferOf(c);
+  const src = a.createBufferSource(); src.buffer = buf; src.connect(a.destination);
+  const me = current = { src, btn };
+  return new Promise((res) => { src.onended = () => { if (btn) btn.classList.remove('on'); if (current === me) current = null; res(true); }; src.start(); });
+}
+
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const list = $('#list'), nav = $('#nav');
+const kindLabel = { amb: '環境・ループ', quiet: '静けさ', sfx: '' };
+const groupId = (g) => 'g' + GROUPS.indexOf(g);
+for (const g of GROUPS) {
+  const h = document.createElement('h2'); h.id = groupId(g); h.textContent = g; list.appendChild(h);
+  const a = document.createElement('a'); a.href = '#' + groupId(g); a.textContent = g; a.dataset.g = g; nav.appendChild(a);
+  for (const s of SCENES.filter((x) => x.group === g)) {
+    const el = document.createElement('section'); el.className = 'scene'; el.id = 's-' + s.id; el.dataset.scene = s.id;
+    el.innerHTML = `<div class="sh"><h3>${esc(s.title)}</h3><code>${s.id}</code><button class="all" type="button">3 つ続けて聴く</button></div>
+      <div class="when">${esc(s.when)}</div>
+      <div class="meta">呼び出し元: ${esc(s.callers)}　/　今の仮音: ${esc(s.temp)}</div>`;
+    for (const c of s.cands) {
+      const row = document.createElement('label'); row.className = 'cand'; row.dataset.c = c.id;
+      const k = kindLabel[c.kind] ? ` ・ ${kindLabel[c.kind]}` : '';
+      row.innerHTML = `<input type="radio" name="${s.id}" value="${c.id}"><button class="pl" type="button" title="試聴">▶</button>
+        <div><div class="nm">${c.id.toUpperCase()}. ${esc(c.name)}<small>${c.dur} 秒${k}</small></div><div class="ds">${esc(c.desc)}</div></div>
+        <a class="wav" href="#" title="この候補を .wav で保存">wav</a>`;
+      const btn = $('.pl', row);
+      btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); play(c, btn); });
+      $('input', row).addEventListener('change', () => { choice[s.id] = c.id; saveChoice(); refresh(); });
+      $('.wav', row).addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const buf = await bufferOf(c);
+        const url = URL.createObjectURL(new Blob([encodeWav(buf)], { type: 'audio/wav' }));
+        const a = document.createElement('a'); a.href = url; a.download = `${s.id}_${c.id}.wav`; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 4000);
+      });
+      el.appendChild(row);
+    }
+    $('.all', el).addEventListener('click', async () => {
+      stopAll(); const tok = queueToken;
+      for (const c of s.cands) { if (tok !== queueToken) return; const btn = $(`.cand[data-c="${c.id}"] .pl`, el); await play(c, btn); if (tok !== queueToken) return; await new Promise((r) => setTimeout(r, 600)); }
+    });
+    list.appendChild(el);
+  }
+}
+function refresh() {
+  let n = 0;
+  for (const s of SCENES) {
+    const el = document.getElementById('s-' + s.id), v = choice[s.id];
+    if (v) n++;
+    el.classList.toggle('chosen', !!v);
+    for (const row of el.querySelectorAll('.cand')) { const on = row.dataset.c === v; row.classList.toggle('sel', on); $('input', row).checked = on; }
+  }
+  for (const a of nav.querySelectorAll('a')) a.classList.toggle('done', SCENES.filter((s) => s.group === a.dataset.g).every((s) => choice[s.id]));
+  $('#count').innerHTML = `選択 <b>${n}</b> / ${SCENES.length} 場面`;
+}
+refresh();
+$('#stat').textContent = `${SCENES.length} 場面 × 3 候補 = ${SCENES.reduce((a, s) => a + s.cands.length, 0)} 音`;
+
+function exportJson() {
+  const o = {};
+  for (const s of SCENES) if (choice[s.id]) o[s.id] = choice[s.id];
+  return JSON.stringify(o, null, 2) + '\n';
+}
+const msg = (t) => { $('#msg').textContent = t; clearTimeout(msg.tm); msg.tm = setTimeout(() => { $('#msg').textContent = ''; }, 3500); };
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {
+    const ta = $('#json'); ta.select(); try { return document.execCommand('copy'); } catch (e2) { return false; }
+  }
+}
+function saveFile(t) {
+  const url = URL.createObjectURL(new Blob([t], { type: 'application/json' }));
+  const a = document.createElement('a'); a.href = url; a.download = 'sound_choice.json'; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+$('#export').addEventListener('click', async () => {
+  const t = exportJson(); $('#json').value = t; $('#out').classList.add('show');
+  const left = SCENES.length - Object.keys(JSON.parse(t)).length;
+  const ok = await copyText(t); saveFile(t);
+  msg((ok ? 'コピーして保存しました' : '保存しました(コピーは手動で)') + (left ? `。未選択が ${left} 場面あります` : ''));
+});
+$('#copy').addEventListener('click', async () => { const t = exportJson(); $('#json').value = t; $('#out').classList.add('show'); msg((await copyText(t)) ? 'コピーしました' : 'コピーできませんでした'); });
+$('#save').addEventListener('click', () => { const t = exportJson(); $('#json').value = t; $('#out').classList.add('show'); saveFile(t); msg('保存しました'); });
+$('#stop').addEventListener('click', stopAll);
+
+// 検証用(内蔵ブラウザの JS から): 全候補をオフラインで描き、生の AudioContext に組んでも例外が出ないかと、再生の終わり(onended)を確かめる
+window.__SB = {
+  SCENES, choice: () => ({ ...choice }), exportJson,
+  async check({ from = 0, to = Infinity, live = true, rate = 1 } = {}) {
+    const a = ctx(), mute = a.createGain(); mute.gain.value = 0; mute.connect(a.destination);
+    const all = SCENES.flatMap((s) => s.cands), res = [];
+    for (const c of all.slice(from, to)) {
+      const r = { id: c.scene + '/' + c.id };
+      try {
+        const buf = await bufferOf(c); r.peakDb = +buf.stats.peakDb.toFixed(1); r.rmsDb = +buf.stats.rmsDb.toFixed(1); r.len = +buf.duration.toFixed(2);
+        c.render(a, mute, a.currentTime + 0.05);   // 生のコンテキストにも組める(P4b で直接鳴らす場合)
+        if (live) {
+          const src = a.createBufferSource(); src.buffer = buf; src.playbackRate.value = rate; src.connect(mute);
+          const t0 = performance.now();
+          r.ended = await new Promise((res2) => { const tm = setTimeout(() => res2('timeout'), (buf.duration / rate) * 1000 + 3000); src.onended = () => { clearTimeout(tm); res2('onended'); }; src.start(); });
+          r.ms = Math.round(performance.now() - t0);
+        }
+      } catch (e) { r.error = String(e && e.message || e); }
+      res.push(r);
+    }
+    mute.disconnect();
+    return res;
+  },
+};
+</script>
+</body>
+</html>
