@@ -4,9 +4,6 @@ export const HUD_TEXT = {
   door: {
     open: { key: 'E', text: '開ける' },
     close: { key: 'E', text: '閉める' },
-    lock: { key: 'L', text: '施錠' },
-    unlock: { key: 'L', text: '解錠' },
-    lockedBadge: '🔒 施錠中',
     lockedOther: '鍵がかかっている',          // 開かない扉で E を押した時(1 秒)
     autoLocked: '自動ドアが反応しない',        // P3c-2: 最初は動かない正面玄関の外側の自動ドアで E を押した時(1 秒)
   },
@@ -38,7 +35,7 @@ export const HUD_TEXT = {
     climb: { key: 'E', text: '乗り越える' },
     cantClimb: '乗り越えられない',
   },
-  controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　L 施錠　／　H 操作の表示',
+  controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },
   start: 'クリックで開始',
   resume: 'クリックで再開',

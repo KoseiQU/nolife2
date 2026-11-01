@@ -4,7 +4,7 @@
 //        (走り 12m / 歩き 6m / しゃがみ 2.4m / 扉操作 9m)。phantom.js の _visionCheck を移植。
 //        遮蔽はメッシュではなく当たり判定の箱(building.json 由来=データが真実)に対して取る(結合済みメッシュより軽く正確)。
 //  経路: P0 は直線廊下＋EVホールなので、廊下軸上の点列＋410 室内の点のグラフ(ダイクストラ＋見通しで間引き)。
-//  鍵で入室: 施錠扉の前で「鍵束→錠」→ door_open_in で扉を押し開けて入る(ルートモーション)。
+//  入室: door_open_in で扉を押し開けて入る(ルートモーション)。P5a で「鍵束→錠」の段取りは撤去(施錠要素の全廃)。
 //  行動はジェネレータ(=update(dt) ごとに 1 歩進むコルーチン)で書く。setTimeout 非依存なので手動ポンプで決定的に進む。
 //  P2c: LURK(潜伏)を追加。隠れ場所に立ち止まり消灯して待つ。近づく(≤4m)/同じ部屋に入る/懐中電灯を向けると、
 //  grin で無言のまま walk_brutal で近づき ATTACK。時間配分 潜伏 60〜120 秒 : 巡回 20〜40 秒(DESIGN §3.4.1)。
@@ -64,8 +64,6 @@ export const AI = {
     lateral: 0.14,         // 右手(押す手)がノブ側に来るよう扉中心からずらす量
     openAt: 2.55,          // door_open_in 再生開始から扉が動き出すまで(秒、f77)
     openSpeed: 2.6,        // 敵が押すときの扉の速さ倍率
-    keysTime: 1.6,
-    lockTime: 0.7,
   },
 };
 
@@ -87,7 +85,7 @@ export const SCOPE = {
   stareX: 7.36,            // 覗き込む立ち位置(扉面 7.74 − 半径)
   headGap: 0.30,           // 頭(骨)をレンズの手前この距離へ(顔の前面はさらに約 8cm 前=レンズの約 20cm 手前。近すぎると近クリップで唇を突き抜ける)
   stare: 1.6,              // 覗き込んでいる時間(grin 1.0 → 0.5 秒で attack)
-  keys: 1.1, lock: 0.5,
+  knob: 0.6,               // P5a: ノブに手を掛けてから扉が開くまで(旧: 鍵束 1.1 秒＋錠 0.5 秒)
 };
 
 const P0_ORDER = ['405', '406', 'EV', '404', '407', '410', '403', '408', '402', '409', '401', '410', 'N0'];   // 410(プレイヤーの部屋)は一巡に2回
@@ -740,7 +738,7 @@ export class EnemyAI {
     return { x: x + nx * startDist + kx * lateral, z: z + nz * startDist + kz * lateral, yaw: Math.atan2(-nx, -nz) };
   }
 
-  // 鍵で入室(410 のみ開閉可能)。door_open_in の間は割り込み不可
+  // 扉を開けて入室(P5a: 鍵は使わない)。door_open_in の間は割り込み不可
   *_doorEntry(door, useKey) {
     const e = this.enemy, D = AI.door;
     const f = this._doorFront(door.roomId, D.startDist + 0.25, D.lateral);
@@ -763,25 +761,9 @@ export class EnemyAI {
       this.enemy.aimPoint = null;
       return 'locked';
     }
-    if (door.locked) {
-      if (!useKey) {
-        door.rattle = 0.25;
-        if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY));
-        this.log('rattle', { room: door.roomId });
-        yield* this._wait(1.2);
-        this.uninterruptible = false;
-        this.enemy.aimPoint = null;
-        return 'locked';
-      }
-      e.play('look_idle', { fade: 0.3 });
-      if (this.audio) this.audio.play('keys', doorPos(door, this.floorY));
-      this.log('keys', { room: door.roomId });
-      yield* this._wait(D.keysTime);
-      if (this.audio) this.audio.play('lock', doorPos(door, this.floorY));
-      this.log('unlock', { room: door.roomId });
-      yield* this._wait(D.lockTime);
-      this.doors.setLocked(door.roomId, false);
-    }
+    // P5a: 鍵束→錠の段取りは撤去(施錠要素の全廃)。扉は普通に開けて入る
+    if (door.locked) this.doors.setLocked(door.roomId, false);
+    void useKey;
     // 開始位置へ合わせる(25cm 前へ詰める)
     const s = this._doorFront(door.roomId, D.startDist, D.lateral);
     for (let t = 0; t < 0.6; t += this.dt) {
@@ -1254,15 +1236,12 @@ export class EnemyAI {
       yield;
     }
     this._stareWait = 0;
-    // 6) 鍵束→錠→扉を開けて入る(覗き穴視点はここで閉じる。プレイヤーは室内から扉が開くのを見る)
-    if (this.audio) this.audio.play('keys', doorPos(this.doors.get('410'), this.floorY));
-    this.log('keys', { room: '410' });
-    yield* this._wait(S.keys);
-    if (this.audio) this.audio.play('lock', doorPos(this.doors.get('410'), this.floorY));
-    this.log('unlock', { room: '410' });
+    // 6) ノブに手を掛けて扉を開けて入る(P5a: 鍵束・錠は撤去。覗き穴視点はここで閉じる。プレイヤーは室内から扉が開くのを見る)
+    if (this.audio) this.audio.play('handle', doorPos(this.doors.get('410'), this.floorY), 0.9);
+    this.log('scope_knob', { room: '410' });
     this.doors.setLocked('410', false);
     if (this.onScopeOpen) this.onScopeOpen();
-    yield* this._wait(S.lock);
+    yield* this._wait(S.knob);
     e.lean = 0; e.faceFill = 0; e.faceRate.grin = 0.8; e.faceRate.attack = 3.0;
     e.setFace('attack', 0); e.setFace('grin', 0.8);
     this.doors.open('410', 3.0);

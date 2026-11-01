@@ -101,15 +101,17 @@ export async function run(N) {
     };
   });
 
-  T('5_locked_door_key_entry', () => {
+  // P5a: 施錠要素の全廃(DESIGN §3.8 B)。L キーは何もしない。管理人は鍵を使わず、扉を普通に開けて(door_open_in)入ってくる
+  T('5_door_normal_entry_no_lock', () => {
     W.reset();
     N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false);
     N.pump(DT, 2, false);
+    const a0 = N.enemyAudio.log.length;
     W.key('KeyL', true); N.pump(DT, 1, false); W.key('KeyL', false); N.pump(DT, 1, false);
-    const locked = W.door410().locked;
+    const lAfter = { locked: W.door410().locked, target: W.door410().target, lockSound: N.enemyAudio.log.slice(a0).some((l) => l.name === 'lock'), hint: N.hudState().hint };
     N.enemy.place(6.9, 12.5, Math.PI);
     N.ai.lastKnown = { x: 8.75, z: 7.3 };
-    N.ai.knownRoomId = '410';   // P2d 以降: 鍵で入るのは「中にいると知っている」時だけ(物音を聞いた想定)
+    N.ai.knownRoomId = '410';   // P2d 以降: 閉じた扉を開けて入るのは「中にいると知っている」時だけ(物音を聞いた想定)
     N.ai.setState('ALERT', { force: true, log: true, react: true });
     const ev0 = N.ai.events.length;
     let t = 0, enteredAt = null, maxAngle = 0, wallClip = 0;
@@ -119,12 +121,15 @@ export async function run(N) {
       if (!N.ai.uninterruptible && W.penetration(N.enemyObj.pos.x, N.enemyObj.pos.z, 0) > 0) wallClip++;
       if (N.ai.events.slice(ev0).some((e) => e.ev === 'entered')) enteredAt = t;
     }
-    const evs = N.ai.events.slice(ev0).filter((e) => ['keys', 'unlock', 'door_open_in', 'door_opened', 'entered', 'stuck', 'state'].includes(e.ev)).map((e) => `${e.t.toFixed(2)} ${e.ev}${e.to ? ':' + e.to : ''}${e.x !== undefined ? ` (${e.x},${e.z})` : ''}`);
-    const order = ['keys', 'unlock', 'door_open_in', 'door_opened', 'entered'];
-    const idx = order.map((k) => N.ai.events.slice(ev0).findIndex((e) => e.ev === k));
+    const evAll = N.ai.events.slice(ev0);
+    const evs = evAll.filter((e) => ['keys', 'unlock', 'door_open_in', 'door_opened', 'entered', 'stuck', 'state'].includes(e.ev)).map((e) => `${e.t.toFixed(2)} ${e.ev}${e.to ? ':' + e.to : ''}${e.x !== undefined ? ` (${e.x},${e.z})` : ''}`);
+    const order = ['door_open_in', 'door_opened', 'entered'];
+    const idx = order.map((k) => evAll.findIndex((e) => e.ev === k));
     const inOrder = idx.every((v, i) => v >= 0 && (i === 0 || v > idx[i - 1]));
+    const noKeys = !evAll.some((e) => e.ev === 'keys' || e.ev === 'unlock') && !N.enemyAudio.log.slice(a0).some((l) => l.name === 'keys' || l.name === 'lock');
     const e = N.enemyObj.pos;
-    return { pass: locked && inOrder && enteredAt !== null && e.x > 7.95 && maxAngle > 1.2 && wallClip === 0, lockedByL: locked, enteredAfter_s: enteredAt && +enteredAt.toFixed(2), enemyInRoomX: +e.x.toFixed(2), doorMaxAngle_rad: +maxAngle.toFixed(2), unlockedAfter: !W.door410().locked, wallClipFrames: wallClip, events: evs };
+    return { pass: !lAfter.locked && lAfter.target === 0 && !lAfter.lockSound && !lAfter.hint.includes('施錠') && inOrder && noKeys && enteredAt !== null && e.x > 7.95 && maxAngle > 1.2 && wallClip === 0,
+      keyL: lAfter, enteredAfter_s: enteredAt && +enteredAt.toFixed(2), enemyInRoomX: +e.x.toFixed(2), doorMaxAngle_rad: +maxAngle.toFixed(2), noKeysOrLock: noKeys, wallClipFrames: wallClip, events: evs };
   });
 
   T('6_peephole_on_off', () => {
@@ -218,10 +223,10 @@ export async function run(N) {
       if (N.ai.state === 'SCOPE' && isFinite(N.ai.scopeFaceDist)) minFace = Math.min(minFace, N.ai.scopeFaceDist);
       if (stareAt === null && evs.some((e) => e.ev === 'scope_stare')) { stareAt = t; grinAtStare = N.enemyObj.face.grin; }
       if (stareAt !== null && t - stareAt <= 1.2) attackAfterStare = Math.max(attackAfterStare, N.enemyObj.face.attack);
-      if (peepAtUnlock === null && evs.some((e) => e.ev === 'unlock')) peepAtUnlock = N.peepholeObj.active;
+      if (peepAtUnlock === null && evs.some((e) => e.ev === 'scope_knob')) peepAtUnlock = N.peepholeObj.active;   // P5a: 鍵(unlock)→ノブ(scope_knob)
       if (N.deathState()) hitAt = t;
     }
-    const order = ['room_known', 'scope_start', 'scope_pass', 'scope_hide', 'scope_return', 'scope_stare', 'keys', 'unlock', 'door_opened', 'attack_start', 'hit'];
+    const order = ['room_known', 'scope_start', 'scope_pass', 'scope_hide', 'scope_return', 'scope_stare', 'scope_knob', 'door_opened', 'attack_start', 'hit'];
     const evs = N.ai.events.slice(ev0);
     const idx = order.map((k) => evs.findIndex((e) => e.ev === k));
     const inOrder = idx.every((v, i) => v >= 0 && (i === 0 || v > idx[i - 1]));
@@ -272,9 +277,8 @@ export async function run(N) {
     r.corridorDoor = at(6.95, 7.25, -Math.PI / 2).hint;                 // 廊下から 410 の扉を見る(0.85m)
     r.away = at(6.9, 12.5, Math.PI).hint;                                // 離れる(扉を見ていない・遠い)
     r.inside = at(8.75, 7.3, Math.PI / 2).hint;                          // 室内から扉(スコープ 0.97m・正対)
-    tap('KeyL'); r.insideLocked = H().hint;
+    tap('KeyL'); r.afterL = H().hint; r.lockedAfterL = W.door410().locked;   // P5a: L は何もしない(施錠の撤去)
     N.peephole(true); N.pump(DT, 2, false); r.peep = H(); N.peephole(false); N.pump(DT, 2, false);
-    tap('KeyL'); r.unlockedAgain = H().hint;
     at(6.95, 13.05, Math.PI / 2); tap('KeyE'); r.otherDoorToast = H().toast;   // 開かない扉(403)で E(P3b: 404 は入れる部屋になった)
     const ev = N.hud.evPanel;
     const ex = ev.x - 0.9 * 0.2, ez = ev.z - 0.9;
@@ -282,10 +286,10 @@ export async function run(N) {
     tap('KeyF'); N.pump(DT, 12, false); r.flashToast = H().toast; tap('KeyF'); N.pump(DT, 12, false);
     tap('KeyH'); r.controls = H().controls;
     const pass = r.corridorDoor.includes('開ける') && !r.corridorDoor.includes('施錠') && r.away === ''
-      && r.inside.includes('覗く') && r.inside.includes('開ける') && r.inside.includes('施錠')
-      && r.insideLocked.includes('解錠') && r.insideLocked.includes('施錠中')
+      && r.inside.includes('覗く') && r.inside.includes('開ける') && !r.inside.includes('施錠')
+      && r.afterL === r.inside && !r.lockedAfterL
       && r.peep.hint === '' && r.peep.release.includes('やめる')
-      && r.unlockedAgain.includes('施錠') && r.otherDoorToast === '鍵がかかっている'
+      && r.otherDoorToast === '鍵がかかっている' && !N.hud.el.controls.textContent.includes('施錠')
       // P3a: EV が動くようになったので、呼ぶと「エレベーターを呼んだ」(カゴがこの階なら「扉が開く」)。P2e の期待値は「反応がない」だった
       && r.ev.includes('呼ぶ') && ['エレベーターを呼んだ', '扉が開く'].includes(r.evToast) && r.flashToast.includes('懐中電灯') && r.controls;
     return { pass, ...r, peep: { hint: r.peep.hint, release: r.peep.release } };

@@ -289,17 +289,6 @@ function useAndReport() {
   if (lastUseAutoLocked) hud.flash(HUD_TEXT.door.autoLocked);
   return r;
 }
-function nearestOperableDoor(maxD = 1.6) {
-  const p = player.object.position;
-  let best = null, bd = maxD;
-  for (const d of doorsHere()) {
-    if (!d.operable || d.kind === 'auto') continue;
-    const c = d.collision;
-    const dist = Math.hypot((c.minX + c.maxX) / 2 - p.x, (c.minZ + c.maxZ) / 2 - p.z);
-    if (dist < bd) { bd = dist; best = d; }
-  }
-  return best;
-}
 // 扉 API(AI・デバッグ用)。roomId は全館で一意
 const doorApi = {
   get: (id) => world.doorById.get(String(id)) || null,
@@ -443,14 +432,7 @@ player.onKey = (code) => {
   // カゴの中: 数字キーで行き先(1〜7)
   const dm = /^Digit([1-7])$/.exec(code);
   if (dm && elevator.inCar(player.pos.x, player.pos.z, playerLevel)) { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
-  if (code === 'KeyL') {
-    const d = nearestOperableDoor();
-    if (d && d.angle < 0.02) {
-      d.locked = !d.locked;
-      enemyAudio.play('lock', new THREE.Vector3((d.collision.minX + d.collision.maxX) / 2, floorY + 1.0, (d.collision.minZ + d.collision.maxZ) / 2), 0.5);
-      ai.noise(d.node.position.x, d.node.position.z, 5.0);
-    }
-  }
+  // P5a: L キーの施錠/解錠は撤去(DESIGN §3.7・§3.8 B「施錠要素は全廃」)。L は何もしない
   if (code === 'KeyP' && canPeep()) peephole.set(true);
 };
 function updatePeepInput(dt) {

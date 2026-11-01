@@ -1,6 +1,6 @@
 // enemy_audio.js — 管理人の音(P2b のプレースホルダ)。録音の差し替えは P4(ファイル名体系は docs/p2b/NOTES.md)。
 //  - 鼻歌/唸りのループ(WebAudio でその場合成)を頭の位置から PositionalAudio で 3D 再生。
-//  - 足音(接地に同期)・鍵束・錠・ノブのガチャを足元/扉の位置から鳴らす。
+//  - 足音(接地に同期)・ノブのガチャなどを足元/扉の位置から鳴らす(P5a: 鍵束・錠の音は撤去)。
 //  - 壁越し: AI の遮蔽判定(壁箱・閉扉)の結果で lowpass の cutoff を 18kHz → 600Hz へ落とす(=こもる)。
 // AudioContext はユーザー操作まで suspended。main がクリック/キーで resume() を呼ぶ。
 
@@ -29,8 +29,6 @@ export class EnemyAudio {
     this.buffers = {
       hum: synthHum(this.ctx),
       steps: [0, 1, 2, 3].map((i) => synthStep(this.ctx, i)),
-      keys: synthKeys(this.ctx),
-      lock: synthLock(this.ctx),
       rattle: synthRattle(this.ctx),
       scream: synthScream(this.ctx),
       hit: synthHit(this.ctx),
@@ -71,7 +69,7 @@ export class EnemyAudio {
   setState(state) { this.humTarget = ENEMY_AUDIO.humVolume[state] ?? 0; }
   setOccluded(v) { this.occludedTarget = v ? 1 : 0; }
 
-  // name: 'step'|'keys'|'lock'|'rattle'。pos: 世界座標
+  // name: buffers のキー('step' は 4 種から選ぶ)。pos: 世界座標
   play(name, pos, volume = 1) {
     this.log.push({ name, t: this.ctx.currentTime, pos: pos ? [pos.x, pos.y, pos.z].map((v) => +v.toFixed(2)) : null });
     if (this.log.length > 200) this.log.shift();
@@ -168,39 +166,7 @@ function synthStep(ctx, seed) {
   });
 }
 
-// 鍵束: 金属の小片が触れ合う不規則な高音(1.4 秒)
-function synthKeys(ctx) {
-  const sr = 24000;
-  return makeBuffer(ctx, 1.5, sr, (d, sr2, n) => {
-    const r = rng(77);
-    const hits = Array.from({ length: 26 }, () => [r() * 1.3, 0.3 + r() * 0.7, 2600 + r() * 3200, 4100 + r() * 3500]);
-    for (const [s, a, f1, f2] of hits) {
-      const i0 = Math.round(s * sr2);
-      for (let i = i0; i < Math.min(n, i0 + sr2 * 0.12); i++) {
-        const t = (i - i0) / sr2;
-        d[i] += a * Math.exp(-t * 55) * (Math.sin(2 * Math.PI * f1 * t) * 0.6 + Math.sin(2 * Math.PI * f2 * t) * 0.4) * 0.35;
-      }
-    }
-  });
-}
-
-// 錠: 鍵を差して回す「カチャッ…ガチン」
-function synthLock(ctx) {
-  const sr = 24000;
-  return makeBuffer(ctx, 0.7, sr, (d, sr2, n) => {
-    const r = rng(5);
-    const clicks = [[0.0, 0.4, 1900], [0.09, 0.3, 2600], [0.38, 1.0, 1200], [0.41, 0.6, 2300]];
-    for (const [s, a, f] of clicks) {
-      const i0 = Math.round(s * sr2);
-      for (let i = i0; i < n; i++) {
-        const t = (i - i0) / sr2;
-        d[i] += a * Math.exp(-t * 70) * (Math.sin(2 * Math.PI * f * t) * 0.6 + (r() - 0.5) * 0.8) * 0.5;
-      }
-    }
-  });
-}
-
-// ノブのガチャ(施錠扉を確かめる)
+// ノブのガチャ(開かない扉を確かめる)
 function synthRattle(ctx) {
   const sr = 24000;
   return makeBuffer(ctx, 0.6, sr, (d, sr2, n) => {

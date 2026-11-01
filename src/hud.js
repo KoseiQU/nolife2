@@ -133,16 +133,13 @@ export class Hud {
       if (d >= 0 && d < bd) { bd = d; door = dd; }
     }
     const items = [];
-    let badge = null, kind = null;
+    const badge = null;
+    let kind = null;
     if (this.canPeep()) { items.push(TX.scope.peep); kind = 'scope'; }
     if (door && door.operable) {
-      const p = this.player.pos;
-      // その扉の部屋の中にいる(P3b: 入れる部屋すべて。410 だけだった判定を一般化)
-      const inside = this.inRoomOf ? this.inRoomOf(door) : this.inRoom410 ? this.inRoom410() : (p.x > 7.86 && p.z > 5.8 && p.z < 8.7);
+      // P5a: 施錠/解錠のヒントと「施錠中」の印は撤去(施錠要素の全廃、DESIGN §3.8 B)
       const open = door.target > 0 || door.angle > 0.05;
-      if (open) items.push(TX.door.close);
-      else if (door.locked) { if (inside) items.push(TX.door.unlock); badge = TX.door.lockedBadge; }
-      else { items.push(TX.door.open); if (inside) items.push(TX.door.lock); }
+      items.push(open ? TX.door.close : TX.door.open);
       kind = kind || 'door';
     } else if (door && door.tryable) {
       items.push(TX.door.open);   // P3a-2: 開かない扉(地下の鉄扉)。試すと「鍵がかかっている」
