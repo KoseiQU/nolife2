@@ -236,9 +236,9 @@ function buildPeriod(b) {
     const segs = nx > 0 ? [[z0, dz - dw], [dz + dw, z1]] : [[z0, z1]];
     for (const [a, c] of segs) { b.surf = SURF.tChk; b.wallX(X(u), a, c, Y(0), Y(0.9), nx); b.surf = SURF.tWall; b.wallX(X(u), a, c, Y(0.9), Y(T.h), nx); }
     if (nx > 0) { b.surf = SURF.tWall; b.wallX(X(u), dz - dw, dz + dw, Y(2.05), Y(T.h), nx); }
-    // 付け柱(丸タイル)6m ごと
+    // 付け柱(丸タイル)6m ごと(灯りの下。踊り場への扉の開口とは重ねない)
     b.surf = SURF.pil;
-    for (let v = T.w0 + 0.0; v < T.w0 + T.L; v += T.lampDu) { const z = Z(v); b.box(nx > 0 ? X(u) : X(u) - 0.07, Y(0), z - 0.28, nx > 0 ? X(u) + 0.07 : X(u), Y(T.h), z + 0.28, nx > 0 ? 'px pz nz' : 'nx pz nz'); }
+    for (let v = T.w0 + T.lamp0; v < T.w0 + T.L; v += T.lampDu) { const z = Z(v); b.box(nx > 0 ? X(u) : X(u) - 0.07, Y(0), z - 0.28, nx > 0 ? X(u) + 0.07 : X(u), Y(T.h), z + 0.28, nx > 0 ? 'px pz nz' : 'nx pz nz'); }
   }
   // 扉の枠と奥(写しは黒い箱 = 本物の区画では捨てる)
   b.surf = SURF.dark;
