@@ -87,9 +87,10 @@ function makeMaterial(U) {
         float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
         ${CAUSTIC}
         vec3 tileCol(vec2 q, float sz, vec3 a, vec3 b, float grout, inout float gr) {
-          vec2 c = floor(q / sz); vec2 f = fract(q / sz);
+          vec2 t = q / sz; vec2 c = floor(t); vec2 f = fract(t);
           float e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
-          gr = 1.0 - smoothstep(grout * 0.5, grout, e);
+          float aa = max(fwidth(t.x), fwidth(t.y));   // 遠くの目地は細くなりすぎてちらつくので、画素の幅でぼかして薄める
+          gr = (1.0 - smoothstep(grout * 0.5, grout + aa, e)) * clamp(1.5 - aa / grout * 0.5, 0.0, 1.0);
           return mix(a, b, h21(c));
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
@@ -174,7 +175,7 @@ function makeMaterial(U) {
           reflectedLight.indirectSpecular += sp * (1.0 - xR) * 0.12;
         }`);
   };
-  m.customProgramCacheKey = () => 'n2_x312_v3';
+  m.customProgramCacheKey = () => 'n2_x312_v4';
   return m;
 }
 
