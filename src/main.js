@@ -763,6 +763,8 @@ function updateOutdoorQuality(on) {
     gtaoDiv = on ? LOOK.ext.gtaoDivOutdoor : 2;
     resize();
   }
+  // P5b-2b: 物語の別空間では GTAO を切る(別空間の 1 フレームはほぼ後処理の負荷で、GTAO が約 3ms。霧と暗さで AO の差はほとんど見えない = docs/p5b2b/NOTES.md §6)
+  gtao.enabled = !isSpace(playerLevel);
   const glassOut = playerLevel === 'G';
   for (const rec of world.floors.values()) {
     for (const m of rec.mats) {
