@@ -13,6 +13,7 @@
 //  6) 1F 風除室: 内側の自動ドアは近づくと開く(P3c: 外側の正面玄関も開くようになった。外への出入りは 8 番)
 //  8) P3c 外観と外環境: 読み込み前後の負荷・屋上A/屋上B/エントランス前から見える・屋内の奥では描かない・敷地の境で止まる・玄関の出入り
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
+//  10) P3c-2 廊下端の窓: 各窓の正面でガラスが透明・開口が抜けている・外を描く・窓越しに外が見える(画素の差)・1フレームの時間
 
 const DT = 1 / 60;
 const EXPECT_UNITS = { 1: 9, 2: 22, 3: 22, 4: 19, 5: 16, 6: 11, 7: 5 };
@@ -482,6 +483,94 @@ export async function run(N) {
     N.doorApi.setLocked('ENTRANCE_OUT', true);
     return { pass: fpsOk && visOk && walkOk && doorOk, loadMs, frameMs: { before, after, rule: 'after ≤ max(16.7, before×1.5)' }, visible: vis, walked,
       door: { lockedAtStart, maxOpen01WhileLocked: +openedLocked.toFixed(2), stayedInside: stayed, maxOpen01: +opened.toFixed(2), out: out1, back } };
+  });
+
+  // 10) P3c-2 廊下端の窓(外が見えるガラス): 各階の shell.windows ごとに窓の正面(室内側 1.5m)に立つ →
+  //  ア) 視線の先(窓の中心)の最初の面がガラス(MX_CorrGlass: 半透明 opacity < 0.3 または transmission)で、その奥 0.4m に自分の階の壁が無い(開口が抜けている)
+  //  イ) 外観・外環境を描いている(exterior.shown)
+  //  ウ) 外を出した画と隠した画で、窓の領域の画素が変わる(窓越しに外が見えている)
+  //  エ) 1080p の1フレームの時間を記録(4F は ≤ 16.7ms)
+  await T('10_corridor_windows', async () => {
+    const THREE = N.THREE;
+    await N.loadExterior();
+    const gl = N.renderer.getContext();
+    const px1 = new Uint8Array(4);
+    const frameMs = (n = 40) => {
+      const ts = [];
+      for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
+      ts.sort((a, b) => a - b); return +ts[ts.length >> 1].toFixed(2);
+    };
+    const W = 320, H = 180;
+    const buf = new Uint8Array(W * H * 4), buf2 = new Uint8Array(W * H * 4);
+    const grab = (b) => { N.render(); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, b); };
+    const grain0 = N.passes.grain.uniforms.grain.value;
+    const FACE = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
+    const rc = new THREE.Raycaster();
+    const res = {};
+    let pass = true;
+    for (const f of N.building.floors) {
+      if (f.level > 7) continue;
+      const L = f.level;
+      for (let i = 0; i < f.shell.windows.length; i++) {
+        const w = f.shell.windows[i];
+        const [x, z] = w.pos, nin = FACE[w.facing];
+        const yaw = Math.atan2(nin[0], nin[1]);       // 窓の方を向く(yaw 0 = −z)
+        const sx = x + nin[0] * 1.5, sz = z + nin[1] * 1.5;
+        await N.teleport(L, sx, sz, yaw, 0);
+        await settle([L - 1, L, L + 1].filter((l) => l >= 1 && l <= 7).join(','));
+        N.pump(DT, 30, false);
+        const y0 = (L - 1) * 2.9 + w.sill, yc = y0 + w.h / 2;
+        // ア) 窓の中心へのレイ(自分の階の GLB)
+        const rec = N.world.floors.get(L);
+        const eye = N.camera.getWorldPosition(new THREE.Vector3());
+        const tgt = new THREE.Vector3(x, yc + 0.12, z);   // 横桟を避けて上のガラス
+        rc.set(eye, tgt.clone().sub(eye).normalize()); rc.far = 6;
+        const hits = rc.intersectObject(rec.group, true).filter((h) => h.object.visible);
+        const first = hits[0];
+        const gm = first && first.object.material;
+        const glassOk = !!gm && gm.name === 'MX_CorrGlass' && (gm.opacity < 0.3 || gm.transmission > 0) && gm.side === THREE.DoubleSide;
+        const dGlass = first ? first.distance : 0;
+        const behind = hits.filter((h) => h.distance > dGlass + 0.02 && h.distance < dGlass + 0.4 && !/^(MX_Corr|M_Stainless)/.test(h.object.material.name)).map((h) => h.object.material.name);
+        const holeOk = behind.length === 0;
+        // イ) 外を描いているか
+        N.exterior.force = null; N.pump(DT, 1, false);
+        const shown = N.exterior.shown;
+        // ウ) 窓の領域(画面への投影)で、外を出した画と隠した画の差
+        N.setRenderSize(W, H);
+        N.passes.grain.uniforms.grain.value = 0;
+        N.exterior.force = true; N.pump(DT, 1, false); grab(buf);
+        N.exterior.force = false; N.pump(DT, 1, false); grab(buf2);
+        N.exterior.force = null; N.pump(DT, 1, false);
+        N.passes.grain.uniforms.grain.value = grain0;
+        const hw = w.w / 2;
+        const corners = nin[1] !== 0 ? [[x - hw, y0, z], [x + hw, y0, z], [x - hw, y0 + w.h, z], [x + hw, y0 + w.h, z]] : [[x, y0, z - hw], [x, y0, z + hw], [x, y0 + w.h, z - hw], [x, y0 + w.h, z + hw]];
+        let u0 = W, u1 = 0, v0 = H, v1 = 0;
+        for (const c of corners) {
+          const p = new THREE.Vector3(...c).project(N.camera);
+          const u = (p.x * 0.5 + 0.5) * W, v = (p.y * 0.5 + 0.5) * H;   // readPixels は下から
+          u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+        }
+        u0 = Math.max(0, Math.floor(u0 + 2)); u1 = Math.min(W, Math.ceil(u1 - 2)); v0 = Math.max(0, Math.floor(v0 + 2)); v1 = Math.min(H, Math.ceil(v1 - 2));
+        let changed = 0, n = 0, sum = 0;
+        for (let v = v0; v < v1; v++) for (let u = u0; u < u1; u++) {
+          const k = (v * W + u) * 4;
+          const d = Math.abs(buf[k] - buf2[k]) + Math.abs(buf[k + 1] - buf2[k + 1]) + Math.abs(buf[k + 2] - buf2[k + 2]);
+          n++; sum += d; if (d > 3) changed++;
+        }
+        const changedPct = n ? +(100 * changed / n).toFixed(1) : 0;
+        const seeOk = n > 50 && changedPct > 5;
+        // エ) 1080p の1フレーム
+        N.setRenderSize(1920, 1080);
+        frameMs(8);
+        const ms = frameMs(30);
+        N.setRenderSize(0);
+        const msOk = L !== 4 || ms <= 16.7;
+        const ok = glassOk && holeOk && shown && seeOk && msOk;
+        if (!ok) pass = false;
+        res[`${L}F_${w.facing}_${x.toFixed(1)},${z.toFixed(1)}`] = { pass: ok, glass: gm ? `${gm.name} op ${+gm.opacity.toFixed(2)}` : null, behind, shown, windowPx: n, changedPct, meanDiff: n ? +(sum / n).toFixed(2) : 0, frameMs: ms };
+      }
+    }
+    return { pass, windows: res, rule: 'ア glass op<0.3・奥 0.4m に壁なし / イ shown / ウ 窓の領域の 5% 超が変わる / エ 4F ≤ 16.7ms' };
   });
 
   await N.teleport(4, 6.9, 7.6, Math.PI);

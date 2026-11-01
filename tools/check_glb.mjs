@@ -304,6 +304,48 @@ function checkFloor(N) {
   R.invisibleWallProbes = holes;
   if (holes && glassOk.length) fail(`F${N}: 当たりはあるのに壁の面が無い ${holes}/${probes} 例=${JSON.stringify(glassOk)}`);
 
+  // 10) P3c-2: 廊下端の窓 = 外壁の開口＋透明ガラス。窓の中心(横桟の上下)を壁・外の塊・屋上A の外壁の面が塞いでいない、ガラスの面(corrglass)と外の枠(corrwinout)がある、旧い発光板(M_Window・MX_WinOut)が無い
+  {
+    const FACE = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
+    const matName = (k) => ((g.gltf.materials || [])[k] || {}).name || '';
+    const nodesOf = (pred) => g.gltf.nodes.map((n, i) => [n, i]).filter(([n]) => n.mesh !== undefined && pred(n.extras || {}, n));
+    const blockers = nodesOf((e) => ['wall', 'massing', 'facade'].includes(e.n2_kind)).flatMap(([, i]) => nodeTris(g, world, i));
+    const glassT = nodesOf((e) => e.n2_kind === 'corrglass').flatMap(([, i]) => nodeTris(g, world, i));
+    const outT = nodesOf((e) => e.n2_kind === 'corrwinout').flatMap(([, i]) => nodeTris(g, world, i));
+    const inTri = (p, t, ai) => {   // (a, y) の 2D で点が三角形の中か
+      const P = t.map((v) => [v[ai], v[1]]);
+      const sgn = (a, b, c) => (a[0] - c[0]) * (b[1] - c[1]) - (b[0] - c[0]) * (a[1] - c[1]);
+      const d1 = sgn(p, P[0], P[1]), d2 = sgn(p, P[1], P[2]), d3 = sgn(p, P[2], P[0]);
+      return !((d1 < -1e-9 || d2 < -1e-9 || d3 < -1e-9) && (d1 > 1e-9 || d2 > 1e-9 || d3 > 1e-9));
+    };
+    const old = (g.gltf.materials || []).filter((m) => m.name === 'M_Window' || m.name === 'MX_WinOut').map((m) => m.name);
+    if (old.length) fail(`F${N}: 廊下端の窓の旧い発光板の材質が残っている ${old}`);
+    const winRes = [];
+    for (const w of floor.shell.windows) {
+      const [x, z] = w.pos, nin = FACE[w.facing];
+      const horiz = nin[1] !== 0, ai = horiz ? 0 : 2, pi = horiz ? 2 : 0;
+      const c = horiz ? x : z, pl = horiz ? z : x;
+      const y0 = base + w.sill, y1 = y0 + w.h;
+      let blocked = 0;
+      for (const yy of [y0 + w.h * 0.27, y0 + w.h * 0.75]) {
+        for (const t of blockers) {
+          const nr = triNormal(t.v);
+          if (Math.abs(nr[pi]) < 0.99) continue;
+          if (Math.abs(t.v[0][pi] - pl) > 0.16) continue;
+          if (inTri([c, yy], t.v, ai)) blocked++;
+        }
+      }
+      const near = (ts) => ts.filter((t) => { const cx = (t.v[0][ai] + t.v[1][ai] + t.v[2][ai]) / 3, cy = (t.v[0][1] + t.v[1][1] + t.v[2][1]) / 3, cp = (t.v[0][pi] + t.v[1][pi] + t.v[2][pi]) / 3;
+        return Math.abs(cx - c) < w.w / 2 + 0.12 && cy > y0 - 0.1 && cy < y1 + 0.1 && Math.abs(cp - pl) < 0.2; }).length;
+      const gl = near(glassT), ot = near(outT);
+      if (blocked) fail(`F${N}: 廊下端の窓 ${w.facing}@${x},${z} の開口が壁の面で塞がっている(${blocked})`);
+      if (gl < 2) fail(`F${N}: 廊下端の窓 ${w.facing}@${x},${z} にガラスの面が無い`);
+      if (ot < 12) fail(`F${N}: 廊下端の窓 ${w.facing}@${x},${z} に外の枠・水切りが無い`);
+      winRes.push(`${w.facing}@${x.toFixed(1)},${z.toFixed(1)}:${blocked ? 'BLOCKED' : 'open'}/g${gl}/f${ot}`);
+    }
+    R.corrWindows = winRes.join(' ');
+  }
+
   // 4) 外周の閉じ(flood-fill)
   const flood = (fl, key, start) => {
     const cols = collisionBoxes(fl, key).filter((b) => b.kind !== 'stairguard' || true);
@@ -419,7 +461,7 @@ for (let N = 1; N <= 7; N++) {
   if (r) rows.push(r);
 }
 for (const r of rows) {
-  console.log(`F${r.floor}: GLB ${r.glbMB}MB tris ${r.tris} prims ${r.prims} | lightmap ${r.lightmap} + rooms ${r.lightmap2} (${r.rooms} rooms, wall faces ${r.roomWallFaces} max ${r.roomWallMaxCm}cm) | wall faces ${r.wallFaces} max ${r.faceVsBoxMaxCm}cm | edge probes ${r.edgeProbes} (no-face ${r.invisibleWallProbes}) | flood ${r.flood.reached}${r.floodRoofB ? ' RB ' + r.floodRoofB.reached : ''} | unit doors ${r.unitDoors} plates ${r.plates} leafOverflow ${r.doorLeafOverflowCm}cm | ext stair y ${JSON.stringify(r.extStairY)}`);
+  console.log(`F${r.floor}: GLB ${r.glbMB}MB tris ${r.tris} prims ${r.prims} | lightmap ${r.lightmap} + rooms ${r.lightmap2} (${r.rooms} rooms, wall faces ${r.roomWallFaces} max ${r.roomWallMaxCm}cm) | wall faces ${r.wallFaces} max ${r.faceVsBoxMaxCm}cm | edge probes ${r.edgeProbes} (no-face ${r.invisibleWallProbes}) | flood ${r.flood.reached}${r.floodRoofB ? ' RB ' + r.floodRoofB.reached : ''} | unit doors ${r.unitDoors} plates ${r.plates} leafOverflow ${r.doorLeafOverflowCm}cm | ext stair y ${JSON.stringify(r.extStairY)} | corr windows ${r.corrWindows}`);
 }
 
 // ---------------------------------------------------------------- 9) P3c: 外観・外環境(build/exterior.glb ＋ manifest ＋ 木の配置)
@@ -482,8 +524,10 @@ function checkExterior() {
     const skip = new Set();
     for (const r of f.rooms) if (r.kind === 'stair' || r.kind === 'elevator') skip.add(JSON.stringify(r.rect));
     const rects = f.rooms.filter((r) => !skip.has(JSON.stringify(r.rect)) && r.id !== 'ENTRANCE' && r.id !== 'LOBBY').map((r) => r.rect);
+    const depthMats = new Set((g.gltf.materials || []).map((m, k) => (/^XE_Corr(Depth|Lamp)/.test(m.name) ? k : -1)).filter((k) => k >= 0));   // P3c-2: 廊下端の窓の奥の箱(意図して建物の中)
     for (const t of ts) {
       for (const v of t.v) { y0 = Math.min(y0, v[1]); y1 = Math.max(y1, v[1]); }
+      if (depthMats.has(t.mat)) continue;
       const cx = (t.v[0][0] + t.v[1][0] + t.v[2][0]) / 3, cy = (t.v[0][1] + t.v[1][1] + t.v[2][1]) / 3, cz = (t.v[0][2] + t.v[1][2] + t.v[2][2]) / 3;
       if (cy > L * FH - 0.25 || cy < (L - 1) * FH + 0.05) continue;
       if (rects.some(([x, z, w, d]) => cx > x + 0.45 && cx < x + w - 0.45 && cz > z + 0.45 && cz < z + d - 0.45)) bad++;
