@@ -20,7 +20,7 @@ from n2common import parse_args, log  # noqa: E402
 ARGS = parse_args({'size': '2048', 'samples': '1024', 'device': 'GPU',
                    'out': 'build/p0_lightmap.png', 'blend_out': 'build/p0_baked.blend', 'info': 'build/p0_bake_info.json', 'out2': ''})
 # P3b: 部屋の組(n2_lm=2: 入れる部屋の内装・バルコニー・屋上A)は2枚目のライトマップ(--out2)に焼く。n2_lm=0 は焼かない(遮蔽にはなる)
-CLEAR_KINDS = ('glass', 'glassedge', 'decal', 'winsash', 'winout', 'secmon', 'bars')
+CLEAR_KINDS = ('glass', 'glassedge', 'decal', 'winsash', 'winout', 'secmon', 'bars', 'corrglass')   # P3c-2: 廊下端の窓のガラス
 
 
 def lm_group(o):

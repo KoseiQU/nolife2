@@ -509,6 +509,9 @@ def build_materials():
     pbr_material('M_Machine', base=(0.40, 0.41, 0.40), rough=0.6)
     # P3b-A: カゴの操作盤の階数表示(8列×3段のアトラス。実行時にカゴの現在地のマスへずらす)
     pbr_material('M_EVCarDisplay', rough=0.05, emit_tex=load_img(tex('ev_car_display.png'), False), emit_strength=2.5)
+    # P3c-2: 廊下端の窓(外が見えるガラス)。枠の外側・見込み = アルミ(ライトマップなし・実行時の月明かり)、ガラス = 1枚の面(実行時は両面の半透明＋映り込み＋汚れの粗さ)
+    pbr_material('MX_CorrAlu', base=(0.40, 0.41, 0.40), rough=0.42, metal=0.0)
+    pbr_material('MX_CorrGlass', base=(0.55, 0.62, 0.66), rough=0.05, alpha=0.14, files={'roughness': tex('glass_smudge.jpg')})
     build_rooms.build_materials(sys.modules[__name__])   # P3b: MR_*(部屋の組のライトマップ)・MX_*(ライトマップなし)
     # p0b の材質の実行時テクスチャ(n2tex.save_png を差し替え済みなので画像は build/tex を指す)
     for n in ('M_WireGlass', 'M_WireGlassOut', 'M_EVDisplay', 'M_EVPlate', 'M_CarStone', 'M_ExitSignSq'):
@@ -998,39 +1001,136 @@ def build_bracket(name, x, z, y, facing, col, energy=9.0, light_only=False):
     return [x + nx * 0.06, y, z + nz * 0.06]
 
 
-def build_window(w, i, col):
+# ---------------------------------------------------------------------------
+# 廊下端の窓(P3c-2: 外が見えるガラス。DESIGN §2.3)
+#  外壁に本当の開口を抜く: 壁の室内の面(build の壁の面)と外の塊(build_rooms.build_massing)の両方に shell.windows の寸法の穴。
+#  室内側 = ステンレスの額縁(見込み 5cm・ライトマップあり)、壁の厚みの中 = アルミの枠の見込み、ガラスの面 = 障子の框＋横桟 1 本、
+#  外側 = 枠の見付け・水切り(外側の物は MX_* = ライトマップなし・実行時の月明かり＝外観と同じ見え方。外観の帯にも入る)。
+#  ガラスは 1 枚の面(MX_CorrGlass、両面・ベイクせず光も遮らない)。開口の外に弱い青白い面光源(夜空・月の明かりが差す。ベイクだけ)
+# ---------------------------------------------------------------------------
+CW_CASE_W, CW_CASE_D = 0.04, 0.05     # 額縁の見付け・室内への出
+CW_SASH = 0.03                        # 障子の框の見付け
+CW_TRIM_W, CW_TRIM_E = 0.035, 0.02    # 外の枠の見付け・外への出
+CW_SILL_E = 0.06                      # 水切りの外への出
+
+
+def corr_window_geom(w, floor=None, base_y=None):
+    """shell.windows の1つ → 開口の幾何。inner = 壁の室内の面、outer = 外壁(外の塊・屋上A の外壁)の面。
+    s = 室内への向きの符号(沿う軸と直交する座標で)。d = inner から室内へ測った距離(外は負)。"""
+    floor = floor or FLOOR
+    base_y = BASE_Y if base_y is None else base_y
     x, z = w['pos']
-    nx, nz = FACING_OUT[w['facing']]   # 室内側への法線
-    y0 = BASE_Y + w['sill']; y1 = y0 + w['h']
+    nx, nz = FACING_OUT[w['facing']]          # 室内側への法線
+    horiz = nz != 0                           # 壁が z 一定の面(x に沿う)
+    c, pl = (x, z) if horiz else (z, x)
+    s = nz if horiz else nx
     hw = w['w'] / 2
+    inner = pl
+    for b in floor_wall_boxes(floor):
+        if b['kind'] not in ('wall', 'solid'):
+            continue
+        bx0, bz0, bx1, bz1 = box_minmax(b)
+        la0, la1, p0, p1 = (bx0, bx1, bz0, bz1) if horiz else (bz0, bz1, bx0, bx1)
+        if la1 < c - hw + 0.01 or la0 > c + hw - 0.01 or not (p0 - 0.01 <= pl <= p1 + 0.01):
+            continue
+        inner = max(inner, p1) if s > 0 else min(inner, p0)
+    fill = any((abs(az - bz) < 1e-6 and horiz and abs(az - pl) < 0.01 and min(ax, bx) - 0.01 <= c <= max(ax, bx) + 0.01) or
+               (abs(ax - bx) < 1e-6 and not horiz and abs(ax - pl) < 0.01 and min(az, bz) - 0.01 <= c <= max(az, bz) + 0.01)
+               for (ax, az, bx, bz) in floor.get('fillWalls', []))
+    outer = pl - s * (WALL_T / 2 if fill else 0.03)   # 屋上A に面する 4F の北(フィラー壁の外の面)／外周(外の塊は外周の線の 3cm 外)
+    y0 = base_y + w['sill']
+    return dict(horiz=horiz, s=s, c=c, a0=c - hw, a1=c + hw, y0=y0, y1=y0 + w['h'], inner=inner, outer=outer,
+                D=abs(inner - outer), pl=pl, nin=(nx, nz))
+
+
+def _cw_pt(g, a, y, d):
+    q = g['inner'] + g['s'] * d
+    return (a, y, q) if g['horiz'] else (q, y, a)
+
+
+def _cw_box(mb, g, a0, a1, y0, y1, d0, d1, mat, skip=()):
+    """沿う軸 a・高さ y・室内への距離 d で指定する箱。skip = 張らない面('in'=室内向き, 'out'=外向き, 'a-','a+','y-','y+')。"""
+    p0, p1 = _cw_pt(g, a0, y0, d0), _cw_pt(g, a1, y1, d1)
+    mn = tuple(min(p0[k], p1[k]) for k in range(3)); mx = tuple(max(p0[k], p1[k]) for k in range(3))
+    ax_ = 'x' if g['horiz'] else 'z'
+    nk = 'z' if g['horiz'] else 'x'
+    sin = ('+' if g['s'] > 0 else '-') + nk
+    sout = ('-' if g['s'] > 0 else '+') + nk
+    names = {'in': sin, 'out': sout, 'a-': '-' + ax_, 'a+': '+' + ax_, 'y-': '-y', 'y+': '+y'}
+    kill = {names[k] for k in skip}
+    mb.box(mn, mx, mat, keep=lambda k, c_, n_: k not in kill)
+
+
+def _cw_quad(mb, g, pts_adw, n_adw, mat):
+    """(a, y, d) の点列と法線(沿う軸 a・y・室内 d の成分)で面を張る。"""
+    pts = [_cw_pt(g, a, y, d) for (a, y, d) in pts_adw]
+    na, ny, nd = n_adw
+    n = (na, ny, nd * g['s']) if g['horiz'] else (nd * g['s'], ny, na)
+    return orient(mb.quad(pts, n, mat), n)
+
+
+def build_window(w, i, col):
+    g = corr_window_geom(w)
+    A0, A1, Y0, Y1, D = g['a0'], g['a1'], g['y0'], g['y1'], g['D']
+    f, cd = CW_CASE_W, CW_CASE_D
+    # 室内側の額縁(ステンレス・ライトマップあり)。壁に付く背面は張らない
     fr = MeshBuilder(f'Window_{i}_frame')
-    gl = MeshBuilder(f'Window_{i}_glass')
-    f, t = 0.035, 0.03
-    if nz != 0:
-        zz = z + nz * 0.06    # 壁の室内側の面(walls の箱の半分の厚み)
-        za, zb = sorted((zz, zz + nz * t))
-        fr.box((x - hw - f, y0 - f, za), (x - hw, y1 + f, zb), 'M_Stainless')
-        fr.box((x + hw, y0 - f, za), (x + hw + f, y1 + f, zb), 'M_Stainless')
-        fr.box((x - hw, y1, za), (x + hw, y1 + f, zb), 'M_Stainless')
-        fr.box((x - hw, y0 - f, min(za, za + nz * 0.03)), (x + hw, y0, max(zb, zb + nz * 0.03)), 'M_Stainless')
-        fr.box((x - hw, (y0 + y1) / 2 - 0.012, za), (x + hw, (y0 + y1) / 2 + 0.012, zb), 'M_Stainless')
-        g = zz + nz * 0.005
-        q = gl.quad([(x - hw, y0, g), (x + hw, y0, g), (x + hw, y1, g), (x - hw, y1, g)], (0, 0, nz), 'M_Window')
-        orient(q, (0, 0, nz))
-    else:
-        xx = x + nx * 0.06
-        xa, xb = sorted((xx, xx + nx * t))
-        fr.box((xa, y0 - f, z - hw - f), (xb, y1 + f, z - hw), 'M_Stainless')
-        fr.box((xa, y0 - f, z + hw), (xb, y1 + f, z + hw + f), 'M_Stainless')
-        fr.box((xa, y1, z - hw), (xb, y1 + f, z + hw), 'M_Stainless')
-        fr.box((min(xa, xa + nx * 0.03), y0 - f, z - hw), (max(xb, xb + nx * 0.03), y0, z + hw), 'M_Stainless')
-        fr.box((xa, (y0 + y1) / 2 - 0.012, z - hw), (xb, (y0 + y1) / 2 + 0.012, z + hw), 'M_Stainless')
-        g = xx + nx * 0.005
-        q = gl.quad([(g, y0, z - hw), (g, y0, z + hw), (g, y1, z + hw), (g, y1, z - hw)], (nx, 0, 0), 'M_Window')
-        orient(q, (nx, 0, 0))
+    _cw_box(fr, g, A0 - f, A0, Y0 - f, Y1 + f, 0, cd, 'M_Stainless', skip=('out',))
+    _cw_box(fr, g, A1, A1 + f, Y0 - f, Y1 + f, 0, cd, 'M_Stainless', skip=('out',))
+    _cw_box(fr, g, A0, A1, Y1, Y1 + f, 0, cd, 'M_Stainless', skip=('out', 'a-', 'a+'))
+    _cw_box(fr, g, A0 - f - 0.02, A1 + f + 0.02, Y0 - f, Y0, 0, cd + 0.02, 'M_Stainless', skip=('out',))   # 下枠(額縁の膳板)
     fr.finish(col, {'n2_kind': 'window'})
-    gl.finish(col, {'n2_kind': 'windowglass'})
-    return [x + nx * 0.2, y0 + w['h'] / 2, z + nz * 0.2]
+    # 壁の厚みの中(アルミの枠の見込み)・障子の框と横桟・外の枠・水切り(MX_CorrAlu: ライトマップなし。外観の帯にも入る)
+    ot = MeshBuilder(f'Window_{i}_out')
+    dg = -min(0.015, D / 2)                  # ガラスの面
+    _cw_quad(ot, g, [(A0, Y0, 0), (A0, Y0, -D), (A0, Y1, -D), (A0, Y1, 0)], (1, 0, 0), 'MX_CorrAlu')
+    _cw_quad(ot, g, [(A1, Y0, 0), (A1, Y0, -D), (A1, Y1, -D), (A1, Y1, 0)], (-1, 0, 0), 'MX_CorrAlu')
+    _cw_quad(ot, g, [(A0, Y1, 0), (A1, Y1, 0), (A1, Y1, -D), (A0, Y1, -D)], (0, -1, 0), 'MX_CorrAlu')
+    _cw_quad(ot, g, [(A0, Y0, 0), (A1, Y0, 0), (A1, Y0, -D), (A0, Y0, -D)], (0, 1, 0), 'MX_CorrAlu')
+    sw, st = CW_SASH, 0.0175
+    _cw_box(ot, g, A0, A0 + sw, Y0, Y1, dg - st, dg + st, 'MX_CorrAlu', skip=('a-', 'y-', 'y+'))
+    _cw_box(ot, g, A1 - sw, A1, Y0, Y1, dg - st, dg + st, 'MX_CorrAlu', skip=('a+', 'y-', 'y+'))
+    _cw_box(ot, g, A0 + sw, A1 - sw, Y1 - sw, Y1, dg - st, dg + st, 'MX_CorrAlu', skip=('a-', 'a+', 'y+'))
+    _cw_box(ot, g, A0 + sw, A1 - sw, Y0, Y0 + sw + 0.012, dg - st, dg + st, 'MX_CorrAlu', skip=('a-', 'a+', 'y-'))
+    ym = (Y0 + Y1) / 2
+    _cw_box(ot, g, A0 + sw, A1 - sw, ym - 0.014, ym + 0.014, dg - st, dg + st, 'MX_CorrAlu', skip=('a-', 'a+'))   # 横桟
+    e, tw = CW_TRIM_E, CW_TRIM_W
+    _cw_box(ot, g, A0 - tw, A0, Y0, Y1 + tw, -D - e, -D, 'MX_CorrAlu', skip=('in',))
+    _cw_box(ot, g, A1, A1 + tw, Y0, Y1 + tw, -D - e, -D, 'MX_CorrAlu', skip=('in',))
+    _cw_box(ot, g, A0, A1, Y1, Y1 + tw, -D - e, -D, 'MX_CorrAlu', skip=('in', 'a-', 'a+'))
+    # 水切り(下枠の外。少し外へ出して下に垂れの小口)
+    _cw_box(ot, g, A0 - tw - 0.02, A1 + tw + 0.02, Y0 - 0.022, Y0, -D - CW_SILL_E, -D, 'MX_CorrAlu', skip=('in',))
+    _cw_box(ot, g, A0 - tw - 0.02, A1 + tw + 0.02, Y0 - 0.04, Y0 - 0.022, -D - CW_SILL_E, -D - CW_SILL_E + 0.008, 'MX_CorrAlu', skip=('in', 'y+'))
+    ot.finish(col, {'n2_kind': 'corrwinout', 'n2_lm': 0})
+    # ガラス(1枚・両面は実行時の材質)。ベイク対象外(bake.CLEAR_KINDS)
+    gl = MeshBuilder(f'Window_{i}_glass')
+    _cw_quad(gl, g, [(A0 + sw, Y0 + sw, dg), (A1 - sw, Y0 + sw, dg), (A1 - sw, Y1 - sw, dg), (A0 + sw, Y1 - sw, dg)], (0, 0, 1), 'MX_CorrGlass')
+    gl.finish(col, {'n2_kind': 'corrglass', 'n2_lm': 0})
+    # 開口から差す夜空・月の明かり(ベイクだけ。開口の外に室内向きの弱い青白い面光源)
+    nx, nz = g['nin']
+    ld = bpy.data.lights.new(f'WinSky_{i}', 'AREA')
+    ld.shape = 'RECTANGLE'; ld.size = A1 - A0; ld.size_y = Y1 - Y0
+    ld.energy = float(ARGS.get('win_sky', 0.8)); ld.color = (0.62, 0.72, 1.0)
+    lo = bpy.data.objects.new(f'WinSky_{i}', ld)
+    lo.location = g2b(*_cw_pt(g, (A0 + A1) / 2, (Y0 + Y1) / 2, -D - 0.05))
+    lo.rotation_mode = 'QUATERNION'
+    dir_b = Vector((nx, -nz, 0.0))
+    lo.rotation_quaternion = dir_b.to_track_quat('-Z', 'Y')
+    col.objects.link(lo)
+    return [w['pos'][0] + nx * 0.2, Y0 + w['h'] / 2, w['pos'][1] + nz * 0.2]
+
+
+def window_holes_on_face(windows, axis, plane, nsgn):
+    """壁の面(axis='x' なら x=plane の面、法線の符号 nsgn)に開ける窓の穴 [(a0, a1, y0, y1)]。
+    面が開口の室内の面〜外の面の間にある時だけ(重なった壁の箱の奥の面にも開ける)。"""
+    out = []
+    for g in windows:
+        if (axis == 'z') != g['horiz']:
+            continue
+        lo, hi = min(g['inner'], g['outer']) - 0.005, max(g['inner'], g['outer']) + 0.005
+        if lo <= plane <= hi:
+            out.append((g['a0'], g['a1'], g['y0'], g['y1']))
+    return out
 
 
 def build_exit_sign(i, x, z, nrm, col, above=2.06):
@@ -1536,6 +1636,7 @@ def build():
         sx, sy, sz = c[0] + n[0] * 0.03, c[1], c[2] + n[2] * 0.03
         return zone_at(sx, sz, sy, sets=('floor',))
 
+    win_geoms = [corr_window_geom(w_) for w_ in SHELL['windows']]   # P3c-2: 廊下端の窓の開口
     wall_rows = []
     for i, w in enumerate(walls):
         (x0, z0), (x1, z1) = w['min'], w['max']
@@ -1589,16 +1690,28 @@ def build():
                     merged[-1] = (merged[-1][0], r[1], r[2], r[3])
                 else:
                     merged.append(r)
+            holes = window_holes_on_face(win_geoms, key[1], fx_ if key[1] == 'x' else fz_, 1 if key[0] == '+' else -1)   # P3c-2
             for a, b, mat, h in merged:
                 if mat is None:
                     continue
                 if mat == 'door':
                     mat, h = 'M_Wall', DOOR_H + HEAD_H
-                if key[1] == 'x':
-                    pts = [(fx_, y0, b), (fx_, y0, a), (fx_, y0 + h, a), (fx_, y0 + h, b)] if key[0] == '+' else [(fx_, y0, a), (fx_, y0, b), (fx_, y0 + h, b), (fx_, y0 + h, a)]
-                else:
-                    pts = [(a, y0, fz_), (b, y0, fz_), (b, y0 + h, fz_), (a, y0 + h, fz_)] if key[0] == '+' else [(b, y0, fz_), (a, y0, fz_), (a, y0 + h, fz_), (b, y0 + h, fz_)]
-                orient(mb.quad(pts, n, mat), n)
+                # P3c-2: 廊下端の窓の開口を抜く(穴の左右・下・上の面に分ける)
+                pieces = [(a, b, y0, y0 + h)]
+                for (ha, hb, hy0, hy1) in holes:
+                    nxt = []
+                    for (pa, pb, py0, py1) in pieces:
+                        if hb <= pa or ha >= pb or hy1 <= py0 or hy0 >= py1:
+                            nxt.append((pa, pb, py0, py1)); continue
+                        ia, ib = max(pa, ha), min(pb, hb)
+                        nxt += [(pa, ia, py0, py1), (ib, pb, py0, py1), (ia, ib, py0, max(py0, hy0)), (ia, ib, min(py1, hy1), py1)]
+                    pieces = [q for q in nxt if q[1] - q[0] > 1e-4 and q[3] - q[2] > 1e-4]
+                for (pa, pb, ya, yb) in pieces:
+                    if key[1] == 'x':
+                        pts = [(fx_, ya, pb), (fx_, ya, pa), (fx_, yb, pa), (fx_, yb, pb)] if key[0] == '+' else [(fx_, ya, pa), (fx_, ya, pb), (fx_, yb, pb), (fx_, yb, pa)]
+                    else:
+                        pts = [(pa, ya, fz_), (pb, ya, fz_), (pb, yb, fz_), (pa, yb, fz_)] if key[0] == '+' else [(pb, ya, fz_), (pa, ya, fz_), (pa, yb, fz_), (pb, yb, fz_)]
+                    orient(mb.quad(pts, n, mat), n)
                 n_faces += 1
                 # 幅木(屋内の長い面)
                 if mat in ('M_Wall', 'M_StoneWall', 'M_DarkWall', 'M_PaintWall') and (b - a) > 0.2 and w['kind'] != 'solid':
@@ -1706,7 +1819,7 @@ def build():
     return col
 
 
-NO_LIGHTMAP_KINDS = {'glass', 'glassedge', 'decal'}   # P3a-2: 透明ガラスはベイクしない(ライトマップの UV は 0 に潰す)
+NO_LIGHTMAP_KINDS = {'glass', 'glassedge', 'decal', 'corrglass'}   # P3a-2: 透明ガラスはベイクしない(ライトマップの UV は 0 に潰す)
 
 
 def lm_group(o):

@@ -1043,14 +1043,7 @@ def build_roof_a(col):
         holes.append((win['pos'][0] - win['w'] / 2, win['pos'][0] + win['w'] / 2, y + win['sill'], y + win['sill'] + win['h']))
     wall_with_holes(fa, 'z', zf, 0.0, 13.8, y, yt, (0, 0, -1), holes, 'MR_Facade')
     out = []
-    if win:
-        wo = B('RoofA_winout')
-        x0, x1 = win['pos'][0] - win['w'] / 2, win['pos'][0] + win['w'] / 2
-        wo.quad([(x1, y + win['sill'], zf - 0.03), (x0, y + win['sill'], zf - 0.03), (x0, y + win['sill'] + win['h'], zf - 0.03), (x1, y + win['sill'] + win['h'], zf - 0.03)], (0, 0, -1), 'MX_WinOut')
-        for (a, b_, ya, yb) in ((x0 - 0.04, x0, win['sill'] - 0.04, win['sill'] + win['h'] + 0.04), (x1, x1 + 0.04, win['sill'] - 0.04, win['sill'] + win['h'] + 0.04),
-                                (x0, x1, win['sill'] + win['h'], win['sill'] + win['h'] + 0.04), (x0, x1, win['sill'] - 0.06, win['sill'])):
-            wo.box((a, y + ya, zf - 0.06), (b_, y + yb, zf), 'MR_Alu')
-        wo.finish(col, dict(ROOMS_PROPS, n2_kind='winout', n2_lm=0))
+    # P3c-2: 窓そのもの(枠・ガラス・水切り)は build_floor.build_window が開口に作る(旧: 外側に貼った発光板 MX_WinOut は廃止)
     # 4F の屋根(401/410 の上 = 5F の床レベル)のパラペット(屋上A から見上げる縁)
     fa.box((-0.12, yt - 0.2, 5.8 - 0.12), (13.92, yt + 0.85, 5.8), 'MR_Concrete', keep=lambda k, c, n: k in ('-z', '+y'))
     fa.box((-0.13, yt + 0.85, 5.8 - 0.13), (13.93, yt + 0.88, 5.8 + 0.01), 'MR_Rail', keep=lambda k, c, n: k in ('-z', '+y'))
@@ -1141,8 +1134,19 @@ def build_massing(col):
                 if ent and abs(plane - (ent['rect'][1] + ent['rect'][3])) < 0.01:
                     segs = _cut(segs, ent['rect'][0], ent['rect'][0] + ent['rect'][2])
             p = plane + (ox if axis == 'x' else oz) * 0.03
+            if L == N:
+                # P3c-2: 廊下端の窓の開口(壁の室内の面と同じ穴)。他の階の塊(外観が読めるまでの仮)は塞いだまま
+                wins = [C.corr_window_geom(w) for w in C.SHELL['windows']]
+                wins = [g for g in wins if g['horiz'] == (axis == 'z') and abs(g['pl'] - plane) < 0.02
+                        and (g['nin'][0] == -ox and g['nin'][1] == -oz)]
+            else:
+                wins = []
             for (a, b) in segs:
                 if b - a < 0.05:
+                    continue
+                hs = [(g['a0'], g['a1'], g['y0'], g['y1']) for g in wins if g['a0'] < b and g['a1'] > a]
+                if hs:
+                    wall_with_holes(mb, axis, p, a, b, yb, yt, (ox, 0, oz), hs, 'MX_Mass')
                     continue
                 if axis == 'x':
                     pts = [(p, yb, b), (p, yb, a), (p, yt, a), (p, yt, b)] if ox > 0 else [(p, yb, a), (p, yb, b), (p, yt, b), (p, yt, a)]

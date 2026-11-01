@@ -8,7 +8,8 @@
 #                 自分の階の外壁の塊)を取り出して1つにまとめたもの(P3a/P3b の見た目そのまま。ライトマップの UV は捨てる)。
 #                 実行時は「その階の GLB が scene に出ていない時だけ」見せる(出ている時は本物の階が同じ物を描く)。
 #                 入れる部屋の窓の奥には、内装の代わりにカーテン(UNIT_VARIANTS の色)か闇の面を足す。1F は風除室の奥の灯り。
-#   ExtAlways     常に見せる外観: EV の南面の赤橙の縦パネル・カーテン越しに灯りの点いた窓(施錠の空室の数室)・廊下の端の窓の灯り・
+#                 P3c-2: 廊下端の窓(階の GLB の開口・ガラス・外の枠)の奥には、廊下の箱(corr_depth)を足す。
+#   ExtAlways     常に見せる外観: EV の南面の赤橙の縦パネル・カーテン越しに灯りの点いた窓(施錠の空室の数室)・
 #                 2F の張り出しの下の天井と柱(どの階の GLB も描かない所)
 #   Site          1F 東側の外構(図面 floorplan_1F): 駐車場(白線・車止め・車)・駐輪場・ゴミ置場・バイク置場・アプローチの舗装・植え込み・
 #                 照明柱・柵/擁壁/生垣・閉じた門・下りていく車路。当たりは building.json の site(階キー 'G')が同じ数値
@@ -79,7 +80,10 @@ def materials():
     pm('XE_Lamp', base=(0.9, 0.85, 0.75), rough=0.3, emit=(1.0, 0.8, 0.55), emit_strength=6.0)
     pm('XE_RedPanel', base=(0.50, 0.105, 0.042), rough=0.62)
     pm('XE_WinGlow', base=(0.0, 0.0, 0.0), rough=1.0, emit_tex=C.load_img(tex('room_palette.png'), False), emit_strength=1.0)
-    pm('XE_CorrGlow', base=(0.02, 0.02, 0.02), rough=0.3, emit=(1.0, 0.84, 0.62), emit_strength=1.0)
+    # P3c-2: 廊下端の窓の奥(階の GLB が出ていない時。開口の奥の廊下の箱)。値は実行時 LOOK.ext.corrDepth / corrDepthLit
+    pm('XE_CorrDepth', base=(0.0, 0.0, 0.0), rough=1.0, emit=(0.74, 0.84, 1.0), emit_strength=0.02)
+    pm('XE_CorrDepthLit', base=(0.0, 0.0, 0.0), rough=1.0, emit=(0.74, 0.84, 1.0), emit_strength=0.05)
+    pm('XE_CorrLamp', base=(0.9, 0.92, 0.95), rough=0.4, emit=(0.74, 0.84, 1.0), emit_strength=6.0)   # 常夜灯のカバー(M_LampCover と同じ)
     pm('XE_LobbyGlow', base=(0.02, 0.02, 0.02), rough=0.3, emit=(1.0, 0.9, 0.76), emit_strength=1.0)
     pm('XE_Soffit', files=tf('concrete', rough=False), size=2.0, rough=0.9); MT['XE_Soffit']['tint'] = [0.9, 0.9, 0.88]
     pm('XE_Bark', base=(0.09, 0.075, 0.062), rough=0.95)
@@ -148,7 +152,7 @@ def H(x, z):
 # ---------------------------------------------------------------- 階の GLB から外観の帯を取り出す
 WHOLE = {'balac', 'bars', 'balcony', 'partition', 'balrail', 'facade', 'winframe', 'winsash', 'wincurtain', 'winout',
          'stair_steel', 'roof', 'roofbox', 'roofA', 'parapet', 'porch', 'ground', 'autodoor', 'autoframe', 'glassframe',
-         'glass', 'glassedge', 'decal'}
+         'glass', 'glassedge', 'decal', 'corrglass', 'corrwinout'}   # P3c-2: 廊下端の窓のガラス・外の枠・見込み・水切り
 FILTERED = {'stair_deck', 'rail', 'lampcover', 'bracket', 'wall', 'lintel', 'massing', 'floor'}
 
 
@@ -298,6 +302,28 @@ def enterable_backing(L, col):
     return b.mb.finish(col, {})
 
 
+def corr_depth(L, col):
+    """P3c-2: 廊下端の窓の奥(その階の GLB が出ていない時=帯だけの時)。開口の奥 1.8m に廊下の箱(左右の壁・床・天井・突き当たり)を
+    暗い常夜灯の色で置く。外から見ると開口の奥に奥行きのある廊下が見える(壁に貼った光る板に見えない)。"""
+    mb = C.MeshBuilder(f'CorrDepth_{L}')
+    y0 = (L - 1) * FH
+    DEP, HW = 1.8, 0.9
+    for w in FLOORS[L]['shell']['windows']:
+        g = C.corr_window_geom(w, FLOORS[L], y0)
+        c = g['c']
+        a0, a1, yb, yt = c - HW, c + HW, y0, y0 + C.CEIL_H
+        q = lambda pts, n, mat: C._cw_quad(mb, g, pts, n, mat)
+        q([(a0, yb, 0), (a0, yb, DEP), (a0, yt, DEP), (a0, yt, 0)], (1, 0, 0), 'XE_CorrDepth')      # 左右の壁(内向き)
+        q([(a1, yb, 0), (a1, yb, DEP), (a1, yt, DEP), (a1, yt, 0)], (-1, 0, 0), 'XE_CorrDepth')
+        q([(a0, yb, 0), (a1, yb, 0), (a1, yb, DEP), (a0, yb, DEP)], (0, 1, 0), 'XE_CorrDepth')      # 床
+        q([(a0, yt, 0), (a1, yt, 0), (a1, yt, DEP), (a0, yt, DEP)], (0, -1, 0), 'XE_CorrDepthLit')  # 天井(常夜灯に照らされる)
+        q([(a0, yb, DEP), (a1, yb, DEP), (a1, yt, DEP), (a0, yt, DEP)], (0, 0, -1), 'XE_CorrDepth')     # 突き当たり(廊下の先の暗がり)
+        # 天井の常夜灯(角形の乳白カバー。本物の廊下を外から見た時と同じく、開口越しに灯具が光って見える)
+        s_, dl = 0.115, 1.6
+        q([(c - s_, yt - 0.003, dl - s_), (c + s_, yt - 0.003, dl - s_), (c + s_, yt - 0.003, dl + s_), (c - s_, yt - 0.003, dl + s_)], (0, -1, 0), 'XE_CorrLamp')
+    return mb.finish(col, {})
+
+
 def lobby_glow(col):
     """1F が scene に無い時の風除室の奥(内側のガラスの線)の灯り。外側のガラス越しに明るく見える。"""
     ent = next(r for r in FLOORS[1]['rooms'] if r['id'] == 'ENTRANCE')
@@ -364,27 +390,7 @@ def build_always(col):
         C.set_uv(f, b.mb, BR.uv_rect(BR.PALUV[key]))
         cx = sum(p[0] for p in pts) / 4; cz = sum(p[2] for p in pts) / 4
         LIT.append(dict(room=r['id'], level=L, curtain=key, pos=[round(cx + fx * 0.3, 3), round(y0 + 1.1, 3), round(cz + fz * 0.3, 3)], facing=win['facing']))
-    # 廊下の端の窓(P3a の窓の外側に、常夜灯の点いた廊下の弱い灯り)
-    for L, f in FLOORS.items():
-        y0 = (L - 1) * FH
-        for wdef in f['shell']['windows']:
-            x, z = wdef['pos']
-            nx, nz = C.FACING_OUT[wdef['facing']]            # 室内側への法線
-            ox, oz = -nx, -nz
-            ya, yb = y0 + wdef['sill'], y0 + wdef['sill'] + wdef['h']
-            hw = wdef['w'] / 2
-            if oz != 0:
-                zz = z + oz * 0.045
-                pts = [(x - hw, ya, zz), (x + hw, ya, zz), (x + hw, yb, zz), (x - hw, yb, zz)]
-            else:
-                xx = x + ox * 0.045
-                pts = [(xx, ya, z - hw), (xx, ya, z + hw), (xx, yb, z + hw), (xx, yb, z - hw)]
-            C.orient(mb.quad(pts, (ox, 0, oz), 'XE_CorrGlow'), (ox, 0, oz))
-            # 枠
-            if oz != 0:
-                mb.box((x - hw - 0.04, ya - 0.04, zz - 0.01), (x + hw + 0.04, ya, zz + oz * 0.06), 'M_Stainless')
-            else:
-                mb.box((min(xx, xx + ox * 0.06), ya - 0.04, z - hw - 0.04), (max(xx, xx + ox * 0.06), ya, z + hw + 0.04), 'M_Stainless')
+    # (P3c-2: 旧「廊下の端の窓の灯り」の発光板は廃止。窓は階の GLB の開口とガラス、奥は帯の corr_depth)
     # 2F の張り出しの下(管理室の東。1F の外): 天井(2F の床スラブの下面)・スラブの小口・柱
     xa, xb = 22.0 + T, 25.2
     za, zb = 22.1 + T, 28.1
@@ -1013,6 +1019,7 @@ def main():
     for L in range(1, 8):
         parts = extract_band(L, tmp)
         parts.append(enterable_backing(L, tmp))
+        parts.append(corr_depth(L, tmp))
         if L == 1:
             parts.append(lobby_glow(tmp))
         j = join(parts, f'ExtBand_{L}', {'n2_kind': 'extband', 'n2_band': L})
