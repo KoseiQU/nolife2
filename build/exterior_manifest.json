@@ -56,6 +56,10 @@
    "normalMap": "build/tex/concrete_normal.jpg",
    "normalScale": 1.0
   },
+  "MX_CorrGlass": {
+   "roughnessMap": "build/tex/glass_smudge.jpg",
+   "opacity": 0.14
+  },
   "MR_Pal": {
    "map": "build/tex/room_palette.png"
   },
@@ -192,37 +196,37 @@
   "1": {
    "y0": 0.0,
    "y1": 2.9,
-   "tris": 5760
+   "tris": 6176
   },
   "2": {
    "y0": 2.9,
    "y1": 5.8,
-   "tris": 7369
+   "tris": 7577
   },
   "3": {
    "y0": 5.8,
    "y1": 8.7,
-   "tris": 6237
+   "tris": 6445
   },
   "4": {
    "y0": 8.7,
    "y1": 11.6,
-   "tris": 5112
+   "tris": 5264
   },
   "5": {
    "y0": 11.6,
    "y1": 14.5,
-   "tris": 4256
+   "tris": 4464
   },
   "6": {
    "y0": 14.5,
    "y1": 17.4,
-   "tris": 3438
+   "tris": 3646
   },
   "7": {
    "y0": 17.4,
    "y1": 20.3,
-   "tris": 4594
+   "tris": 4698
   }
  },
  "litWindows": [
