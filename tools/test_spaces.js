@@ -1,4 +1,4 @@
-// test_spaces.js — P5b-2a 異世界 2 空間(105 の長い廊下・312 のプール)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=spaces で自動実行。
+// test_spaces.js — P5b-2a/2b 異世界 4 空間(105 の長い廊下・312 のプール・705 の柱の広間・B1 のトンネルと迷路)と第7段の窓の管理人の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=spaces で自動実行。
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。キーは keydown/keyup をペアで送る。結果: window.__N2.testResult。?only=105_1,312_2 で絞れる
 //  105_1) 伸びる: 歩いても前の分岐との距離が縮まない期間がある・振り返ると来た道が壁(背後 7m)・伸び終わると近づける
 //  105_2) 分岐と折り返し: F1 の左は施錠・右で R1 へ、F2 の右は施錠・左を抜けると扉が閉まって最初の地点(R0 の入口)へ戻る(継ぎ目なし: 見た目の座標が同じ)・2 回目は左が施錠で右が開く
@@ -9,6 +9,13 @@
 //  312_2) 潜水: Ctrl 長押しで潜る・離すと浮上・息ゲージは潜っている間だけ出る・切れたら溺れて第3段の開始位置へ
 //  312_3) 伸びる・底の鍵・反転・見ているだけの管理人: 泳ぐほど対岸が遠のく → 底の 105 の鍵で第4段・対岸が元に戻る・浮上すると入口が反対側の壁に・
 //         プールサイドの管理人は見ているだけ(ATTACK/CHASE にならない)・戻りの通路に入ると消える・戻ると 312 の扉の前
+//  705_1) 増える(P5b-2b): 奥へ進むほど柱が増える(見ていない・離れた所にだけ)・机の前では入口の扉が柱の列に隠れる(最初の柱だけなら見えていた)
+//  705_2) 反転: 鍵で灯りが一斉に消え、出口は反対側(南)・管理人はそこから現れる → 西の壁際を回って南の出口 → 7F・管理人も出入り口から追ってくる(追跡中は歪み 1)
+//  705_3) 歪みは見た目だけ: 歪み 0 と 1 で当たりの一覧が同じ・柱に当たって止まる所が同じ
+//  B1_1) ループ: 標識灯を 3 回通ると気づく(その間 z は窓の外へ出ない)・歩き続けると環状のまま・立ち止まると抜けて迷路へ。入り直して振り返る版も抜ける
+//  B1_2) 迷路: 作業場まで歩く間に変わった仕切りは、どれもその瞬間の視野の外・入口と作業場はいつも繋がっている
+//  B1_3) 伸びる: 車のキー(第11段)→ 戻ると背後の灯りが消え(前は点いている)、踊り場の扉は 2 周するまで「開かない」→ 開いた扉から鉄扉 → B1 → 1F で「駐車場の車で逃げろ」。戻り道 > 行き
+//  W_7) 第7段の窓の内側の管理人: 自動では出ない・force で 409 の窓に出る・見える(遮る物なし)・見た後に目をそらすと消える・近づくと消える・第8段/第6段では出ない
 //  P) 性能(P_perf_vs_4F_corridor): 各空間の代表の視点と 4F の廊下を同じ計り方(1080p・40 フレームの中央値の 5 回の最小。4F は最初と最後)で。描画コール・三角形数
 
 const DT = 1 / 60;
@@ -422,6 +429,181 @@ export async function run(N) {
     return { pass, level: lv, warp: [w0, w1], stoppedAt_z: [z0, z1], colsSame: c0 === c1, cols: c0.split(';').length };
   });
 
+  // ================================================================ B1(P5b-2b)
+  const WB1 = (u, v) => [520 + u, v];
+  const DB1 = () => SP.debug('XB1');
+  const stB1 = () => DB1().state();
+  const enterB1 = async () => {
+    S.applyStage(10); quiet();
+    const B = N.building.basement;
+    await tp('B1', B.spawn[0], B.spawn[1], Math.PI / 2);
+    walkTo(8.5, 1.45, { max: 200 });
+    const d = N.doorApi.get('B1DOOR');
+    face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
+    tap('KeyE'); N.pump(DT, 60, false);
+    const n = FN[d.facing];
+    walkTo(d.pos[0] + n[0] * 0.6, d.pos[1] + n[1] * 0.6, { max: 240, tol: 0.1 });
+    waitTrans();
+    return N.level;
+  };
+  // トンネルを v の向きへ歩き続ける(each が true で止める)
+  const walkDir = (dir, sec, each = null) => {
+    key('KeyW', true);
+    let t = 0;
+    for (; t < sec; t += DT) { const p = N.player.pos; face(p.x + (520 - p.x) * 0.2, p.z + dir * 5, 0); N.pump(DT, 1, false); if (each && each(t)) break; }
+    key('KeyW', false); N.pump(DT, 2, false);
+    return t;
+  };
+
+  await T('B1_1_loop_three_signs_then_stop_or_turn', async () => {
+    const lv = await enterB1();
+    const obj = N.hudState().objective;
+    walkPath([WB1(-3.1, 5.9), WB1(-1.5, 6.0), WB1(0, 6.2)], { max: 600 });
+    const doorClosedBehind = [];
+    let maxZ = -1e9, armedAt = null;
+    walkDir(1, 60, () => { maxZ = Math.max(maxZ, N.player.pos.z); if (stB1().armed && armedAt === null) armedAt = { t: stB1().teleports, z: +N.player.pos.z.toFixed(2) }; return stB1().armed; });
+    const atNotice = stB1();
+    // 気づいた後も歩き続けると環状のまま(抜けない)
+    walkDir(1, 6, () => { maxZ = Math.max(maxZ, N.player.pos.z); return false; });
+    const stillLooping = !stB1().released && stB1().teleports > atNotice.teleports;
+    doorClosedBehind.push(stB1().door);
+    // 立ち止まる → 抜ける
+    N.pump(DT, 90, false);
+    const rel = stB1();
+    // 先へ: 標識灯を 4 回目に通って、継ぎ足しの終わり(迷路の前室)へ
+    walkDir(1, 45, () => N.player.pos.z > 53);
+    const reached = N.player.pos.z > 52;
+    const afterWalk = { ...pos(), released: stB1().released };
+    const relEv = rel.log.find((e) => e.ev === 'release');
+    // 振り返る版: 入り直して 3 回通ってから後ろを向く
+    const S2 = (SP.show(null), await enterB1(), walkPath([WB1(-3.1, 5.9), WB1(-1.5, 6.0), WB1(0, 6.2)], { max: 600 }), walkDir(1, 60, () => stB1().armed), stB1());
+    walkDir(-1, 1.0, () => stB1().released);
+    const rel2 = stB1();
+    const relEv2 = rel2.log.find((e) => e.ev === 'release');
+    const pass = lv === 'XB1' && obj === '地下へ' && atNotice.passes === 3 && atNotice.teleports >= 2 && maxZ < 18.01 && stillLooping && rel.released && relEv && relEv.why === 'still' && relEv.passes === 3
+      && reached && S2.armed && rel2.released && relEv2 && relEv2.why === 'turn' && doorClosedBehind[0] < 0.05;
+    return { pass, level: lv, objective: obj, atNotice: { passes: atNotice.passes, teleports: atNotice.teleports }, maxZBeforeRelease: +maxZ.toFixed(2), stillLooping, release: relEv, reachedMaze: reached,
+      afterWalk, turnVariant: relEv2 || null, turnState: { passes: S2.passes, armed: S2.armed, level: N.level, log: rel2.log.slice(-6) }, sideDoorAngleBehind: doorClosedBehind[0] };
+  });
+
+  await T('B1_2_maze_changes_only_unseen_walls', async () => {
+    if (N.level !== 'XB1' || !stB1().released) return { pass: false, why: 'needs B1_1' };
+    walkDir(1, 25, () => N.player.pos.z > 53.2);
+    let prev = DB1().edges().map((e) => e.on), viol = [], disc = 0, changes = 0, frames = 0;
+    const step = () => {
+      frames++;
+      const now = DB1().edges(), F = frustum();
+      now.forEach((e, i) => { if (e.on !== prev[i]) { changes++; const L = 1.0, t = 0.05;
+        const inV = e.vert ? boxIn(F, 520 + e.u - t, -60, e.v - L, 520 + e.u + t, -60 + 2.05, e.v + L) : boxIn(F, 520 + e.u - L, -60, e.v - t, 520 + e.u + L, -60 + 2.05, e.v + t);
+        if (inV) viol.push({ i, t: frames }); } });
+      prev = now.map((e) => e.on);
+      if (!DB1().connected()) disc++;
+    };
+    // 作業場まで: 升ごとに今の迷路で道を引き直して歩く
+    let ok = false;
+    for (let k = 0; k < 80 && !ok; k++) {
+      const p = N.player.pos;
+      const r = DB1().route(p.x - 520, p.z, true);
+      if (!r) break;
+      const [cu, cv] = r.length ? r[0] : [6, 75];
+      walkTo(...WB1(cu, cv), { max: 300, tol: 0.25, each: () => { step(); return false; } });
+      if (!r.length || (Math.abs(N.player.pos.x - 526) < 1.01 && N.player.pos.z > 74)) { walkPath([WB1(6, 75.5), WB1(6, 77.4)], { max: 300 }); ok = N.player.pos.z > 77; }
+    }
+    // 見ていない間に入口の方の壁が変わっている(戻る道の見え方が変わる)。少し立ち止まって見回すと変わっていく
+    for (let t = 0; t < 3; t += DT) { face(N.player.pos.x, N.player.pos.z + 5, 0); N.pump(DT, 1, false); step(); }
+    const s = stB1();
+    const pass = ok && changes >= 5 && viol.length === 0 && disc === 0 && s.flips >= 5;
+    return { pass, reachedWorkshop: ok, wallChanges: changes, flips: s.flips, changedInView: viol.slice(0, 5), disconnectedFrames: disc, frames };
+  });
+
+  await T('B1_3_key_return_longer_lights_off_exit_stage11', async () => {
+    if (N.level !== 'XB1' || N.player.pos.z < 76.5) return { pass: false, why: 'needs B1_2' };
+    const kp = S.pickups.find((q) => q.id === 'kCar');
+    walkTo(kp.pos.x, kp.pos.z - 0.8, { max: 300 });
+    const hint = pickNow('kCar');
+    const st = S.state();
+    const objKey = N.hudState().objective;
+    // 戻る: 迷路の入口 → トンネル → 踊り場の扉(開かない)→ 2 周 → 扉が少し開く → 踊り場 → 鉄扉
+    let lampSample = null, okRoute = true;
+    for (let k = 0; k < 80; k++) {
+      const p = N.player.pos;
+      if (p.z < 54.2 && Math.abs(p.x - 520) < 1.2) break;
+      const r = DB1().route(p.x - 520, p.z, false);
+      if (!r) { okRoute = false; break; }
+      const [cu, cv] = r.length ? r[0] : [0, 53];
+      walkTo(...WB1(cu, cv), { max: 300, tol: 0.25 });
+      if (!r.length) { walkTo(...WB1(0, 53.0), { max: 300 }); break; }
+    }
+    walkTo(...WB1(0, 40), { max: 1500 });
+    lampSample = DB1().lampsBehind().filter((l) => Math.abs(l.z - (N.player.pos.z)) < 14);
+    walkTo(...WB1(-0.4, 6.2), { max: 3000 });
+    face(...WB1(-1.2, 6.0), 0); N.pump(DT, 2, false);
+    const lockedHint = N.hudState().hint; tap('KeyE'); N.pump(DT, 2, false);
+    const lockedToast = N.hudState().toast;
+    // 歩き続ける(−v)。扉が少し開くまで
+    walkDir(-1, 60, () => stB1().retOpen);
+    const s2 = stB1();
+    // 開いた扉へ(次の周回の扉)
+    walkDir(-1, 30, () => N.player.pos.z < 6.6 && N.player.pos.z > 5.8);
+    walkPath([WB1(-0.5, 6.0), WB1(-1.6, 6.0), WB1(-3.1, 5.0), WB1(-3.1, 0.15)], { max: 900 });
+    waitTrans();
+    const out = { level: N.level, at: pos() };
+    const s3 = stB1();
+    await tp(1, 6.9, 7.0, 0);
+    const obj11 = N.hudState().objective;
+    const behindOff = lampSample.filter((l) => !l.ahead && l.z > N.player.pos.z);   // 参考
+    const offBehind = lampSample.filter((l) => !l.ahead && l.off).length, onAhead = lampSample.filter((l) => l.ahead && !l.off).length, offAhead = lampSample.filter((l) => l.ahead && l.off).length;
+    void behindOff;
+    const pass = hint.includes('拾う') && st.stage === 11 && st.item === 'car' && objKey === '駐車場の車で逃げろ' && okRoute && lockedToast === '開かない' && s2.retLoops >= 2 && s2.retOpen
+      && offBehind >= 1 && onAhead >= 1 && offAhead === 0 && s3.walkRet > s3.walkIn && out.level === 'B1' && obj11 === '駐車場の車で逃げろ';
+    return { pass, pickHint: hint, stage: st.stage, item: st.item, objective: objKey, lockedHint, lockedToast, retLoops: s2.retLoops, doorAjar: s2.retOpen,
+      lamps: { offBehind, onAhead, offAhead }, walkIn_m: s3.walkIn, walkRet_m: s3.walkRet, out, objective1F: obj11 };
+  });
+
+  // ================================================================ 第7段: 窓の内側から見下ろす管理人(P5b-2b)
+  await T('W_7_window_watcher_inside', async () => {
+    const WW = () => S.winWatcher;
+    S.applyStage(7); quiet();
+    await tp('G', 33.0, 5.5, Math.PI / 2);   // 駐車場・東(車の方)を向く
+    N.pump(DT, 60, false);
+    const autoOff = !WW().stats().visible;    // ?test では自動で出さない
+    const forced = WW().force();
+    N.pump(DT, 2, false);
+    const root = WW().root;
+    const head = new N.THREE.Vector3(root.position.x, root.position.y + 1.6, root.position.z);
+    // 見上げる
+    face(head.x, head.z, Math.atan2(head.y - N.camera.position.y, Math.hypot(head.x - N.camera.position.x, head.z - N.camera.position.z)));
+    N.pump(DT, 30, false);
+    const v = head.clone().project(N.camera);
+    const onScreen = Math.abs(v.x) < 0.3 && Math.abs(v.y) < 0.3 && v.z < 1;
+    const seen = WW().stats();
+    // 遮る物: カメラ → 頭の線上の不透明なメッシュ(ガラス・格子・カーテンの発光面は除く)
+    const ray = new N.THREE.Raycaster(N.camera.position.clone(), head.clone().sub(N.camera.position).normalize(), 0.1, head.distanceTo(N.camera.position) - 0.5);
+    const objs = []; N.scene.traverseVisible((o) => { if (o.isMesh && !o.isSkinnedMesh && !o.isInstancedMesh && !(o.material && (o.material.transparent || o.material.isShaderMaterial))) objs.push(o); });
+    const hits = ray.intersectObjects(objs, false).map((h) => ({ name: h.object.name, mat: h.object.material.name, d: +h.distance.toFixed(2) })).filter((h) => !/Glass|Window|Bars|Rail|Glow|Curtain/i.test(h.mat + h.name));
+    const visibleNow = root.visible;
+    // 見た後に視線を外すと消える
+    face(40, 5.5, 0); N.pump(DT, 12, false);
+    const hideLook = WW().events.filter((e) => e.ev === 'hide').pop();
+    // もう一度出して、建物の方へ後ずさりで近づく(見ていない)と消える
+    WW().done = false; await tp('G', 31.5, 10.5, Math.PI / 2); N.pump(DT, 5, false);
+    const forced2 = WW().force(); N.pump(DT, 2, false);
+    let goneAt = null;
+    face(40, 10.5, 0); key('KeyS', true);
+    for (let i = 0; i < 60 * 12 && goneAt === null; i++) { face(N.player.pos.x + 5, 10.5, 0); N.pump(DT, 1, false); if (!WW().stats().visible) goneAt = { x: +N.player.pos.x.toFixed(2), dist: +Math.hypot(N.player.pos.x - 13.756, N.player.pos.z - 10.52).toFixed(2) }; }
+    key('KeyS', false); N.pump(DT, 2, false);
+    const lastHide = WW().events.filter((e) => e.ev === 'hide').pop();
+    // 第7段以外では出ない(第8段・第6段に駐車場で force しても出ない)
+    S.applyStage(8); quiet(); await tp('G', 33.0, 5.5, Math.PI / 2); N.pump(DT, 10, false);
+    const f8 = WW().force(); N.pump(DT, 2, false); const v8 = WW().stats().visible;
+    S.applyStage(6); quiet(); await tp('G', 33.0, 5.5, Math.PI / 2); N.pump(DT, 10, false);
+    const f6 = WW().force(); N.pump(DT, 2, false); const v6 = WW().stats().visible;
+    const pass = autoOff && forced && visibleNow && onScreen && seen.active && seen.active.seenT > 0.2 && hits.length === 0 && hideLook && hideLook.why === 'looked_away' && forced2 && goneAt && lastHide && lastHide.why === 'near' && !f8 && !v8 && !f6 && !v6
+      && Math.abs(root.position.x - 13.83) < 0.1 && Math.abs(root.position.y - 8.7) < 0.05;
+    return { pass, autoOff, forced, at: { x: +root.position.x.toFixed(3), y: +root.position.y.toFixed(2), z: +root.position.z.toFixed(2) }, onScreen, ndc: [+v.x.toFixed(2), +v.y.toFixed(2)], seen: seen.active,
+      blockers: hits.slice(0, 5), lookAwayHide: hideLook && hideLook.why, goneAt, hideWhy: lastHide && lastHide.why, stage8: { forced: f8, visible: v8 }, stage6: { forced: f6, visible: v6 } };
+  });
+
   // ================================================================ 性能: ?test=building 10 番と同じ計り方(1080p・40 フレームの中央値を 3 回取り最小)。描画コール・三角形数
   await T('P_perf_vs_4F_corridor', async () => {
     const gl = N.renderer.getContext(), px1 = new Uint8Array(4);
@@ -462,6 +644,22 @@ export async function run(N) {
     res.X312_hall = await measure(() => d312(0.8, 12.8, Math.PI, -0.1));
     res.X312_underwater = await measure(async () => { await d312(0.8, 22.0, Math.PI); key('ControlLeft', true); N.pump(DT, 150, false); });
     key('ControlLeft', false); N.pump(DT, 2, false);
+    // P5b-2b: 705 の広間(入口・机の前で後ろを向く・消灯後の追跡と歪み)・B1(トンネル・迷路・作業場)
+    const d705 = async (u, v, yaw, f) => { SP.show(null); await enter705(); if (f) f(); await tp('X705', ...W705(u, v), yaw); N.pump(DT, 20, false); };
+    res.X705_entry = await measure(() => d705(0, 3.5, Math.PI));
+    res.X705_desk_back = await measure(() => d705(0, 30.3, 0, () => D705().showAll()));
+    res.X705_dark_chase_warp = await measure(async () => {
+      await d705(0, 30.3, Math.PI, () => D705().showAll());
+      pickNow('kB1'); N.pump(DT, 200, false);
+      N.ai.setState('SCRIPTED', { force: true }); D705().st.forceWarp = 1; N.pump(DT, 5, false);   // 計る間に捕まらないよう管理人を止める(消灯・歪みはそのまま)
+      const e = N.enemyObj.pos; face(e.x, e.z, 0);
+    });
+    D705().st.forceWarp = null;
+    quiet(); S.applyStage(10);
+    const dB1 = async (u, v, yaw, rel) => { SP.show(null); await enterB1(); if (rel) DB1().release('perf'); await tp('XB1', ...WB1(u, v), yaw); N.pump(DT, 20, false); };
+    res.XB1_tunnel = await measure(() => dB1(0, -4, Math.PI));
+    res.XB1_maze = await measure(() => dB1(0, 53.0, Math.PI, true));
+    res.XB1_workshop = await measure(() => dB1(6, 77.2, Math.PI, true));
     quiet(); S.applyStage(4);
     res['4F_corridor_end'] = await measure(async () => { SP.show(null); await tp(4, 6.9, 8.2, Math.PI); });
     const ref = Math.min(res['4F_corridor'].ms, res['4F_corridor_end'].ms);
