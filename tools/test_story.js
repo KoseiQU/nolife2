@@ -7,7 +7,7 @@
 //     「221号室へ戻れ」・机に小さな鍵 → 戻って拾うと第2段「管理室へ」(2 回目は出ない)
 // 1b) 221 から逃げる途中で死ぬ → 410 から・飛び出しの前(「221号室へ」・管理人は眠る・ロッカーは閉じる)、見せ場は繰り返さない、奥へ進むとまた出る
 //  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
-//  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→105 の鍵→戻る)
+//  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→潜って底の 105 の鍵→浮上→南の新しい入口から戻る。P5b-2a: プールの中身は test_spaces.js)
 //  4) 第4段: 105 → X105(目標「出口へ」)→ 出口の手前のメモ → 第5段 → 出口を抜けると 105 の前(P5b-2a: 中の長い廊下は test_spaces.js)
 //  5) 第5段: 6F の罠 3 室で飛び出し・他の部屋では起きない・609 の机の 220 の鍵
 //  6) 第6段: 220(鍵で開く)→ 荒れた部屋 → 正面玄関の鍵
@@ -346,14 +346,27 @@ export async function run(N) {
     S.item = '312';
     const ent = openAndEnter('312');
     const inSpace = N.level === 'X312';
-    walkTo(pk('k105').pos.x, pk('k105').pos.z - 0.8, 600);
-    const pickHint = pickAt(pk('k105'));
+    // P5b-2a: X312 はプール(中身は tools/test_spaces.js)。通路を抜けて底の鍵まで潜る → 浮上 → 南の新しい入口から戻る
+    const trace = [];
+    [[330.8, 4], [330.8, 12.6], [330.8, 16.4], [330.8, 23.0]].forEach(([x, z]) => { walkTo(x, z, 2000, 0.2); trace.push(pos()); });
+    const k = pk('k105');
+    key('ControlLeft', true);
+    let pickHint = '';
+    for (let i = 0; i < 240; i++) { face(k.pos.x, k.pos.z, -0.9); N.pump(DT, 1, false); const h = N.hudState().hint; if (h.includes('拾う')) { pickHint = h; break; } }
+    tap('KeyE');
     const st = S.state();
-    const back = leave();
+    N.pump(DT, 90, false);
+    key('ControlLeft', false);
+    N.pump(DT, 200, false);
+    [[330.8, 28.6], [330.8, 30.4], [330.8, 38.0]].forEach(([x, z]) => { walkTo(x, z, 3000, 0.2); trace.push(pos()); });
+    key('KeyW', true); for (let i = 0; i < 600 && N.level === 'X312' && !S.trans; i++) { face(330.8, 44.5, 0); N.pump(DT, 1, false); } key('KeyW', false);   // 戻りの扉の手前 0.45m を越えると出る
+    trace.push(pos());
+    waitTrans();
+    const back = pos();
     const pass = noKey.toast === '鍵がかかっている' && noKey.angle < 0.01 && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.angle >= 0.45
       && ent.events.includes('unlock_door') && ent.events.includes('enter_space') && inSpace && pickHint.includes('拾う') && st.stage === 4 && st.item === '105'
-      && back.hint.includes('戻る') && back.level === 3 && Math.hypot(back.at.x - front('312', 0.9)[0], back.at.z - front('312', 0.9)[1]) < 0.1;
-    return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back };
+      && back.level === 3 && Math.hypot(back.x - front('312', 0.9)[0], back.z - front('312', 0.9)[1]) < 0.1;
+    return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back, trace };
   });
 
   // ---------------------------------------------------------------- 4) 105 → X105 → (出口の手前の)メモ → 出口 → 105 の前

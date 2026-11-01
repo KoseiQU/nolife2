@@ -212,6 +212,114 @@ export async function run(N) {
     return { pass, chased, died, attackAfterStop_s: attackAt && +attackAt.toFixed(2), respawn: at, back: b, stage: st.stage, reenter: re };
   });
 
+  // ================================================================ 312
+  const W312 = (u, v) => [330 + u, v];
+  const enter312 = async () => {
+    S.applyStage(3); quiet();
+    const b = SP.def('X312').back;
+    await tp(3, b.x, b.z, b.yaw + Math.PI);
+    S.item = '312';
+    return openAndEnter('312');
+  };
+  const st312 = () => D312().state();
+  const eyeRel = () => N.camera.position.y + 60;   // SPACE_Y = −60
+  const hold = (code, sec, each = null) => { key(code, true); let t = 0; for (; t < sec; t += DT) { N.pump(DT, 1, false); if (each && each(t)) break; } key(code, false); N.pump(DT, 2, false); return t; };
+
+  await T('312_1_passage_pool_swim', async () => {
+    const lv = await enter312();
+    const obj = N.hudState().objective;
+    const walked = walkPath([W312(0.8, 4.0), W312(0.8, 12.6), W312(0.8, 14.2)]);
+    const onDeck = { ...st312(), at: pos() };
+    walkTo(...W312(0.8, 16.4));
+    const shallow = { ...st312(), eye: +eyeRel().toFixed(2) };
+    walkTo(...W312(0.8, 21.0), { max: 2000 });
+    N.pump(DT, 90, false);
+    const deep = { ...st312(), eye: +eyeRel().toFixed(2), move: N.player.move && { ...N.player.move } };
+    // 速さ(1 秒 W)
+    const z0 = N.player.pos.z; face(...W312(0.8, 40)); key('KeyW', true); key('ShiftLeft', true); N.pump(DT, 60, false); key('KeyW', false); key('ShiftLeft', false); N.pump(DT, 2, false);
+    const speed = (N.player.pos.z - z0) / 1.0;
+    const pass = lv === 'X312' && obj === '312号室へ' && walked && !onDeck.inWater && onDeck.at.z > 12.5 && shallow.inWater && shallow.eye > 0.2 && deep.inWater && !deep.under
+      && Math.abs(deep.eye - (-0.1)) < 0.06 && speed > 0.8 && speed < 1.2 && deep.move && deep.move.noRun;
+    return { pass, level: lv, objective: obj, walked, deck: { inWater: onDeck.inWater, at: onDeck.at }, shallowEye: shallow.eye, deepEye: deep.eye, swimSpeed_mps: +speed.toFixed(2), move: deep.move };
+  });
+
+  await T('312_2_dive_breath_drown', async () => {
+    if (N.level !== 'X312') return { pass: false, why: 'needs 312_1' };
+    await tp('X312', ...W312(0.8, 21.0), Math.PI); N.pump(DT, 60, false);
+    const b0 = N.hudState().breath;
+    let diveAt = null, gauge = null, eyeMin = 1e9;
+    hold('ControlLeft', 3.0, (t) => { const s = st312(); if (s.under && diveAt === null) diveAt = t; if (s.under && gauge === null && N.hudState().breath !== null) gauge = N.hudState().breath; eyeMin = Math.min(eyeMin, eyeRel()); return false; });
+    const down = { ...st312(), breathHud: N.hudState().breath };
+    let upAt = null;
+    for (let t = 0; t < 4; t += DT) { N.pump(DT, 1, false); if (!st312().under && upAt === null) upAt = t; }
+    const up = { ...st312(), breathHud: N.hudState().breath, eye: +eyeRel().toFixed(2) };
+    // 溺れる: 潜ったまま
+    const deaths0 = N.deaths();
+    let drownAt = null;
+    hold('ControlLeft', 30, (t) => { if (N.deathState() && drownAt === null) { drownAt = t; return true; } return false; });
+    const caption = document.body.innerText.includes('溺れた');
+    for (let i = 0; i < 60 * 7 && N.deathState(); i++) N.pump(DT, 1, false);
+    const at = pos();
+    const st = S.state();
+    const pass = b0 === null && diveAt !== null && gauge !== null && down.under && down.breathHud < 1 && down.breathHud > 0.7 && eyeMin < -1.5 && upAt !== null && !up.under && up.breathHud === null
+      && drownAt !== null && drownAt > 14 && drownAt < 20 && caption && N.deaths() === deaths0 + 1 && at.level === 1 && Math.hypot(at.x - 20.9, at.z - 24.6) < 0.05 && st.stage === 3 && N.player.move === null && N.hudState().breath === null;
+    return { pass, breathHudBefore: b0, diveAfter_s: diveAt && +diveAt.toFixed(2), gaugeAtDive: gauge, eyeMin: +eyeMin.toFixed(2), afterHold3s: { under: down.under, breath: down.breathHud },
+      surfaceAfter_s: upAt && +upAt.toFixed(2), afterRelease: { under: up.under, breathHud: up.breathHud, eye: up.eye }, drownAfter_s: drownAt && +drownAt.toFixed(2), caption, respawn: at, stage: st.stage };
+  });
+
+  await T('312_3_stretch_key_reverse_watcher_return', async () => {
+    const lv = await enter312();
+    walkPath([W312(0.8, 4.0), W312(0.8, 12.6), W312(0.8, 16.4), W312(0.8, 20.0)], { max: 2000 });
+    const far0 = st312().farWall - N.player.pos.z;
+    walkTo(...W312(0.8, 27.0), { max: 3000 });
+    const far1 = st312().farWall - N.player.pos.z;
+    const progressed = 7.0;
+    // 鍵へ戻って潜る
+    walkTo(...W312(0.8, 23.1), { max: 3000 });
+    const farBeforeKey = st312().farWall;
+    face(...W312(0.8, 23.5), -0.6);
+    key('ControlLeft', true);
+    let pickHint = '';
+    for (let t = 0; t < 4; t += DT) { N.pump(DT, 1, false); face(...W312(0.8, 23.5), -0.9); const h = N.hudState().hint; if (h.includes('拾う')) { pickHint = h; break; } }
+    tap('KeyE');
+    const st = S.state();
+    for (let t = 0; t < 1.5; t += DT) N.pump(DT, 1, false);
+    const afterKey = st312();
+    key('ControlLeft', false);
+    face(...W312(4.8, 23.5), 0);   // 東を向いて浮上(視線の先のプールサイドに管理人)
+    let surfaced = null, watch = null, inView = null;
+    for (let t = 0; t < 5; t += DT) {
+      N.pump(DT, 1, false);
+      if (!st312().under && surfaced === null) surfaced = t;
+      if (st312().watch && watch === null) {
+        watch = st312().watch; N.pump(DT, 1, false);
+        const e = N.enemyObj.pos, c = N.camera.position, f = N.camera.getWorldDirection(new N.THREE.Vector3());
+        const dx = e.x - c.x, dz = e.z - c.z, L = Math.hypot(dx, dz);
+        inView = { angleDeg: +(Math.acos((dx * f.x + dz * f.z) / L / Math.hypot(f.x, f.z)) * 180 / Math.PI).toFixed(1), dist: +L.toFixed(2), visible: N.enemyObj.root.visible };
+      }
+    }
+    const ex = SP.exits('X312');
+    const northClosed = !D312().st.colPlugN.disabled && D312().st.plugN.visible && D312().st.colPlugS.disabled;
+    // 見ているだけ: 8 秒間 ATTACK/CHASE にならない
+    const states = new Set(); const deaths0 = N.deaths();
+    for (let t = 0; t < 8; t += DT) { N.pump(DT, 1, false); states.add(N.ai.state); }
+    // 北の入口はふさがっている
+    // 南の新しい入口から戻る
+    walkPath([W312(0.8, 28.6), W312(0.8, 30.4), W312(0.8, 32.8)], { max: 3000 });
+    const gone = { watchGone: st312().watchGone, concealed: N.ai.concealed, visible: N.enemyObj.root.visible };
+    walkPath([W312(0.8, 38.0), W312(0.8, 43.9)], { max: 3000 });
+    waitTrans();
+    const b = SP.def('X312').back;
+    const at = pos();
+    const pass = lv === 'X312' && far0 > 0 && far1 > far0 - 2.0 && (far0 - far1) < progressed * 0.3 && farBeforeKey > 32.5 && pickHint.includes('拾う') && st.stage === 4 && st.item === '105'
+      && afterKey.farWall === 32 && afterKey.revealed && surfaced !== null && watch && inView && inView.angleDeg < 35 && inView.dist >= 3 && inView.visible
+      && ex.length === 1 && ex[0].z > 43 && northClosed && !states.has('ATTACK') && !states.has('CHASE') && N.deaths() === deaths0 && gone.watchGone && gone.concealed && !gone.visible
+      && at.level === 3 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && N.ai.level !== 'X312';
+    return { pass, level: lv, farDist: { at20: +far0.toFixed(2), at27: +far1.toFixed(2) }, farWallBeforeKey: farBeforeKey, pickHint, stage: st.stage, item: st.item,
+      afterKey: { farWall: afterKey.farWall, revealed: afterKey.revealed, under: afterKey.under }, surfaceAfter_s: surfaced && +surfaced.toFixed(2), watch, inView,
+      exits: ex.map((e) => ({ x: +e.x.toFixed(2), z: +e.z.toFixed(2) })), northClosed, aiStates: [...states], gone, back: at, aiLevel: N.ai.level };
+  });
+
   quiet();
   if (SP.shown) SP.show(null);
   S.applyStage(1);
