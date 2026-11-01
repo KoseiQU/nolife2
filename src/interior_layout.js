@@ -81,6 +81,18 @@ export const UNIT_VARIANTS = {
   610: { type: 'vacant', curtain: null, curtainState: 'open', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['cans'] },
   701: { type: 'lived', curtain: 'wine', curtainState: 'half', bedding: 'charcoal', rug: 'gray', laundry: 'balcony', desk: ['laptop', 'lamp', 'cup'], floor: ['bag'], poster: 'p4', fall: ['vase', 'mug'] },
   703: { type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'white', rug: 'beige', laundry: null, desk: ['monitor', 'plant', 'lamp'], floor: [], poster: 'p5', fall: ['books', 'vase'] },
+  // P5b-1(DESIGN §3.8 H): 221(鍵なしで入れる普通の部屋・奥のクローゼットから管理人が飛び出す)・220(前作の痕跡の荒れた部屋)・6F の 7 室(全室を入れる部屋に)。
+  //  swap = 机とクローゼットを入れ替える(机が手前 u 3.06〜4.08、クローゼットが奥 u 4.30〜5.26)。机の上の物に近づいた時、
+  //  奥のクローゼットから出てくる管理人とプレイヤーの間に机が来る＝玄関へ逃げられる(221・6F の罠 3 室・220 の鍵の部屋 609)
+  221: { swap: true, type: 'lived', curtain: 'gray', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'rail', desk: ['monitor', 'cup', 'papers'], floor: ['bag'], poster: 'p4', fall: ['vase', 'books'] },
+  220: { type: 'wrecked', curtain: 'oldgray', curtainState: 'half', bedding: 'charcoal', rug: 'rust', laundry: null, desk: ['papers', 'cans'], floor: ['box', 'trash', 'clothes'], poster: null, fall: ['cans'] },
+  601: { swap: true, type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: 'p2', fall: ['vase', 'mug'] },
+  604: { type: 'messy', curtain: 'wine', curtainState: 'closed', bedding: 'terracotta', rug: 'rust', laundry: 'balcony', desk: ['monitor', 'cans', 'snack'], floor: ['clothes', 'trash', 'box'], poster: 'p6', fall: ['cans', 'books'] },
+  605: { type: 'tidy', curtain: 'lightblue', curtainState: 'open', bedding: 'white', rug: 'green', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p4', fall: ['vase', 'mug'] },
+  606: { swap: true, type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box'], poster: 'p5', fall: ['cans', 'books'] },
+  608: { type: 'vacant', curtain: 'oldgray', curtainState: 'half', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
+  609: { swap: true, type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: 'gray', laundry: 'balcony', desk: ['monitor', 'lamp', 'cup'], floor: ['bag'], poster: 'p1', fall: ['mug', 'vase'] },
+  611: { swap: true, type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'sage', rug: 'beige', laundry: null, desk: ['laptop', 'plant'], floor: [], poster: 'p3', fall: ['books', 'vase'] },
 };
 // 色(build_rooms.py のパレットのキー。値はガンマ補正前の sRGB 16 進)
 export const PALETTE = {
@@ -107,15 +119,20 @@ export function unitInterior(room, opt = {}) {
   const deco = (k, u0, u1, v0, v1, y0, y1, f, extra = {}) => { const d = { k, b: F.rect(u0, u1, v0, v1), y: [y0, y1], f: F.face(f), ...extra }; decor.push(d); return d; };
   const floorDeco = (k, u0, u1, v0, v1, y1, f, extra = {}) => { foot.push({ k, u0, u1, v0, v1, decor: true }); return deco(k, u0, u1, v0, v1, 0, y1, f, extra); };
   const vac = V.type === 'vacant';
+  // P5b-1: swap = 机とクローゼットを入れ替える(机の周り一式を du だけ玄関側へ、クローゼットを奥へ)。wreck = 荒れた部屋(220)
+  const SW = !!V.swap, wreck = V.type === 'wrecked';
+  const du = SW ? -1.08 : 0;
+  const CU = SW ? [4.30, 5.26] : [3.06, 4.02];
   // 床・土間・框(見た目だけ)
   items.push({ k: 'genkan', b: F.rect(0.06, 0.86, 0.06, 2.84), y: [0, 0.005], f: F.face('+u') });
   // --- A 側(v の小さい側) ---
   put('washer', 0.92, 1.56, 0.06, 0.70, 0, 0.95, '+v', 1);
   put('vanity', 1.62, 2.36, 0.06, 0.58, 0, 0.85, '+v', 1);
   put('fridge', 2.42, 2.98, 0.06, 0.66, 0, 1.45, '+v', 1);
-  const closet = put('closet', 3.06, 4.02, 0.06, 0.68, 0, CEIL_H, '+v', 2);
-  put('desk', 4.14, 5.16, 0.06, 0.62, 0, 0.72, '+v', 1, { empty: vac });
-  put('chair', 4.62, 5.06, 0.64, 1.00, 0, 0.88, '-v', 1);
+  const closet = put('closet', CU[0], CU[1], 0.06, 0.68, 0, CEIL_H, '+v', 2);
+  put('desk', 4.14 + du, 5.16 + du, 0.06, 0.62, 0, 0.72, '+v', 1, { empty: vac });
+  if (wreck) put('chairfallen', 4.30, 5.18, 0.64, 1.02, 0, 0.44, '+v', 1);   // 倒れた椅子(横倒し。背もたれが窓の方)
+  else put('chair', 4.62 + du, 5.06 + du, 0.64, 1.00, 0, 0.88, '-v', 1);
   put('pillar', 5.40, 5.94, 0.06, 0.48, 0, CEIL_H, '+v', 2);
   put('ac', 5.70, 5.94, 0.62, 1.42, 2.0, 2.3, '-u', 0);
   // --- B 側 ---
@@ -145,33 +162,48 @@ export function unitInterior(room, opt = {}) {
   // --- 机の上・床・壁 ---
   const dy = 0.72;
   for (const it of V.desk) {
-    if (it === 'laptop') deco('laptop', 4.66, 5.0, 0.16, 0.42, dy, dy + 0.22, '+v');
-    if (it === 'monitor') deco('monitor', 4.6, 5.1, 0.1, 0.3, dy, dy + 0.42, '+v');
-    if (it === 'lamp') deco('lamp', 5.0, 5.12, 0.1, 0.22, dy, dy + 0.42, '+v');
-    if (it === 'cup') deco('cup', 4.5, 4.58, 0.4, 0.48, dy, dy + 0.1, '+v');
-    if (it === 'papers') deco('papers', 4.3, 4.6, 0.12, 0.34, dy, dy + 0.02, '+v');
-    if (it === 'plant') deco('plant', 4.18, 4.3, 0.1, 0.22, dy, dy + 0.26, '+v');
-    if (it === 'books') deco('books', 4.18, 4.4, 0.08, 0.26, dy, dy + 0.12, '+v');
-    if (it === 'cans') deco('cans', 4.95, 5.12, 0.36, 0.5, dy, dy + 0.12, '+v');
-    if (it === 'snack') deco('snack', 4.62, 4.84, 0.4, 0.56, dy, dy + 0.03, '+v');
+    if (it === 'laptop') deco('laptop', 4.66 + du, 5.0 + du, 0.16, 0.42, dy, dy + 0.22, '+v');
+    if (it === 'monitor') deco('monitor', 4.6 + du, 5.1 + du, 0.1, 0.3, dy, dy + 0.42, '+v');
+    if (it === 'lamp') deco('lamp', 5.0 + du, 5.12 + du, 0.1, 0.22, dy, dy + 0.42, '+v');
+    if (it === 'cup') deco('cup', 4.5 + du, 4.58 + du, 0.4, 0.48, dy, dy + 0.1, '+v');
+    if (it === 'papers') deco('papers', 4.3 + du, 4.6 + du, 0.12, 0.34, dy, dy + 0.02, '+v');
+    if (it === 'plant') deco('plant', 4.18 + du, 4.3 + du, 0.1, 0.22, dy, dy + 0.26, '+v');
+    if (it === 'books') deco('books', 4.18 + du, 4.4 + du, 0.08, 0.26, dy, dy + 0.12, '+v');
+    if (it === 'cans') deco('cans', 4.95 + du, 5.12 + du, 0.36, 0.5, dy, dy + 0.12, '+v');
+    if (it === 'snack') deco('snack', 4.62 + du, 4.84 + du, 0.4, 0.56, dy, dy + 0.03, '+v');
   }
-  if (!vac) deco('shelf', 4.18, 5.1, 0.06, 0.28, 1.36, 1.62, '+v', { books: V.type === 'messy' ? 7 : 5 });
+  if (!vac && !wreck) deco('shelf', 4.18 + du, 5.1 + du, 0.06, 0.28, 1.36, 1.62, '+v', { books: V.type === 'messy' ? 7 : 5 });
   for (const it of V.floor) {
     // 床の物は通路(玄関→洋室→窓)に入れない(アサート対象)。机の下・ベッドの上・玄関の脇・ベッドと柱の間
-    if (it === 'bag') floorDeco('bag', 4.2, 4.55, 0.1, 0.38, 0.4, '+v');                    // 机の下
-    if (it === 'box') floorDeco('box', 4.9, 5.16, 0.08, 0.5, 0.36, '+v');                   // 机の下(右)
+    if (it === 'bag') floorDeco('bag', 4.2 + du, 4.55 + du, 0.1, 0.38, 0.4, '+v');          // 机の下
+    if (it === 'box') floorDeco('box', 4.9 + du, 5.16 + du, 0.08, 0.5, 0.36, '+v');         // 机の下(右)
     if (it === 'box2') deco('box', 3.8, 4.4, 2.0, 2.5, 0.55, 1.0, '+v');                    // ベッドの上(空室の荷物)
-    if (it === 'basket') floorDeco('basket', 5.20, 5.62, 0.52, 0.98, 0.32, '+v');           // 柱の前
+    if (it === 'basket' && !SW) floorDeco('basket', 5.20, 5.62, 0.52, 0.98, 0.32, '+v');    // 柱の前(swap ではクローゼットの扉の前になるので置かない)
     if (it === 'trash') floorDeco('trash', 0.14, 0.5, 0.1, 0.46, 0.55, '+v');               // 玄関の A 側(洗濯機の手前)
     if (it === 'clothes') deco('clothes', 4.0, 4.7, 2.0, 2.6, 0.5, 0.66, '+v', { c: V.bedding === 'charcoal' ? 'beige' : 'charcoal' });   // ベッドの上
     if (it === 'clothes2') floorDeco('clothes', 5.62, 5.92, 1.9, 2.5, 0.12, '+v', { c: 'navy' });   // ベッドの足元と窓の間
-    if (it === 'books') floorDeco('books', 5.18, 5.38, 0.08, 0.3, 0.3, '+v');               // 机と柱の間の床
+    if (it === 'books') floorDeco('books', 5.18 + du, 5.38 + du, 0.08, 0.3, 0.3, '+v');     // 机と柱の間の床(swap では机とクローゼットの間)
+  }
+  if (wreck) {
+    // P5b-1: 前作の痕跡の部屋(DESIGN §3.8 H 第6段)。倒れた椅子(上)・棚は落ちて本が床に散る・床一面の紙・壁の文字と引っかき傷・
+    //  顔のない風景の写真(壁に数枚・床に落ちた物)。文字は架空(実在の名前・住所・日付は書かない)。見た目は build_rooms.py の wreck*
+    floorDeco('books', 5.18, 5.38, 0.08, 0.3, 0.3, '+v');
+    deco('booksfloor', 3.62, 4.12, 0.7, 1.0, 0, 0.06, '+v');                                  // 落ちた本(通路の脇・平たい)
+    deco('papersfloor', 0.9, 5.7, 0.7, 2.0, 0, 0.004, '+u', { n: 26, seed: 220 });            // 床一面の紙(平たい=当たりなし)
+    deco('wreckmark', 3.72, 5.5, 2.835, 2.84, 0.95, 1.95, '-v', { cell: 'writing1' });        // ベッドの上の壁一面の文字
+    deco('wreckmark', 5.994, 6.0, 0.5, 1.0, 0.45, 1.6, '-u', { cell: 'scratch1' });           // 窓の横(柱と窓の間)の外壁の内側に引っかき傷
+    deco('wreckmark', 0.92, 1.88, 2.835, 2.84, 1.25, 1.95, '-v', { cell: 'writing2' });       // 玄関の先(トイレの壁)に文字
+    deco('photo', 4.22, 4.42, 0.06, 0.066, 1.38, 1.53, '+v', { cell: 'photo1', rot: -5 });     // 机の上の壁に写真(顔のない風景)
+    deco('photo', 4.5, 4.7, 0.06, 0.066, 1.42, 1.57, '+v', { cell: 'photo2', rot: 3 });
+    deco('photo', 4.8, 5.0, 0.06, 0.066, 1.36, 1.51, '+v', { cell: 'photo3', rot: -2 });
+    deco('photofloor', 3.7, 3.9, 1.1, 1.25, 0, 0.003, '+u', { cell: 'photo2', rot: 25 });     // 床に落ちた写真
+    deco('photofloor', 5.25, 5.45, 0.62, 0.77, 0, 0.003, '+u', { cell: 'photo1', rot: -40 });
   }
   if (V.rug) deco('rug', 3.62, 5.3, 1.0, 1.86, 0, 0.008, '+u', { c: V.rug });
   if (V.poster) deco('poster', 4.1, 4.7, 2.83, 2.84, 1.2, 1.95, '-v', { p: V.poster });
-  deco('clock', 4.5, 4.78, 0.06, 0.08, 1.85, 2.13, '+v');
+  if (!wreck) deco('clock', 4.5 + du, 4.78 + du, 0.06, 0.08, 1.85, 2.13, '+v');
   if (!vac) deco('shoes', 0.2, 0.75, 1.15, 1.75, 0, 0.1, '+u');
-  if (V.type === 'messy') deco('umbrella', 0.14, 0.22, 2.3, 2.4, 0, 0.85, '-v');
+  if (V.type === 'messy' || wreck) deco('umbrella', 0.14, 0.22, 2.3, 2.4, 0, 0.85, '-v');
   // --- 落ちる物(DESIGN §3.4.1 物音の障害物): 通路の脇に1つ・机の端に1つ。慎重に歩けば避けられる位置 ---
   const fallables = [];
   const addFall = (type, u, v, y, support) => {
@@ -182,23 +214,25 @@ export function unitInterior(room, opt = {}) {
     if (t === 'vase') addFall('vase', 0.42, 2.48, 0.95, 'shoecase');          // 玄関のシューズケースの上・通路側の縁
     else if (t === 'cans') addFall('cans', 2.08, 0.82, 0, 'floor');           // 洗面台の前の床(通路の左端に寄ると当たる)
     else if (t === 'bottle') addFall('bottle', 2.7, 0.84, 0, 'floor');        // 冷蔵庫の前の床
-    else if (t === 'books') addFall('books', 4.24, 0.55, 0.72, 'desk');       // 机の端(通路側の角)
-    else if (t === 'mug') addFall('mug', 4.26, 0.56, 0.72, 'desk');
+    else if (t === 'books') addFall('books', 4.24 + du, 0.55, 0.72, 'desk');  // 机の端(通路側の角)
+    else if (t === 'mug') addFall('mug', 4.26 + du, 0.56, 0.72, 'desk');
   }
   // --- 隠れ場所(クローゼット)・管理人の立ち位置 ---
   const [cx0, cz0, cx1, cz1] = closet.b;
   const fv = FACING_VEC[closet.f];
   const ccx = (cx0 + cx1) / 2, ccz = (cz0 + cz1) / 2;
-  const doorPlane = F.pt(3.54, 0.68);
+  const cu = (CU[0] + CU[1]) / 2;
+  const doorPlane = F.pt(cu, 0.68);
   const hide = {
     room: room.id, b: closet.b, f: closet.f,
     eye: [r4(doorPlane[0] - fv[0] * 0.11), r4(doorPlane[1] - fv[1] * 0.11)],    // 扉の隙間の 11cm 奥
     feet: [r4(ccx), r4(ccz)],
-    out: F.pt(3.54, 1.25).map(r4),                                             // 出た時に立つ場所(通路)
-    stand: F.pt(3.54, 1.42).map(r4),                                           // 管理人が立ち止まる所(扉の 0.74m 前)
+    out: F.pt(cu, 1.25).map(r4),                                               // 出た時に立つ場所(通路)
+    stand: F.pt(cu, 1.42).map(r4),                                             // 管理人が立ち止まる所(扉の 0.74m 前)
     yaw: FACING_YAW[closet.f],
   };
-  const points = { entry: F.pt(1.3, 1.45).map(r4), room: F.pt(2.7, 1.45).map(r4), living: F.pt(4.4, 1.45).map(r4), window: F.pt(5.6, 1.42).map(r4) };
+  const points = { entry: F.pt(1.3, 1.45).map(r4), room: F.pt(2.7, 1.45).map(r4), living: F.pt(4.4, 1.45).map(r4), window: F.pt(5.6, 1.42).map(r4),
+    desk: F.pt(4.42 + du, 0.42).map(r4), deskFront: F.pt(4.42 + du, 1.3).map(r4) };   // P5b-1: 机の上(鍵を置く所)と机の前(プレイヤーが立つ所)
   // === 生成時アサート: 通路(玄関→洋室入口、洋室→窓の開く側)に足元の物が無い ===
   const passage = [
     { u0: 0, u1: LIVING_U0, v0: 1.45 - PASSAGE_W / 2, v1: 1.45 + PASSAGE_W / 2 },

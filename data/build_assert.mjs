@@ -106,19 +106,30 @@ for (const f of building.floors) {
 }
 // P3b-3: 入れる部屋の顔ぶれ(最初から入れる 26 室＋管理室)と物語の部屋
 {
-  const WANT = '103,104,107,202,210,216,218,305,313,319,321,401,404,410,413,418,501,506,511,516,602,603,607,610,701,703,OFFICE';
-  const STORY = '105,220,221,312,705';
+  // P5b-1: 221・220・6F の 7 室を足した(DESIGN §3.8 H v3)。物語の部屋は 105・220・312・705(220 は内装つき＝扉は実行時に鍵で開くまで施錠)
+  const WANT = '103,104,107,202,210,216,218,220,221,305,313,319,321,401,404,410,413,418,501,506,511,516,601,602,603,604,605,606,607,608,609,610,611,701,703,OFFICE';
+  const STORY = '105,220,312,705';
   const all = building.floors.filter((f) => f.level <= 7).flatMap((f) => f.rooms);
   const ent = all.filter((r) => r.door && r.door.enterable).map((r) => r.id).sort().join(',');
   if (ent !== WANT) fail(`入れる部屋の顔ぶれ: ${ent}`);
   const st = all.filter((r) => r.story);
   if (st.map((r) => r.id).sort().join(',') !== STORY) fail(`物語の部屋: ${st.map((r) => r.id).join(',')}`);
-  for (const r of st) if (r.interior || r.window || (r.door && (r.door.enterable || !r.door.locked))) fail(`物語の部屋 ${r.id} に内装・窓・開く扉がある`);
+  for (const r of st) if (r.id !== '220' && (r.interior || r.window || (r.door && (r.door.enterable || !r.door.locked)))) fail(`物語の部屋 ${r.id} に内装・窓・開く扉がある`);
+  { const r220 = st.find((r) => r.id === '220'); if (!r220 || !r220.interior || r220.interior.variant.type !== 'wrecked') fail('220: 荒れた部屋(wrecked)の内装が無い'); }
   const empty = all.filter((r) => r.kind === 'unit' && !(r.door && r.door.enterable));
-  if (empty.length !== 78) fail(`扉のみの居室 ${empty.length}(73＋物語の部屋 5 = 78)`);
+  if (empty.length !== 69) fail(`扉のみの居室 ${empty.length}(空室 66＋物語の部屋 3 = 69)`);
+  // P5b-1: swap の部屋は机がクローゼットより玄関側(奥のクローゼットから出た管理人と玄関の間に机の前のプレイヤーが来ない)
+  for (const id of ['221', '601', '606', '609', '611']) {
+    const r = all.find((q) => q.id === id), it = r && r.interior;
+    if (!it || !it.variant.swap) { fail(`${id}: swap の内装でない`); continue; }
+    const c = it.items.find((q) => q.k === 'closet'), d = it.items.find((q) => q.k === 'desk');
+    const dd = (b) => Math.hypot((b[0] + b[2]) / 2 - r.door.pos[0], (b[1] + b[3]) / 2 - r.door.pos[1]);
+    if (!(dd(d.b) < dd(c.b))) fail(`${id}: 机がクローゼットより奥`);
+    if (!it.points.desk || !it.points.deskFront) fail(`${id}: 机の点が無い`);
+  }
   for (const r of empty) if (r.interior || (r.door && !r.door.locked)) fail(`扉のみの居室 ${r.id} に内装/開く扉`);
 }
 if (units !== 104) fail(`居室数 ${units}`);
 if (balconies !== 104) fail(`バルコニー ${balconies}/104`);
 if (failures) { console.error(`\n内装アサート: ${failures} 件 NG`); process.exit(1); }
-console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 5`);
+console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 4(220 は内装つき)`);

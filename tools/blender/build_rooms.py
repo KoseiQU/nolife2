@@ -10,7 +10,7 @@ import json, math, os
 import bpy
 
 C = None          # build_floor モジュール
-PALUV = APPUV = PRTUV = None
+PALUV = APPUV = PRTUV = WRKUV = None
 ROOMS_PROPS = {'n2_lm': 2}
 WIN_H = 2.0
 FACING = {'E': (1, 0), 'W': (-1, 0), 'S': (0, 1), 'N': (0, -1)}
@@ -19,11 +19,12 @@ CURTAIN_STATES = {}
 
 
 def init(ctx):
-    global C, PALUV, APPUV, PRTUV
+    global C, PALUV, APPUV, PRTUV, WRKUV
     C = ctx
     PALUV = json.load(open(os.path.join(ctx.TEX, 'room_palette.json')))
     APPUV = json.load(open(os.path.join(ctx.TEX, 'room_appliances.json')))
     PRTUV = json.load(open(os.path.join(ctx.TEX, 'room_prints.json')))
+    WRKUV = json.load(open(os.path.join(ctx.TEX, 'room_wreck.json')))   # P5b-1: 220 の壁の文字・引っかき傷・写真
 
 
 # ---------------------------------------------------------------- 材質
@@ -45,6 +46,8 @@ def build_materials(ctx):
     ctx._set_base_tex(ctx.MATS['MR_Appl'], img(tex('room_appliances.png'), False))
     pm('MR_Print', base=(1, 1, 1), rough=0.7)
     ctx._set_base_tex(ctx.MATS['MR_Print'], img(tex('room_prints.png'), False))
+    pm('MR_Wreck', base=(1, 1, 1), rough=0.85)                       # P5b-1: 220 の壁の文字・引っかき傷(地は壁のクロス)・写真
+    ctx._set_base_tex(ctx.MATS['MR_Wreck'], img(tex('room_wreck.jpg'), False))
     pm('MR_Mirror', base=(0.9, 0.9, 0.9), rough=0.03, metal=1.0)
     pm('MR_Metal', base=(0.62, 0.62, 0.61), rough=0.35, metal=1.0)
     pm('MR_Facade', files=tf('concrete', rough=False), size=2.0, rough=0.85); MT['MR_Facade']['tint'] = [1.3, 1.3, 1.27]
@@ -499,6 +502,26 @@ def _locker(col, it, base, room):
     d.finish(col, dict(ROOMS_PROPS, n2_kind='lockerdoor', n2_room=room, n2_sign=-1))
 
 
+def _rot_about(pts, n, deg):
+    """4 点を中心のまわりに法線 n の軸で deg 度回す(巻きの向きは変わらない)。"""
+    c = [sum(p[i] for p in pts) / 4 for i in range(3)]
+    t = math.radians(deg)
+    ct, st = math.cos(t), math.sin(t)
+    out = []
+    for p in pts:
+        v = [p[i] - c[i] for i in range(3)]
+        cr = (n[1] * v[2] - n[2] * v[1], n[2] * v[0] - n[0] * v[2], n[0] * v[1] - n[1] * v[0])
+        dt = n[0] * v[0] + n[1] * v[1] + n[2] * v[2]
+        out.append(tuple(c[i] + v[i] * ct + cr[i] * st + n[i] * dt * (1 - ct) for i in range(3)))
+    return out
+
+
+def _floor_sheet(b, cx, cz, y, w, h, deg, mat, rect):
+    """床に平たく置いた紙・写真(上面 1 枚)。"""
+    pts = box_faces((cx - w / 2, y, cz - h / 2), (cx + w / 2, y, cz + h / 2))['+y'][0]
+    b.aquad(_rot_about(pts, (0, 1, 0), deg), (0, 1, 0), mat, rect)
+
+
 def build_unit_items(room, col):
     it_all = room['interior']['items']
     var = room['interior']['variant']
@@ -542,6 +565,13 @@ def build_unit_items(room, col):
             L.pbox(b, W / 2 - 0.025, W / 2 + 0.025, 0.06, 0.42, D / 2 - 0.025, D / 2 + 0.025, 'steel', gloss=True)
             L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray')
             L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray')
+        elif k == 'chairfallen':
+            # P5b-1(220): 横倒しの椅子。椅子の「上」= a(0→0.88)、横幅 = y(0.44)、前後 = d(0.38)
+            L.pbox(b, 0.42, 0.49, 0.02, 0.42, 0.0, 0.36, 'chair')               # 座面(縦になった)
+            L.pbox(b, 0.52, 0.88, 0.04, 0.40, 0.32, 0.37, 'chair')              # 背もたれ(床に寝た)
+            for yy in (0.03, 0.37):
+                for dd in (0.02, 0.31):
+                    L.pbox(b, 0.0, 0.42, yy, yy + 0.03, dd, dd + 0.03, 'steel', gloss=True)   # 脚(横向き)
         elif k == 'pillar':
             mn, mx = L.mm(0, L.W, 0, L.H, 0, L.D)
             b.box(mn, mx, 'MR_Wall', keep=lambda kk, c, n, Bk=L.back_key(): kk not in ('+y', '-y', Bk))
@@ -655,6 +685,30 @@ def build_unit_decor(room, col):
                 L.pbox(b, a, a + 0.1, 0, 0.08, d, d + 0.26, ('black', 'black', 'white', 'white')[i])
         elif k == 'umbrella':
             L.pbox(b, 0, W, 0, H, 0, D, 'navy')
+        # ---- P5b-1: 220(前作の痕跡の部屋) ----
+        elif k == 'wreckmark':
+            mn, mx = L.mm(0, W, 0, H, 0, D)
+            b.aquad(front_pts(mn, mx, L.front), (L.F[0], 0, L.F[1]), 'MR_Wreck', WRKUV[it['cell']])
+        elif k == 'photo':
+            mn, mx = L.mm(0, W, 0, H, 0, D)
+            n = (L.F[0], 0, L.F[1])
+            b.aquad(_rot_about(front_pts(mn, mx, L.front), n, it.get('rot', 0)), n, 'MR_Wreck', WRKUV[it['cell']])
+        elif k == 'photofloor':
+            x0, z0, x1, z1 = it['b']
+            _floor_sheet(b, (x0 + x1) / 2, (z0 + z1) / 2, base + 0.0125, 0.2, 0.15, it.get('rot', 0), 'MR_Wreck', WRKUV[it['cell']])
+        elif k == 'papersfloor':
+            import random
+            rr = random.Random(it.get('seed', 1))
+            x0, z0, x1, z1 = it['b']
+            for i in range(it.get('n', 20)):
+                cx, cz = x0 + 0.12 + rr.random() * (x1 - x0 - 0.24), z0 + 0.12 + rr.random() * (z1 - z0 - 0.24)
+                w, h = (0.21, 0.297) if rr.random() < 0.5 else (0.297, 0.21)
+                _floor_sheet(b, cx, cz, base + 0.0095 + i * 0.0004, w, h, rr.uniform(-180, 180), 'MR_Print', PRTUV['papers'])
+        elif k == 'booksfloor':
+            for i, (a, d, key) in enumerate(((0.02, 0.02, 'book1'), (0.2, 0.1, 'book2'), (0.33, 0.0, 'book4'))):
+                if a + 0.16 > W:
+                    continue
+                L.pbox(b, a, a + 0.16, 0, 0.03, d, min(D, d + 0.22), key)
     b.finish(col, {'n2_kind': 'decor', 'n2_room': rid})
 
 

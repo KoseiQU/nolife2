@@ -201,7 +201,7 @@
   "2": {
    "y0": 2.9,
    "y1": 5.8,
-   "tris": 7577
+   "tris": 7749
   },
   "3": {
    "y0": 5.8,
@@ -221,7 +221,7 @@
   "6": {
    "y0": 14.5,
    "y1": 17.4,
-   "tris": 3646
+   "tris": 4432
   },
   "7": {
    "y0": 17.4,
@@ -231,34 +231,34 @@
  },
  "litWindows": [
   {
-   "room": "318",
-   "level": 3,
-   "curtain": "beige",
+   "room": "215",
+   "level": 2,
+   "curtain": "cream",
    "pos": [
-    21.22,
+    12.52,
+    4.0,
+    28.356
+   ],
+   "facing": "S"
+  },
+  {
+   "room": "314",
+   "level": 3,
+   "curtain": "cream",
+   "pos": [
+    9.62,
     6.9,
     28.356
    ],
    "facing": "S"
   },
   {
-   "room": "416",
-   "level": 4,
-   "curtain": "wine",
-   "pos": [
-    24.12,
-    9.8,
-    28.356
-   ],
-   "facing": "S"
-  },
-  {
-   "room": "217",
-   "level": 2,
+   "room": "514",
+   "level": 5,
    "curtain": "teal",
    "pos": [
-    18.32,
-    4.0,
+    24.12,
+    12.7,
     28.356
    ],
    "facing": "S"
@@ -275,35 +275,35 @@
    "facing": "W"
   },
   {
-   "room": "503",
-   "level": 5,
-   "curtain": "cream",
+   "room": "207",
+   "level": 2,
+   "curtain": "khaki",
    "pos": [
     -0.256,
-    12.7,
-    16.32
+    4.0,
+    19.22
    ],
    "facing": "W"
   },
   {
-   "room": "309",
-   "level": 3,
-   "curtain": "beige",
+   "room": "409",
+   "level": 4,
+   "curtain": "oldgray",
    "pos": [
     14.056,
-    6.9,
-    16.32
+    9.8,
+    10.52
    ],
    "facing": "E"
   },
   {
-   "room": "407",
-   "level": 4,
+   "room": "308",
+   "level": 3,
    "curtain": "wine",
    "pos": [
     14.056,
-    9.8,
-    16.32
+    6.9,
+    19.22
    ],
    "facing": "E"
   },

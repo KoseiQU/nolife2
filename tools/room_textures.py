@@ -4,7 +4,9 @@
 #   room_appliances.png / .json          … 家電と設備の正面(洗濯機・冷蔵庫・電子レンジ・エアコン・室外機・排水口・スイッチ・インターホン・
 #                                          分電盤・洗面台・シューズケース・浴室の折戸・ロッカー・モニター・ノートPC・時計・キーボックス)
 #   room_prints.png / .json              … 架空のポスター 6 種(図柄のみ・文字なし)・掲示板・本の背・書類・カレンダー・監視モニター・段ボール
-#   実在の製品・ブランド・ロゴ・文字は描かない。JSON の UV は Blender の規約(左下原点)。
+#   room_wreck.jpg / .json               … P5b-1: 220(前作の痕跡の部屋)の壁の文字・引っかき傷・顔のない風景の写真。地は壁のクロス(wall_cloth)を
+#                                          同じ縮尺で敷く(壁に直に書いた見え方)。文字は架空(「でられない」など。実在の名前・住所・日付は書かない)
+#   実在の製品・ブランド・ロゴ・文字は描かない(room_wreck の架空の落書きを除く)。JSON の UV は Blender の規約(左下原点)。
 import json, math, os
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -38,6 +40,7 @@ def run(save, n2tex, normal_from_height, OUT):
     _palette(save, n2tex, OUT)
     _appliances(save, OUT)
     _prints(save, OUT)
+    _wreck(save, OUT)
 
 
 # ---------------------------------------------------------------- フローリング
@@ -313,3 +316,156 @@ def _rail_bars(save):
                 im[:, x, :3] = shade
                 im[:, x, 3] = 1.0
     save('rail_bars.png', Image.fromarray((np.clip(im, 0, 1) * 255 + 0.5).astype(np.uint8), 'RGBA'))
+
+
+# ---------------------------------------------------------------- P5b-1: 220 の壁の文字・引っかき傷・写真
+WRECK = {
+    'writing1': (0, 0, 712, 400),      # 1.78 × 1.0 m(ベッドの上の壁)
+    'writing2': (712, 0, 312, 228),    # 0.96 × 0.7 m(トイレの壁)
+    'scratch1': (712, 228, 160, 368),  # 0.5 × 1.15 m(窓の横)
+    'photo1': (0, 400, 200, 150), 'photo2': (200, 400, 200, 150), 'photo3': (400, 400, 200, 150),
+}
+_JP_FONTS = ['/System/Library/Fonts/ヒラギノ丸ゴ ProN W4.ttc', '/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc', '/System/Library/Fonts/ヒラギノ明朝 ProN.ttc']
+
+
+def _font(size):
+    from PIL import ImageFont
+    for f in _JP_FONTS:
+        if os.path.exists(f):
+            try:
+                return ImageFont.truetype(f, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def _wall_bg(OUT, w, h, ppm):
+    """壁のクロスを同じ縮尺(1m = ppm px)で敷いた地。MR_Wall の tint(1.02, 1.02, 0.99)も掛ける。"""
+    wc = Image.open(os.path.join(OUT, 'wall_cloth_albedo.jpg')).convert('RGB')
+    t = max(8, int(round(ppm)))
+    wc = wc.resize((t, t), Image.LANCZOS)
+    bg = Image.new('RGB', (w, h))
+    for yy in range(0, h, t):
+        for xx in range(0, w, t):
+            bg.paste(wc, (xx, yy))
+    a = np.asarray(bg).astype(np.float32) * np.array([1.02, 1.02, 0.99], np.float32)
+    return Image.fromarray(np.clip(a, 0, 255).astype(np.uint8))
+
+
+def _scrawl(layer, text, xy, size, ink, rng, angle=0.0, jitter=1.6):
+    """手書きらしく: 1 文字ずつ大きさ・傾き・位置を少し揺らし、太さを重ね書きで出す。"""
+    from PIL import ImageDraw
+    x, y = xy
+    for ch in text:
+        fs = int(size * (0.86 + rng.random() * 0.3))
+        f = _font(fs)
+        g = Image.new('L', (fs * 2, fs * 2), 0)
+        gd = ImageDraw.Draw(g)
+        for k in range(3):   # ペン先のかすれ・重ね書き
+            gd.text((fs * 0.5 + rng.normal(0, jitter), fs * 0.4 + rng.normal(0, jitter)), ch, font=f, fill=int(170 + 85 * rng.random()))
+        # 手で書いた揺れ: せん断＋細かい波の歪み(活字の形を崩す)
+        sh = rng.normal(0, 0.18)
+        g = g.transform(g.size, Image.AFFINE, (1, sh, -sh * fs, rng.normal(0, 0.08), 1 + rng.normal(0, 0.06), 0), resample=Image.BICUBIC)
+        ga = np.asarray(g).astype(np.float32)
+        hh, ww = ga.shape
+        yy, xx = np.mgrid[0:hh, 0:ww]
+        amp = min(1.0, fs / 54.0)
+        dx = amp * (2.2 * np.sin(yy / (4 + rng.random() * 4) + rng.random() * 6) + 1.4 * np.sin(yy / 13.0 + rng.random() * 6))
+        dy = amp * 1.8 * np.sin(xx / (5 + rng.random() * 4) + rng.random() * 6)
+        ga = ga[np.clip(yy + dy, 0, hh - 1).astype(int), np.clip(xx + dx, 0, ww - 1).astype(int)]
+        ga *= 0.75 + 0.25 * rng.random()
+        g = Image.fromarray(np.clip(ga, 0, 255).astype(np.uint8)).rotate(angle + rng.normal(0, 8), resample=Image.BICUBIC)
+        layer.paste(Image.new('RGB', g.size, ink), (int(x - fs * 0.5), int(y + rng.normal(0, size * 0.06) - fs * 0.4)), g)
+        x += fs * (0.82 + rng.random() * 0.22)
+    return x
+
+
+def _scratches(d, x0, y0, w, h, n, rng, col=(58, 50, 46), width=(1, 3)):
+    """爪で掻いたような細い筋(3〜4 本の束)。"""
+    for i in range(n):
+        sx, sy = x0 + rng.random() * w * 0.8, y0 + rng.random() * h * 0.5
+        L = h * (0.25 + rng.random() * 0.45)
+        ang = math.radians(90 + rng.normal(0, 12))
+        for k in range(int(3 + rng.random() * 2)):
+            ox = k * (5 + rng.random() * 3)
+            pts = []
+            for t in np.linspace(0, 1, 9):
+                pts.append((sx + ox + math.cos(ang) * L * t + rng.normal(0, 1.2), sy + math.sin(ang) * L * t))
+            d.line(pts, fill=tuple(int(c * (0.8 + 0.4 * rng.random())) for c in col), width=int(width[0] + rng.random() * (width[1] - width[0] + 1)))
+
+
+def _wreck(save, OUT):
+    W = H = 1024
+    im = Image.new('RGB', (W, H), (200, 198, 192))
+    rng = np.random.default_rng(220)
+    ink = (34, 28, 26)          # 黒いマーカー
+    rust = (78, 30, 24)         # 乾いた赤茶(血ではない。古いマーカーの色)
+    # --- writing1: ベッドの上の壁一面。大きな「でられない」を何度も、間に小さな字と正の字の線、引っかき傷 ---
+    x, y, w, h = WRECK['writing1']
+    ppm = h / 1.0
+    bg = _wall_bg(OUT, w, h, ppm)
+    d = ImageDraw.Draw(bg)
+    _scratches(d, 20, 10, w - 40, h - 20, 7, rng)
+    for i, (tx, ty, sz, ang, txt, col) in enumerate((
+            (40, 40, 64, 3, 'でられない', ink), (300, 120, 46, -4, 'でられない', ink), (60, 210, 54, 6, 'でられない', rust),
+            (420, 250, 40, -2, 'でられない', ink), (380, 30, 30, 2, 'かぎ は どこ', ink), (90, 320, 30, -5, 'あいつは ずっと みている', rust),
+            (470, 330, 26, 1, '６かい', ink))):
+        _scrawl(bg, txt, (x + tx - x, ty), sz, col, rng, angle=ang)
+    # 正の字のような線の束(数えた跡。文字ではなく線)
+    for g in range(9):
+        gx, gy = 560 + (g % 3) * 46, 120 + (g // 3) * 52
+        for k in range(4):
+            d.line([(gx + k * 8, gy + rng.normal(0, 2)), (gx + k * 8 + rng.normal(0, 2), gy + 38)], fill=ink, width=3)
+        d.line([(gx - 6, gy + 30), (gx + 34, gy + 6)], fill=ink, width=3)
+    bg = bg.filter(ImageFilter.GaussianBlur(0.6))
+    im.paste(bg, (x, y))
+    # --- writing2: トイレの壁。小さく何行も ---
+    x, y, w, h = WRECK['writing2']
+    bg = _wall_bg(OUT, w, h, h / 0.7)
+    d = ImageDraw.Draw(bg)
+    for i, txt in enumerate(('かぎ', 'かぎ', 'かんりにん', 'みるな', 'でられない')):
+        _scrawl(bg, txt, (20 + (i % 2) * 60 + rng.random() * 30, 18 + i * 40), 30, ink if i % 3 else rust, rng, angle=rng.normal(0, 4))
+    _scratches(d, 180, 10, 120, h - 20, 3, rng)
+    im.paste(bg.filter(ImageFilter.GaussianBlur(0.5)), (x, y))
+    # --- scratch1: 窓の横。爪の引っかき傷(下の方が濃い) ---
+    x, y, w, h = WRECK['scratch1']
+    bg = _wall_bg(OUT, w, h, h / 1.15)
+    d = ImageDraw.Draw(bg)
+    _scratches(d, 10, 40, w - 20, h - 60, 6, rng, col=(70, 60, 54), width=(2, 4))
+    _scratches(d, 10, h * 0.45, w - 20, h * 0.5, 4, rng, col=(52, 30, 26), width=(2, 3))
+    im.paste(bg.filter(ImageFilter.GaussianBlur(0.7)), (x, y))
+    # --- 写真 3 枚: 顔のない風景(山並み・水面・森・道)。白い縁、古びた色 ---
+    scenes = (
+        ((150, 168, 182), (96, 110, 92), (64, 82, 70)),     # 曇り空・山・湖
+        ((196, 176, 150), (120, 104, 84), (70, 64, 52)),    # 夕方・丘・道
+        ((120, 136, 150), (58, 76, 60), (38, 50, 40)),      # 森
+    )
+    for i, k in enumerate(('photo1', 'photo2', 'photo3')):
+        x, y, w, h = WRECK[k]
+        ph = Image.new('RGB', (w, h), (232, 228, 214))
+        pd = ImageDraw.Draw(ph)
+        sky, mid, low = scenes[i]
+        bx0, by0, bx1, by1 = 10, 10, w - 10, h - 22
+        for yy in range(by0, by1):
+            t = (yy - by0) / (by1 - by0)
+            pd.line([(bx0, yy), (bx1, yy)], fill=tuple(int(sky[c] * (1 - 0.3 * t)) for c in range(3)))
+        ridge = [(bx0, by1)]
+        for xx in range(bx0, bx1 + 1, 6):
+            ridge.append((xx, by0 + (by1 - by0) * (0.42 + 0.12 * math.sin(xx * 0.05 + i) + 0.05 * rng.random())))
+        ridge.append((bx1, by1))
+        pd.polygon(ridge, fill=mid)
+        pd.rectangle([bx0, int(by0 + (by1 - by0) * 0.72), bx1, by1], fill=low)
+        if i == 0:
+            pd.rectangle([bx0, int(by0 + (by1 - by0) * 0.66), bx1, int(by0 + (by1 - by0) * 0.74)], fill=(150, 160, 170))
+        if i == 1:
+            pd.polygon([(w // 2 - 6, by1), (w // 2 + 6, by1), (w // 2 + 2, int(by0 + (by1 - by0) * 0.6)), (w // 2 - 2, int(by0 + (by1 - by0) * 0.6))], fill=(150, 140, 120))
+        if i == 2:
+            for t in range(14):
+                tx = bx0 + int(rng.random() * (bx1 - bx0))
+                pd.polygon([(tx - 8, by1), (tx + 8, by1), (tx, by0 + 20 + int(rng.random() * 30))], fill=(30 + int(rng.random() * 20), 44, 34))
+        # 色あせ・粒子
+        a = np.asarray(ph).astype(np.float32)
+        a = a * 0.86 + np.array([28, 22, 10], np.float32) + rng.normal(0, 5, a.shape)
+        im.paste(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.5)), (x, y))
+    save('room_wreck.jpg', im, q=88)
+    _uvjson(WRECK, W, H, OUT, 'room_wreck.json')
