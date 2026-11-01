@@ -12,7 +12,7 @@
 # 7F は屋上B(building.roofB: 7F の上の屋根)も同じ .blend に含める(DESIGN §2.3 追記)。
 
 import bpy, bmesh, json, math, os, sys
-from mathutils import Vector
+from mathutils import Vector, Matrix
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -512,6 +512,9 @@ def build_materials():
     # P3c-2: 廊下端の窓(外が見えるガラス)。枠の外側・見込み = アルミ(ライトマップなし・実行時の月明かり)、ガラス = 1枚の面(実行時は両面の半透明＋映り込み＋汚れの粗さ)
     pbr_material('MX_CorrAlu', base=(0.40, 0.41, 0.40), rough=0.42, metal=0.0)
     pbr_material('MX_CorrGlass', base=(0.55, 0.62, 0.66), rough=0.05, alpha=0.14, files={'roughness': tex('glass_smudge.jpg')})
+    # P5b-3: シアターの鉄枠のガラス扉(黒に近い暗いグレーのスチール。半つやの焼付塗装)・段床の段鼻(アルミの見切り)・足元灯
+    pbr_material('M_SteelDark', base=(0.05, 0.052, 0.056), rough=0.42, metal=0.3)
+    pbr_material('M_StepLight', base=(0.9, 0.85, 0.75), rough=0.4, emit=(1.0, 0.74, 0.45), emit_strength=2.2)
     build_rooms.build_materials(sys.modules[__name__])   # P3b: MR_*(部屋の組のライトマップ)・MX_*(ライトマップなし)
     # p0b の材質の実行時テクスチャ(n2tex.save_png を差し替え済みなので画像は build/tex を指す)
     for n in ('M_WireGlass', 'M_WireGlassOut', 'M_EVDisplay', 'M_EVPlate', 'M_CarStone', 'M_ExitSignSq'):
@@ -591,7 +594,8 @@ def build_door(dd, col, base_y=None, zsets=('floor',)):
     if dd['auto']:
         return build_auto_door(dd, col, operable=True)
     fr = MeshBuilder(f'DoorFrame_{rid}')
-    FM = 'M_SteelFrameP' if dd['steel'] else 'M_Frame'
+    glazed = dd['room']['door'].get('glazed')   # P5b-3: 'sus' = ステンレス枠のガラス扉(食堂)、'steel' = 鉄枠のガラス扉(シアターの 2 枚)
+    FM = 'M_SteelFrameP' if dd['steel'] else 'M_SteelDark' if glazed == 'steel' else 'M_HairV' if glazed == 'sus' else 'M_Frame'
     lin = MeshBuilder(f'Lintel_{rid}')
     # 屋上B(7F の屋根の上の空気)は扉の高さの判定に入れない(7F の居室の扉の垂れ壁が屋根を突き抜けた)
     zin = zone_at(px - fx * 0.2, pz - fz * 0.2, sets=zsets)
@@ -611,7 +615,7 @@ def build_door(dd, col, base_y=None, zsets=('floor',)):
         fr.box((gx0, y0, gz0), (gx1, y0 + DOOR_H, gz0 + JAMB), FM)
         fr.box((gx0, y0, gz1 - JAMB), (gx1, y0 + DOOR_H, gz1), FM)
     fr.box((gx0, y0 + DOOR_H, gz0), (gx1, y0 + DOOR_H + HEAD_H, gz1), FM)
-    fr.box((gx0, y0, gz0), (gx1, y0 + SILL_H, gz1), 'M_SUS' if dd['steel'] else FM)
+    fr.box((gx0, y0, gz0), (gx1, y0 + SILL_H, gz1), 'M_SUS' if dd['steel'] or glazed else FM)
     t, cw = 0.012, 0.04
     sides = [1] + ([-1] if dd['inside_visible'] else [])
     for side in sides:
@@ -670,10 +674,12 @@ def build_door(dd, col, base_y=None, zsets=('floor',)):
         leaf.box((xx_[0], ly0 + leaf_h - 0.11, lmin[2] + 0.05), (xx_[1], ly0 + leaf_h - 0.05, lmin[2] + 0.33), 'M_Closer')
         xa_ = (face_, face_ + 0.03) if fx > 0 else (face_ - 0.03, face_)
         leaf.box((xa_[0], ly0 + leaf_h - 0.05, lmin[2] + 0.28), (xa_[1], ly0 + leaf_h - 0.02, lmin[2] + 0.46), 'M_Closer')
+    elif glazed:
+        glass_leaf(leaf, dd, glazed, lmin, lmax, hinge, col)
     else:
         leaf.box(lmin, lmax, leaf_mat, keep=lkeep)
     hy = ly0 + 0.95
-    for side in sides:
+    for side in (sides if not glazed else []):   # ガラス扉の取っ手は glass_leaf が付ける
         sx, sz = fx * side, fz * side
         if dd['horiz']:
             face = (lmax[2] if sz > 0 else lmin[2])
@@ -711,8 +717,81 @@ def build_door(dd, col, base_y=None, zsets=('floor',)):
         sign = 1.0 if room_dir[0] > 0 else -1.0
     props = {'n2_kind': 'door', 'n2_room': rid, 'n2_operable': 1 if dd['operable'] else 0,
              'n2_open_sign': sign, 'n2_open_angle': 1.75 if dd['operable'] else 0.0}
-    leaf.finish(col, props)
+    leaf_ob = leaf.finish(col, props)
+    if glazed and GLASS_PENDING:
+        # ガラス(MX_CorrGlass の 1 枚の面)は扉板の子(一緒に回る)。種類 corrglass = ベイクせず光も遮らない・ライトマップなし
+        gl_mb = GLASS_PENDING.pop()
+        gl_ob = gl_mb.finish(col, {'n2_kind': 'corrglass', 'n2_lm': 0, 'n2_room': rid})
+        if gl_ob and leaf_ob:
+            gl_ob.parent = leaf_ob
+            gl_ob.matrix_parent_inverse = Matrix.Translation(g2b(*hinge)).inverted()
     return dict(id=rid, kind=dd['kind'], hinge=hinge, operable=dd['operable'], sign=sign)
+
+
+GLASS_PENDING = []
+
+
+def glass_leaf(leaf, dd, glazed, lmin, lmax, hinge, col):
+    """P5b-3: 枠＋透明ガラスの扉板(横向きの扉 = N/S 向きのみ)。
+    glazed='sus'  : 食堂。ヘアラインのステンレス枠(縦框 6cm・吊元 5cm・上框 7cm・下框 16cm)＋レバーハンドル(両面)。
+    glazed='steel': シアターの 2 枚。暗いスチール枠(縦框 9cm・上框 10cm・下は 26cm の蹴板)＋縦長の押し手(両面、ステンレスの丸棒)。
+    ガラスは 1 枚の面(MX_CorrGlass。実行時は廊下端の窓と同じ両面の半透明＋映り込み＋汚れの粗さ)を扉板の厚みの中央に。"""
+    assert dd['horiz'], 'glass_leaf: 横向きの扉のみ'
+    x0, y0_, z0 = lmin; x1, y1_, z1 = lmax
+    zc = (z0 + z1) / 2
+    hinge_left = hinge[0] <= (x0 + x1) / 2 + 1e-6      # 吊元 = x0 側
+    if glazed == 'steel':
+        FMAT, st_h, st_l, top_w, bot_w, t = 'M_SteelDark', 0.09, 0.09, 0.10, 0.26, LEAF_T + 0.01
+    else:
+        FMAT, st_h, st_l, top_w, bot_w, t = 'M_HairV', 0.05, 0.06, 0.07, 0.16, LEAF_T
+    za, zb = zc - t / 2, zc + t / 2
+    sl, sr = (st_h, st_l) if hinge_left else (st_l, st_h)
+    leaf.box((x0, y0_, za), (x0 + sl, y1_, zb), FMAT)                              # 左の縦框
+    leaf.box((x1 - sr, y0_, za), (x1, y1_, zb), FMAT)                              # 右の縦框
+    leaf.box((x0 + sl, y1_ - top_w, za), (x1 - sr, y1_, zb), 'M_HairH' if glazed == 'sus' else FMAT)   # 上框
+    leaf.box((x0 + sl, y0_, za), (x1 - sr, y0_ + bot_w, zb), 'M_HairH' if glazed == 'sus' else FMAT)   # 下框(鉄扉は蹴板)
+    # ガラスの押縁(枠の内側の見切り。両面に 1.5cm)
+    gx0, gx1, gy0, gy1 = x0 + sl, x1 - sr, y0_ + bot_w, y1_ - top_w
+    bead = 0.015
+    for sg in (1, -1):
+        zf = zc + sg * t / 2
+        zz = (zf, zf + sg * 0.008)
+        bz0, bz1 = min(zz), max(zz)
+        for (a0, a1, b0, b1) in ((gx0, gx0 + bead, gy0, gy1), (gx1 - bead, gx1, gy0, gy1), (gx0, gx1, gy0, gy0 + bead), (gx0, gx1, gy1 - bead, gy1)):
+            leaf.box((a0, b0, bz0), (a1, b1, bz1), FMAT, keep=lambda k, c, n: k not in ('+z', '-z') or (k == ('+z' if sg > 0 else '-z')))
+    # 見込み(枠の内側の小口)
+    leaf.quad([(gx0, gy0, za), (gx0, gy0, zb), (gx0, gy1, zb), (gx0, gy1, za)], (1, 0, 0), FMAT)
+    leaf.quad([(gx1, gy0, zb), (gx1, gy0, za), (gx1, gy1, za), (gx1, gy1, zb)], (-1, 0, 0), FMAT)
+    leaf.quad([(gx0, gy1, za), (gx1, gy1, za), (gx1, gy1, zb), (gx0, gy1, zb)], (0, -1, 0), FMAT)
+    leaf.quad([(gx0, gy0, zb), (gx1, gy0, zb), (gx1, gy0, za), (gx0, gy0, za)], (0, 1, 0), FMAT)
+    # 取っ手(戸先の縦框。両面)
+    xl = x1 - sr / 2 if hinge_left else x0 + sl / 2
+    for sg in (1, -1):
+        zf = zc + sg * t / 2
+        if glazed == 'steel':
+            # 縦長の押し手(丸棒 φ25 相当の角材・長さ 0.9m)と上下の脚
+            zb0 = zf + sg * 0.055
+            zz = sorted((zb0, zb0 + sg * 0.025))
+            leaf.box((xl - 0.0125, y0_ + 0.62, zz[0]), (xl + 0.0125, y0_ + 1.52, zz[1]), 'M_Handle')
+            for yy in (0.70, 1.44):
+                zl = sorted((zf, zb0))
+                leaf.box((xl - 0.01, y0_ + yy - 0.01, zl[0]), (xl + 0.01, y0_ + yy + 0.01, zl[1]), 'M_Handle')
+        else:
+            hy = y0_ + 0.95
+            hx = xl
+            zz = sorted((zf, zf + sg * 0.012))
+            leaf.box((hx - 0.022, hy - 0.06, zz[0]), (hx + 0.022, hy + 0.06, zz[1]), 'M_Handle')
+            zz = sorted((zf + sg * 0.012, zf + sg * 0.06))
+            leaf.box((hx - 0.012, hy - 0.012, zz[0]), (hx + 0.012, hy + 0.012, zz[1]), 'M_Handle')
+            zl = sorted((zf + sg * 0.045, zf + sg * 0.07))
+            dx = -1 if hinge_left else 1                                         # レバーは吊元の方へ伸びる
+            xa, xb = sorted((hx, hx + dx * 0.13))
+            leaf.box((xa, hy - 0.011, zl[0]), (xb, hy + 0.011, zl[1]), 'M_Handle')
+    # ガラス(1 枚の面。両面は実行時の DoubleSide)
+    gm = MeshBuilder(f'DoorGlass_{dd["id"]}', origin=hinge)
+    q = gm.quad([(gx0, gy0, zc), (gx1, gy0, zc), (gx1, gy1, zc), (gx0, gy1, zc)], (0, 0, 1), 'MX_CorrGlass')
+    orient(q, (0, 0, 1))
+    GLASS_PENDING.append(gm)
 
 
 def plate_on_leaf(leaf, dd, lmin, lmax, rid):

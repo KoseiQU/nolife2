@@ -322,10 +322,11 @@ function commonAreas1F() {
   // 南扉=縦廊下の突き当たり、北開口=北階段方面の通路。
   // P10(DESIGN §2「食堂の出入口にも開閉式のドア」): 主開口(南扉)にだけ開閉式ドアを付ける
   // (common=施錠なし・常時operable・見た目は共用ドア=号室プレートなし)。北開口(通路)は現状維持。
+  // P5b-3(DESIGN §2 ①): 南扉は透明のガラス扉(ステンレスのヘアライン枠＋透明ガラス。glazed='sus')
   rooms.push({
     id: 'DINING', kind: 'dining',
     rect: [0, 4.35, WEST_WING_X1, 11.6 - 4.35],
-    door: { pos: [VCORR_CX, 11.6], facing: 'S', locked: false, common: true },
+    door: { pos: [VCORR_CX, 11.6], facing: 'S', locked: false, common: true, glazed: 'sus' },
     openings: [{ side: 'N', pos: [VCORR_CX, 4.35], width: 1.2 }],
   });
   // 南棟南面(西→東)。P3a(図面照合 2026-10-31・写真 entrance_*/mailboxes_1F/lobby_1F_corridor):

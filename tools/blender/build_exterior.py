@@ -183,6 +183,8 @@ def extract_band(L, col):
             continue
         if k == 'winsash' and o.parent is not None:
             continue
+        if k == 'corrglass' and o.parent is not None:   # P5b-3: 扉板の子のガラス(食堂・シアターのガラス扉)は館内の物
+            continue
         keep.append(o)
     for o in new:
         if o not in keep:
