@@ -36,7 +36,7 @@ export const DEF = {
   exit: [0, 0.02],                    // 入口の扉(反転の前の戻る口)
   slots: {
     desk: [DK.u, 0.0, DK.v],
-    key: [0.22, 0.765, DK.v - 0.2],   // 地下の鉄扉の鍵(机の手前の縁)
+    key: [0.22, 0.765, DK.v + 0.18],  // 地下の鉄扉の鍵(机の天板の手前寄り)
     ambush: [0, 0.0, 46.3],           // 管理人が現れる所(反転後の出口 = 南の玄関の口)
   },
 };
@@ -174,7 +174,9 @@ function makeMaterial(U) {
             // 天窓(格子の近い 3×3)。下向きの面光源のつもり(真下が明るく、斜めは弱い)
             float gi = clamp(floor((Lc.x - ${SK.u[0].toFixed(1)}) / 8.0 + 0.5), 0.0, ${(SK.u.length - 1).toFixed(1)});
             float gj = clamp(floor((Lc.y - ${SK.v[0].toFixed(1)}) / 8.0 + 0.5), 0.0, ${(SK.v.length - 1).toFixed(1)});
+            int Rk = uOn > 0.01 ? 1 : 0;   // 消灯後は真上の天窓のかすかな光だけ(性能)
             for (int a = -1; a <= 1; a++) for (int b = -1; b <= 1; b++) {
+              if (abs(a) > Rk || abs(b) > Rk) continue;
               float i = gi + float(a), j = gj + float(b);
               if (i < 0.0 || i > ${(SK.u.length - 1).toFixed(1)} || j < 0.0 || j > ${(SK.v.length - 1).toFixed(1)}) continue;
               vec3 c = vec3(${(OX + SK.u[0]).toFixed(1)} + i * 8.0, uY + ${(HL.h + 0.3).toFixed(2)}, ${(OZ + SK.v[0]).toFixed(1)} + j * 8.0);
@@ -297,25 +299,27 @@ function buildDesk(b, R) {
   b.surf = SURF.metal;
   for (let k = 0; k < 5; k++) {
     const cx = X(u - 0.7 + k * 0.17 + R() * 0.05), cz = Z(v + 0.3 + R() * 0.3);
-    b.col = [0.62, 0.55, 0.38];
+    b.col = [0.42, 0.37, 0.26];
     b.addGeo(new THREE.TorusGeometry(0.035, 0.004, 5, 14).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(cx, Y(0.765), cz));
-    for (let j = 0; j < 6; j++) { const a = R() * Math.PI * 2; b.col = R() < 0.5 ? [0.66, 0.58, 0.36] : [0.62, 0.62, 0.6]; b.rbox(cx + Math.cos(a) * 0.06, Y(0.764), cz + Math.sin(a) * 0.06, 0.05, 0.004, 0.017, -a); }
+    for (let j = 0; j < 6; j++) { const a = R() * Math.PI * 2; b.col = R() < 0.5 ? [0.46, 0.4, 0.25] : [0.42, 0.42, 0.4]; b.rbox(cx + Math.cos(a) * 0.06, Y(0.764), cz + Math.sin(a) * 0.06, 0.05, 0.004, 0.017, -a); }
   }
   b.surf = SURF.prop; b.col = [0.42, 0.36, 0.26]; b.rbox(X(u + 0.45), Y(0.775), Z(v + 0.45), 0.3, 0.025, 0.22, 0.15);
   b.col = [0.18, 0.16, 0.14]; b.rbox(X(u + 0.62), Y(0.77), Z(v + 0.65), 0.12, 0.02, 0.12); b.rbox(X(u + 0.62), Y(0.95), Z(v + 0.68), 0.02, 0.36, 0.02, 0, 0.25);
-  // 鍵の板(机の奥。自立の枠に有孔板・部屋番号の札付きの鍵がびっしり)
-  const kb = { u0: u - 1.3, u1: u + 1.3, v: v + d + 1.25, y0: 0.55, y1: 2.05 };
-  b.surf = SURF.dark;
-  b.box(X(kb.u0), Y(kb.y0), Z(kb.v), X(kb.u1), Y(kb.y1), Z(kb.v + 0.03));
-  for (const a of [kb.u0, kb.u1 - 0.05]) b.box(X(a), Y(0), Z(kb.v - 0.2), X(a + 0.05), Y(kb.y1 + 0.05), Z(kb.v + 0.25), 'px nx py pz nz');
+  // 鍵の板(机の奥。自立の枠に有孔板・部屋番号の札付きの鍵がびっしり)。左右 2 枚の間は空ける(南の出口から現れる管理人が机の前から見える)
   const tags = [[0.75, 0.2, 0.16], [0.86, 0.74, 0.3], [0.25, 0.42, 0.68], [0.82, 0.8, 0.74], [0.3, 0.55, 0.32]];
-  for (let r = 0; r < 9; r++) for (let c = 0; c < 15; c++) {
-    if (R() < 0.05) continue;
-    const kx = X(kb.u0 + 0.12 + c * ((kb.u1 - kb.u0 - 0.24) / 14)), ky = Y(kb.y1 - 0.1 - r * 0.16), kz = Z(kb.v) - 0.012;
-    const sw = (R() - 0.5) * 0.25;
-    b.surf = SURF.metal; b.col = [0.6, 0.6, 0.58]; b.rbox(kx, ky - 0.005, kz, 0.004, 0.02, 0.012);   // フック
-    b.col = R() < 0.6 ? [0.68, 0.6, 0.38] : [0.64, 0.64, 0.62]; b.rbox(kx, ky - 0.045, kz - 0.006, 0.016, 0.05, 0.003, 0, 0, sw);   // 鍵
-    b.surf = SURF.tag; b.col = tags[(R() * tags.length) | 0]; b.rbox(kx + Math.sin(sw) * 0.04, ky - 0.1, kz - 0.008, 0.028, 0.05, 0.004, 0, 0, sw);   // 札
+  for (const kb of KEYBOARDS.map(([a0, a1]) => ({ u0: u + a0, u1: u + a1, v: v + d + 1.25, y0: 0.55, y1: 2.05 }))) {
+    b.surf = SURF.dark;
+    b.box(X(kb.u0), Y(kb.y0), Z(kb.v), X(kb.u1), Y(kb.y1), Z(kb.v + 0.03));
+    for (const a of [kb.u0, kb.u1 - 0.05]) b.box(X(a), Y(0), Z(kb.v - 0.2), X(a + 0.05), Y(kb.y1 + 0.05), Z(kb.v + 0.25), 'px nx py pz nz');
+    const nc = 7;
+    for (let r = 0; r < 9; r++) for (let c = 0; c < nc; c++) {
+      if (R() < 0.05) continue;
+      const kx = X(kb.u0 + 0.12 + c * ((kb.u1 - kb.u0 - 0.24) / (nc - 1))), ky = Y(kb.y1 - 0.1 - r * 0.16), kz = Z(kb.v) - 0.012;
+      const sw = (R() - 0.5) * 0.25;
+      b.surf = SURF.metal; b.col = [0.6, 0.6, 0.58]; b.rbox(kx, ky - 0.005, kz, 0.004, 0.02, 0.012);   // フック
+      b.col = R() < 0.6 ? [0.68, 0.6, 0.38] : [0.64, 0.64, 0.62]; b.rbox(kx, ky - 0.045, kz - 0.006, 0.016, 0.05, 0.003, 0, 0, sw);   // 鍵
+      b.surf = SURF.tag; b.col = tags[(R() * tags.length) | 0]; b.rbox(kx + Math.sin(sw) * 0.04, ky - 0.1, kz - 0.008, 0.028, 0.05, 0.004, 0, 0, sw);   // 札
+    }
   }
   // 住人の持ち物の山(段ボール・袋・靴・傘・本・衣類)。机の左右と奥の脇
   const heap = (cu, cv, ru, rv, n) => {
@@ -336,6 +340,7 @@ function buildDesk(b, R) {
   heap(2.2, v + 1.5, 0.75, 1.2, 70);
   heap(-0.0, v + d + 2.1, 1.6, 0.45, 40);
 }
+const KEYBOARDS = [[-1.7, -0.45], [0.45, 1.7]];   // 鍵の板の u の範囲(机の中心から)
 const HEAPS = [[-2.2, DK.v + 1.5, 0.8, 1.25], [2.2, DK.v + 1.5, 0.8, 1.25], [0, DK.v + DK.d + 2.1, 1.7, 0.5]];   // 当たり(u, v, 半径 u, 半径 v)
 
 function buildPillarGeo() {
@@ -412,7 +417,7 @@ export function build(ctx) {
   col(ctx, HL.u0, HL.v1, -hw, HL.v1 + 0.2); col(ctx, hw, HL.v1, HL.u1, HL.v1 + 0.2);
   st.colPlugS = col(ctx, -hw, HL.v1, hw, HL.v1 + 0.2);
   st.colSouth = [col(ctx, -hw - 0.2, HL.v1, -hw, G.s[1]), col(ctx, hw, HL.v1, hw + 0.2, G.s[1]), col(ctx, -hw, G.s[1], hw, G.s[1] + 0.2)];
-  { const { u, v, w, d } = DK; st.colDesk = [col(ctx, u - w / 2, v, u + w / 2, v + d, 'furn', 0.76), col(ctx, u - 0.3, v + d + 0.2, u + 0.3, v + d + 0.75, 'furn', 1.0), col(ctx, u - 1.35, v + d + 1.15, u + 1.35, v + d + 1.35, 'furn', 2.1)]; }
+  { const { u, v, w, d } = DK; st.colDesk = [col(ctx, u - w / 2, v, u + w / 2, v + d, 'furn', 0.76), col(ctx, u - 0.3, v + d + 0.2, u + 0.3, v + d + 0.75, 'furn', 1.0), ...KEYBOARDS.map(([a0, a1]) => col(ctx, u + a0, v + d + 1.15, u + a1, v + d + 1.35, 'furn', 2.1))]; }
   for (const [cu, cv, ru, rv] of HEAPS) col(ctx, cu - ru * 0.85, cv - rv * 0.85, cu + ru * 0.85, cv + rv * 0.85, 'furn', 1.0);
   for (const p of st.pillars) p.col = col(ctx, p.u - X705.pillar.base / 2, p.v - X705.pillar.base / 2, p.u + X705.pillar.base / 2, p.v + X705.pillar.base / 2);
   st.colsBase = ctx.cols.slice();
@@ -537,7 +542,7 @@ export function update(dt, ctx) {
     // 扉が開いて廊下の灯りが差す(管理人が現れる直前から)
     st.open = Math.min(1, st.open + dt / 1.2 * (st.offT > 0.3 ? 1 : 0));
     st.southDoor.rotation.y = -0.55 * st.open;
-    U.uOpenS.value = st.open; U.uExitL.value.w = 0.55 * st.open;
+    U.uOpenS.value = st.open; U.uExitL.value.w = 1.3 * st.open;
     if (st.open > 0 && !st.creak) { st.creak = true; sfx(ctx, 'creak'); }
   }
   // 追跡: 広間の中では見失わない・経路は格子(nav)。歪み
