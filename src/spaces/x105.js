@@ -59,7 +59,8 @@ function makeMaterial(U) {
       .replace('#include <common>', `#include <common>
         attribute float aSurf; attribute float aWarp; attribute float aSeg;
         uniform float uTime, uWarp; uniform vec3 uPlayer;
-        varying vec3 vWP; varying float vSurf; varying float vSeg;`)
+        uniform vec4 uRunA[6]; uniform vec4 uRunB[6];
+        varying vec3 vWP; varying float vSurf; varying float vSeg; flat varying int vRun;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         {
           vec3 wp0 = (modelMatrix * vec4(transformed, 1.0)).xyz;
@@ -69,13 +70,27 @@ function makeMaterial(U) {
           transformed += objectNormal * amp * br;
         }`)
       .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>
-        vWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vSurf = aSurf; vSeg = aSeg;`);
+        vWP = (modelMatrix * vec4(transformed, 1.0)).xyz; vSurf = aSurf; vSeg = aSeg;
+        // どのレーンの光・見た目か(メッシュの原点で決める: 区画はレーンの中心線上、部品はレーンの端に置いてある。扉の板の手前の面は手前のレーンへ)
+        {
+          vec3 wn = normalize(mat3(modelMatrix) * objectNormal);
+          vec3 P0 = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+          float best = 1e9; vRun = 0;
+          for (int i = 0; i < 6; i++) {
+            vec4 a = uRunA[i]; if (uRunB[i].x < 0.5) continue;
+            float dx = abs(P0.x - a.x); float dz = max(max(a.y - P0.z, P0.z - a.z), 0.0);
+            float d = dx + dz * 4.0;
+            if (wn.z < -0.5 && P0.z < a.y + 0.3) d += 3.0;
+            if (wn.z > 0.5 && P0.z > a.z - 0.3) d += 3.0;
+            if (d < best) { best = d; vRun = i; }
+          }
+        }`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         uniform float uTime, uY, uOffZ, uLookBld, uLookGray, uLampGain, uBayGain, uExitGain;
         uniform vec4 uRunA[6]; uniform vec4 uRunB[6];
         uniform vec3 uLampBld, uLampGray, uLampBay, uLampExit;
-        varying vec3 vWP; varying float vSurf; varying float vSeg;
+        varying vec3 vWP; varying float vSurf; varying float vSeg; flat varying int vRun;
         float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
         float vnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(h21(i), h21(i + vec2(1, 0)), f.x), mix(h21(i + vec2(0, 1)), h21(i + vec2(1, 1)), f.x), f.y); }
@@ -95,19 +110,7 @@ function makeMaterial(U) {
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec3 P = vWP; float fy = P.y - uY;
-        vec3 wN0 = normalize(cross(dFdx(vWP), dFdy(vWP)));
-        // どのレーンの光・見た目か(扉の面は向きで手前のレーンへ)
-        gRun = 0; float best = 1e9;
-        for (int i = 0; i < 6; i++) {
-          vec4 a = uRunA[i]; vec4 b = uRunB[i];
-          if (b.x < 0.5) continue;
-          float dx = abs(P.x - a.x); float dz = max(max(a.y - P.z, P.z - a.z), 0.0);
-          float d = dx + dz * 4.0;
-          if (wN0.z < -0.5 && P.z < a.y + 0.3) d += 3.0;
-          if (wN0.z > 0.5 && P.z > a.z - 0.3) d += 3.0;
-          if (d < best) { best = d; gRun = i; }
-        }
-        gA = uRunA[gRun]; gB = uRunB[gRun];
+        gRun = vRun; gA = uRunA[gRun]; gB = uRunB[gRun];
         if (vSeg > 0.5 && P.z > gA.z - ${BAY.toFixed(1)} + 0.002) discard;      // 伸びる途中の区画の切れ端(分岐の口の奥)は描かない
         gLook = P.z + gA.w;
         float g = smoothstep(uLookBld, uLookGray, gLook);
@@ -158,7 +161,7 @@ function makeMaterial(U) {
           float kz = floor((P.z - gA.y) / ${SEG.toFixed(1)});
           float zc = gA.y + kz * ${SEG.toFixed(1)} + ${(SEG / 2).toFixed(1)};
           vec3 lc = mix(uLampBld, uLampGray, smoothstep(uLookBld, uLookGray, gLook));
-          if (S == 4 || S == 9) totalEmissiveRadiance += lc * (lampOn(zc) * gB.y * mix(2.0, 1.1, smoothstep(uLookBld, uLookGray, gLook)) + 0.02);
+          if (S == 4 || S == 9) totalEmissiveRadiance += lc * (lampOn(zc) * gB.y * mix(2.0, 0.75, smoothstep(uLookBld, uLookGray, gLook)) + 0.02);
           if (S == 10) totalEmissiveRadiance += uLampBay * 1.6;
           if (S == 8) totalEmissiveRadiance += uLampExit * 3.0;
         }`)
@@ -179,10 +182,9 @@ function makeMaterial(U) {
             vec3 L = vec3(gA.x, uY + ${(H - 0.05).toFixed(2)}, zk);
             float on = lampOn(zk) * gB.y;
             if (on <= 0.0) continue;
-            irr += lampTerm(L, P, n, 1.0) * on;
-            { vec3 d0 = L - P; irr += vec3(0.16 / (dot(d0, d0) + 2.0)) * on; }   // 照り返し(床・壁からの反射で天井と陰が真っ黒にならない)
-            vec3 d = L - P; vec3 l = normalize(d); vec3 hv = normalize(l + V);
-            spec += vec3(pow(max(dot(n, hv), 0.0), 90.0) * on / (dot(d, d) * 0.25 + 0.6));
+            vec3 d = L - P; float r2 = dot(d, d); vec3 l = d * inversesqrt(r2);
+            irr += vec3(max(dot(n, l), 0.0) * (0.3 + 0.7 * max(l.y, 0.0)) / (r2 + 0.45) + 0.16 / (r2 + 2.0)) * on;   // 直接＋照り返し(天井と陰が真っ黒にならない)
+            if (isFloor > 0.5) { vec3 hv = normalize(l + V); spec += vec3(pow(max(dot(n, hv), 0.0), 90.0) * on / (r2 * 0.25 + 0.6)); }   // 床の灯りの映り
           }
           irr *= lc * uLampGain;
           // 分岐・扉の上の小さな灯り / 出口の光
@@ -202,7 +204,7 @@ function makeMaterial(U) {
           reflectedLight.indirectSpecular += lc * spec * uLampGain * (0.04 + 1.1 * ref);
         }`);
   };
-  m.customProgramCacheKey = () => 'n2_x105_v1';
+  m.customProgramCacheKey = () => 'n2_x105_v2';
   return m;
 }
 
@@ -475,7 +477,7 @@ function reset(ctx, fromChase) {
   Object.assign(st, {
     t: 0, phase: fromChase ? 'post' : 'start', stretchT: 0, r0End: fromChase ? RUN.R0.z1 : X105.stretch.from + X105.stretch.keep,
     backZ: null, loopDone: !!fromChase, inverted: false, roll: 0, rollT: 0, chase: false, chaseT: 0, warp: 0, offZ: -1e4,
-    exited: false, log: [], frontLog: [], loopJumpAt: null, invAt: null, lampsOffMax: 0, fromChase: !!fromChase, release: !!fromChase, retryArmed: false,
+    exited: false, offCount: 0, log: [], frontLog: [], loopJumpAt: null, invAt: null, lampsOffMax: 0, fromChase: !!fromChase, release: !!fromChase, retryArmed: false,
   });
   for (const d of st.doors) { d.angle = 0; d.target = 0; d.col.disabled = false; d.speed = 1; d.pv.rotation.y = 0; }
   st.dF2L.locked = st.loopDone; st.dF2R.locked = !st.loopDone;
@@ -514,6 +516,7 @@ export function leave(ctx) {
   const st = ctx.state, p = ctx.player;
   setRoll(ctx, 0);
   st.U.uWarp.value = 0;
+  stopSound(ctx);
   if (ctx.ai && ctx.ai.level === ctx.key) ctx.ai.chaseOmni = false;
   void p;
 }
@@ -619,6 +622,7 @@ export function update(dt, ctx) {
   }
   U.uWarp.value = st.warp;
   U.uOffZ.value = st.chase ? st.offZ : -1e4;
+  sound(ctx, dt, v);
   // 扉
   for (const d of st.doors) {
     if (d.angle !== d.target) {
@@ -632,6 +636,34 @@ export function update(dt, ctx) {
   // 区画の配置と見せる物
   placeSegments(ctx, run, v);
 }
+
+// ================================================================ 仮音(P4 で録音に差し替え。名前は docs/p5b2a/NOTES.md §5)
+//  x105_hum_loop_01: 灰色の区間の灯具のうなり(進むほど大きく。消えた灯りの所では止む)/ x105_lamp_off_01: 背後の灯りが消える音 / x105_scream_01: 追跡の始まり(仮に管理人の叫び 'scream')
+function sound(ctx, dt, v) {
+  const st = ctx.state, a = ctx.audio && ctx.audio.ctx;
+  if (!a || a.state !== 'running') return;
+  if (!st.hum) {
+    const out = ctx.audio.listener.getInput();
+    const g = a.createGain(); g.gain.value = 0; g.connect(out);
+    const os = [100, 200, 300].map((f, i) => { const o = a.createOscillator(); o.type = i ? 'sine' : 'sawtooth'; o.frequency.value = f; const og = a.createGain(); og.gain.value = [0.25, 0.5, 0.18][i]; const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; o.connect(lp); lp.connect(og); og.connect(g); o.start(); return o; });
+    st.hum = { g, os };
+  }
+  const g = Math.min(1, Math.max(0, (v - X105.look.bld) / (X105.look.gray - X105.look.bld)));
+  const dark = st.chase && v - (st.offZ - OZ) < 3 ? 0.3 : 1;
+  const want = 0.012 * (0.3 + 0.7 * g) * dark;
+  st.hum.g.gain.value += (want - st.hum.g.gain.value) * Math.min(1, dt * 4);
+  // 灯りが消えるたびに小さな音
+  const off = st.chase ? Math.floor(Math.max(0, st.offZ - OZ - 2) / SEG) : 0;
+  if (off > (st.offCount || 0)) {
+    st.offCount = off;
+    const t = a.currentTime, n = a.createBufferSource(), b = a.createBuffer(1, Math.ceil(a.sampleRate * 0.08), a.sampleRate), ch = b.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * Math.exp(-i / (a.sampleRate * 0.012));
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 2;
+    const gg = a.createGain(); gg.gain.value = 0.18;
+    n.buffer = b; n.connect(bp); bp.connect(gg); gg.connect(ctx.audio.listener.getInput()); n.start(t);
+  }
+}
+function stopSound(ctx) { const st = ctx.state; if (!st.hum) return; try { for (const o of st.hum.os) o.stop(); } catch (e) { void e; } st.hum = null; st.offCount = 0; }
 
 function setRoll(ctx, roll) {
   const pl = ctx.player;

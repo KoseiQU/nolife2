@@ -9,7 +9,7 @@
 //  312_2) 潜水: Ctrl 長押しで潜る・離すと浮上・息ゲージは潜っている間だけ出る・切れたら溺れて第3段の開始位置へ
 //  312_3) 伸びる・底の鍵・反転・見ているだけの管理人: 泳ぐほど対岸が遠のく → 底の 105 の鍵で第4段・対岸が元に戻る・浮上すると入口が反対側の壁に・
 //         プールサイドの管理人は見ているだけ(ATTACK/CHASE にならない)・戻りの通路に入ると消える・戻ると 312 の扉の前
-//  P) 性能: 各空間の代表の視点と 4F の廊下を同じ計り方(1080p・40 フレームの中央値の 3 回の最小)で。描画コール・三角形数
+//  P) 性能(P_perf_vs_4F_corridor): 各空間の代表の視点と 4F の廊下を同じ計り方(1080p・40 フレームの中央値の 5 回の最小。4F は最初と最後)で。描画コール・三角形数
 
 const DT = 1 / 60;
 
@@ -318,6 +318,53 @@ export async function run(N) {
     return { pass, level: lv, farDist: { at20: +far0.toFixed(2), at27: +far1.toFixed(2) }, farWallBeforeKey: farBeforeKey, pickHint, stage: st.stage, item: st.item,
       afterKey: { farWall: afterKey.farWall, revealed: afterKey.revealed, under: afterKey.under }, surfaceAfter_s: surfaced && +surfaced.toFixed(2), watch, inView,
       exits: ex.map((e) => ({ x: +e.x.toFixed(2), z: +e.z.toFixed(2) })), northClosed, aiStates: [...states], gone, back: at, aiLevel: N.ai.level };
+  });
+
+  // ================================================================ 性能: ?test=building 10 番と同じ計り方(1080p・40 フレームの中央値を 3 回取り最小)。描画コール・三角形数
+  await T('P_perf_vs_4F_corridor', async () => {
+    const gl = N.renderer.getContext(), px1 = new Uint8Array(4);
+    const frameMs = (n = 40, reps = 3) => {
+      let best = Infinity;
+      for (let r = 0; r < reps; r++) {
+        const ts = [];
+        for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
+        ts.sort((a, b) => a - b); best = Math.min(best, ts[ts.length >> 1]);
+      }
+      return +best.toFixed(2);
+    };
+    const measure = async (setup) => {
+      await setup();
+      N.setRenderSize(1920, 1080);
+      frameMs(30, 1);   // 初めて描く材質のシェーダの用意を済ませる
+      const ms = frameMs(40, 5);
+      N.render();
+      const s = N.stats();
+      N.setRenderSize(0);
+      const groups = {}; N.scene.traverseVisible((o) => { if (o.isMesh) { let p = o; while (p.parent && p.parent !== N.scene) p = p.parent; groups[p.name || p.type] = (groups[p.name || p.type] || 0) + 1; } });
+      return { ms, calls: s.render.calls, triangles: s.render.triangles, level: N.level, groups };
+    };
+    quiet(); S.applyStage(4);
+    const res = {};
+    res['4F_corridor'] = await measure(async () => { SP.show(null); await tp(4, 6.9, 8.2, Math.PI); });
+    const d105 = async (u, v, yaw, f) => { await enter105(); if (f) f(); await tp('X105', ...W105(u, v), yaw); N.pump(DT, 20, false); };
+    res.X105_entry = await measure(() => d105(0, 0.75, Math.PI));
+    res.X105_gray = await measure(() => d105(0, 50, Math.PI, () => D105().skip('post')));
+    res.X105_chase_warp = await measure(async () => {
+      await d105(2.2, 118, Math.PI, () => { D105().skip('loopDone'); const st = D105().st; st.inverted = true; st.rollT = 10; });
+      N.player.pos.z = 121.5; N.pump(DT, 200, false); N.player.object.rotation.y = 0;
+      N.ai.setState('SCRIPTED', { force: true });   // 計る間に捕まらないよう管理人を止める(歪み・消えた灯りはそのまま)
+    });
+    quiet(); S.applyStage(3);
+    const d312 = async (u, v, yaw, pitch = 0) => { SP.show(null); await enter312(); await tp('X312', ...W312(u, v), yaw); N.player.object.rotation.x = pitch; N.pump(DT, 20, false); };
+    res.X312_passage = await measure(() => d312(0.8, 6.5, Math.PI));
+    res.X312_hall = await measure(() => d312(0.8, 12.8, Math.PI, -0.1));
+    res.X312_underwater = await measure(async () => { await d312(0.8, 22.0, Math.PI); key('ControlLeft', true); N.pump(DT, 150, false); });
+    key('ControlLeft', false); N.pump(DT, 2, false);
+    quiet(); S.applyStage(4);
+    res['4F_corridor_end'] = await measure(async () => { SP.show(null); await tp(4, 6.9, 8.2, Math.PI); });
+    const ref = Math.min(res['4F_corridor'].ms, res['4F_corridor_end'].ms);
+    const worst = Math.max(...Object.entries(res).filter(([k]) => k[0] === 'X').map(([, v]) => v.ms));
+    return { pass: worst <= ref + 0.5, rule: '各空間 ≤ 4F 廊下(最初と最後に計った小さい方)+ 0.5ms(計測のゆれ)。40 フレームの中央値を 5 回取り最小', ref4F: ref, worst, views: res };
   });
 
   quiet();

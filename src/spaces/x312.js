@@ -43,16 +43,28 @@ const poolFloorY = (v) => WY - floorDepth(v);   // 底の高さ(デッキから�
 // ================================================================ 材質
 const SURF = { deck: 0, wallT: 1, mosaic: 2, ceil: 3, wood: 4, white: 5, metal: 6, slide: 7, void: 8, lamp: 9, poolLamp: 10, door: 11, frame: 12, coping: 13 };
 const NL = 16;
+// 水の揺らぎの光: 自作の継ぎ目のない網の模様(256² の生成テクスチャ、うねる正弦の網)を 2 枚、違う向きに流して重ねる(UV アニメ)
 const CAUSTIC = `
-  // 自作の水の揺らぎの光(うねる正弦の網)。p は m、t は秒
-  float cLayer(vec2 p, float t) {
-    float a = sin(p.x * 2.1 + sin(p.y * 1.7 + t * 0.9) * 1.6 + t * 0.6);
-    float b = sin(p.y * 2.4 + sin(p.x * 1.3 - t * 0.7) * 1.8 - t * 0.5);
-    float c = abs(a + b);
-    return pow(1.0 - clamp(c * 0.55, 0.0, 1.0), 5.0);
+  uniform sampler2D uCaus;
+  float caust(vec2 p, float t) {
+    float a = texture2D(uCaus, p * 0.31 + vec2(t * 0.021, t * 0.013)).r;
+    float b = texture2D(uCaus, p * 0.23 + vec2(-t * 0.017, t * 0.024) + 0.37).r;
+    return max(a, b) * 0.9 + a * b * 0.6;
   }
-  float caust(vec2 p, float t) { return max(cLayer(p, t), cLayer(p * 1.37 + 3.1, t * 1.21 + 1.7)) * 0.85 + cLayer(p * 0.61 - 2.0, t * 0.8) * 0.3; }
 `;
+function makeCausticTexture(N = 256) {
+  const d = new Uint8Array(N * N), T = Math.PI * 2;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const x = i / N * T, y = j / N * T;   // 整数倍の周波数だけ = 継ぎ目なし
+    const a = Math.sin(2 * x + Math.sin(1 * y + 0.4) * 1.6 + 0.7) + Math.sin(3 * y + Math.sin(2 * x - 0.3) * 1.8);
+    const b = Math.sin(3 * x - Math.sin(2 * y + 1.1) * 1.4 + 2.0) + Math.sin(2 * y + Math.sin(3 * x) * 1.5 + 0.9);
+    const la = Math.pow(1 - Math.min(1, Math.abs(a) * 0.55), 5), lb = Math.pow(1 - Math.min(1, Math.abs(b) * 0.55), 5);
+    d[j * N + i] = Math.round(Math.min(1, Math.max(la, lb) * 0.9 + la * lb * 0.5) * 255);
+  }
+  const t = new THREE.DataTexture(d, N, N, THREE.RedFormat, THREE.UnsignedByteType);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+  return t;
+}
 function stretchVertex(sh) {
   return sh.replace('#include <begin_vertex>', `#include <begin_vertex>
     { vec3 w0 = (modelMatrix * vec4(transformed, 1.0)).xyz; if (aStr > 0.5 && w0.z > uCut + 0.0005) transformed.z += uStretch; }`);
@@ -105,7 +117,7 @@ function makeMaterial(U) {
           col = mix(t, vec3(0.08, 0.2, 0.22), gr * 0.7); rgh = 0.3;
         } else if (S == 3) { col = vec3(0.045, 0.06, 0.065); rgh = 0.95;
         } else if (S == 6) { col = vec3(0.5, 0.56, 0.57); rgh = 0.28;
-        } else if (S == 7) { col = vec3(0.07, 0.42, 0.36); rgh = 0.3;
+        } else if (S == 7) { col = vec3(0.08, 0.5, 0.4); rgh = 0.25;
         } else if (S == 8) { col = vec3(0.0); rgh = 1.0;
         } else if (S == 11) { col = vec3(0.30, 0.17, 0.08) * (0.85 + 0.3 * h21(vec2(floor(fy * 30.0), 1.0))); rgh = 0.55;
         } else if (S == 12) { col = vec3(0.04); rgh = 0.5;
@@ -118,12 +130,18 @@ function makeMaterial(U) {
         roughnessFactor = xR;`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         if (S == 9) totalEmissiveRadiance += vec3(0.85, 0.95, 1.0) * 0.7;
-        if (S == 10) totalEmissiveRadiance += vec3(0.55, 1.0, 0.98) * 1.6;`)
+        if (S == 10) totalEmissiveRadiance += vec3(0.55, 1.0, 0.98) * 1.6;
+        if (S == 7) totalEmissiveRadiance += vec3(0.01, 0.07, 0.055);   // スライダーの筒(プールの光を受けた樹脂のぼんやりした明るさ)`)
       .replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
         if (S != 8) {
           vec3 n = inverseTransformDirection(normal, viewMatrix);
-          vec3 irr = vec3(0.0);
-          for (int i = 0; i < ${NL}; i++) {
+          vec3 irr = vec3(0.0), sp = vec3(0.0);
+          vec3 V = normalize(cameraPosition - Pw);
+          bool wet = (S == 0 || S == 1 || S == 2 || S == 13) && xR < 0.6;
+          // 区画ごとの灯りだけ回す(玄関と通路 0〜2・ホールとプール 3〜10・戻りの通路 11〜13)
+          int i0 = 3, i1 = 11;
+          if (lz < ${X312.hall.v0.toFixed(1)}) { i0 = 0; i1 = 3; } else if (lz > ${X312.hall.v1.toFixed(1)} + uStretchF) { i0 = 11; i1 = 14; }
+          for (int i = i0; i < i1; i++) {
             vec4 lp = uLP[i]; if (lp.w <= 0.0) continue;
             vec3 d = lp.xyz - Pw; float r2 = dot(d, d);
             if (r2 > lp.w * lp.w) continue;
@@ -132,11 +150,12 @@ function makeMaterial(U) {
             float lUnder = step(lp.y - uY, uWY);
             float k = mix(1.0, 0.22, abs(lUnder - under));   // 水面をまたぐ光は弱く(屈折・散乱)
             irr += uLC[i] * nd * k / (r2 + 0.6) * (1.0 - smoothstep(lp.w * 0.6, lp.w, sqrt(r2)));
+            if (wet) { vec3 hv = normalize(l + V); sp += uLC[i] * pow(max(dot(n, hv), 0.0), 70.0) / (r2 * 0.2 + 0.8); }   // 濡れたタイルの灯りの映り
           }
           irr += uWater * 0.03;   // 水からのぼんやりした照り返し
           // 水の中: 揺らぎの光(底・プールの壁)と水の色。水の上: 壁に流れる揺らぎの反射(参考 09)
-          float cz = caust((abs(n.y) > 0.5 ? Pw.xz : qa) * 1.5, uTime * 1.1);
           if (under > 0.5) {
+            float cz = caust((abs(n.y) > 0.5 ? Pw.xz : qa) * 1.5, uTime * 1.1);
             irr *= 0.55 + 1.7 * cz;
             float dep = uWY - fy;
             diffuseColor.rgb = mix(diffuseColor.rgb * vec3(0.55, 0.9, 1.0), uWater * 0.3, 1.0 - exp(-0.32 * dep));
@@ -149,22 +168,13 @@ function makeMaterial(U) {
             float dPool = length(max(dq, 0.0));
             float near = lz > ${X312.hall.v0.toFixed(1)} && lz < ${(X312.hall.v1).toFixed(1)} + uStretchF ? exp(-dPool * 0.35) * exp(-max(fy - 1.0, 0.0) * 0.35) : 0.35;
             if (S == 0) near *= 0.4;
-            irr += uWater * wv * 0.32 * near * (S == 5 ? look : 1.0);
+            irr += uWater * wv * 0.24 * near * (S == 5 ? look : 1.0);
           }
           reflectedLight.indirectDiffuse += diffuseColor.rgb * irr;
-          // 濡れたタイルの照り返し(灯りの映り)
-          vec3 V = normalize(cameraPosition - Pw);
-          vec3 sp = vec3(0.0);
-          for (int i = 0; i < ${NL}; i++) {
-            vec4 lp = uLP[i]; if (lp.w <= 0.0) continue;
-            vec3 d = lp.xyz - Pw; float r2 = dot(d, d); if (r2 > lp.w * lp.w) continue;
-            vec3 hv = normalize(normalize(d) + V);
-            sp += uLC[i] * pow(max(dot(n, hv), 0.0), 70.0) / (r2 * 0.2 + 0.8);
-          }
           reflectedLight.indirectSpecular += sp * (1.0 - xR) * 0.12;
         }`);
   };
-  m.customProgramCacheKey = () => 'n2_x312_v1';
+  m.customProgramCacheKey = () => 'n2_x312_v3';
   return m;
 }
 
@@ -206,7 +216,7 @@ function makeWaterMaterial(U) {
           vec3 R = reflect(-V, n);
           vec3 refl = vec3(0.004, 0.012, 0.016);
           vec3 glow = vec3(0.0);
-          for (int i = 0; i < ${NL}; i++) {
+          for (int i = 3; i < 11; i++) {
             vec4 lp = uLP[i]; if (lp.w <= 0.0) continue;
             vec3 d = lp.xyz - P; float r2 = dot(d, d);
             if (lp.y < uWYw) { glow += uLC[i] / (r2 * 0.35 + 1.0); }                       // 水の中の灯り: 水がぼんやり光る
@@ -221,7 +231,7 @@ function makeWaterMaterial(U) {
           float c = dot(-V, vec3(0.0, 1.0, 0.0)) + dot(n.xz, -V.xz) * 1.4;
           float win = smoothstep(0.6, 0.72, c);
           vec3 sky = vec3(0.006, 0.02, 0.024);
-          for (int i = 0; i < ${NL}; i++) {
+          for (int i = 3; i < 5; i++) {
             vec4 lp = uLP[i]; if (lp.w <= 0.0 || lp.y < uWYw) continue;
             vec2 q = P.xz + n.xz * (lp.y - uWYw) * 2.2 - lp.xz;
             sky += uLC[i] * exp(-dot(q, q) * 1.6) * 0.9;
@@ -399,18 +409,23 @@ function buildHall(b) {
     b.addGeo(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.022, 8, false));
   }
   for (const h of [-0.35, -0.75]) b.box(X(P.u1 - 0.2), Y(WY + h - 0.02), Z(26.5 - 0.28), X(P.u1 - 0.12), Y(WY + h), Z(26.5 + 0.28), 'py ny px nx');
-  // スライダーの口(南の壁から出た太い筒。中は暗い)
-  { const r = 0.62, len = 1.7, cx = X(-2.0), cy = Y(2.2), cz = Z(HL.v1 - len / 2);
-    const outer = new THREE.CylinderGeometry(r, r, len, 32, 1, true).rotateX(Math.PI / 2).translate(cx, cy, cz);
-    b.surf = SURF.slide; b.addGeo(outer);
-    const inner = new THREE.CylinderGeometry(r - 0.05, r - 0.05, len, 32, 1, true).rotateX(Math.PI / 2).translate(cx, cy, cz);
-    const ia = inner.toNonIndexed(); const na = ia.attributes.normal; for (let k = 0; k < na.count; k++) na.setXYZ(k, -na.getX(k), -na.getY(k), -na.getZ(k));
-    const pa = ia.attributes.position; for (let k = 0; k < pa.count; k += 3) { const x = pa.getX(k + 1), y = pa.getY(k + 1), z = pa.getZ(k + 1); pa.setXYZ(k + 1, pa.getX(k + 2), pa.getY(k + 2), pa.getZ(k + 2)); pa.setXYZ(k + 2, x, y, z); }
-    b.surf = SURF.void; b.addGeo(ia);
-    const rim = new THREE.TorusGeometry(r - 0.02, 0.05, 10, 40).translate(cx, cy, cz - len / 2);
+  // スライダーの出口(参考 12): 南の壁の高い所から降りてきて、プールの南の端の上で口を開ける太い筒。中は暗い
+  { const r = 0.55;
+    const pts = [[-4.6, 4.9, 32.6], [-4.3, 4.3, 31.2], [-3.4, 3.0, 30.4], [-2.6, 1.7, 29.9], [-2.2, 1.05, 29.55]].map(([u, h, v]) => new THREE.Vector3(X(u), Y(h), Z(v)));
+    const curve = new THREE.CatmullRomCurve3(pts);
+    b.surf = SURF.slide; b.addGeo(new THREE.TubeGeometry(curve, 40, r, 24, false));
+    const inner = new THREE.TubeGeometry(curve, 40, r - 0.05, 24, false).toNonIndexed();
+    const na = inner.attributes.normal; for (let k = 0; k < na.count; k++) na.setXYZ(k, -na.getX(k), -na.getY(k), -na.getZ(k));
+    const pa = inner.attributes.position; for (let k = 0; k < pa.count; k += 3) { const x = pa.getX(k + 1), y = pa.getY(k + 1), z = pa.getZ(k + 1); pa.setXYZ(k + 1, pa.getX(k + 2), pa.getY(k + 2), pa.getZ(k + 2)); pa.setXYZ(k + 2, x, y, z); }
+    b.surf = SURF.void; b.addGeo(inner);
+    // 口の縁(筒の向きに合わせた輪)
+    const end = curve.getPoint(1), tan = curve.getTangent(1);
+    const rim = new THREE.TorusGeometry(r - 0.02, 0.045, 10, 40);
+    rim.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), tan)); rim.translate(end.x, end.y, end.z);
     b.surf = SURF.slide; b.addGeo(rim);
-    // 支え
-    b.surf = SURF.metal; b.box(cx - 0.05, Y(0), cz - 0.6, cx + 0.05, cy - r, cz - 0.5, 'px nx pz nz');
+    // 支柱 2 本
+    b.surf = SURF.metal;
+    for (const [u, v, h] of [[-2.4, 30.3, 1.25], [-3.6, 31.1, 2.6]]) b.box(X(u) - 0.05, Y(0), Z(v) - 0.05, X(u) + 0.05, Y(h), Z(v) + 0.05, 'px nx pz nz');
   }
 }
 
@@ -431,6 +446,7 @@ export function build(ctx) {
     uStretch: { value: 0 }, uStretchF: { value: 0 }, uCut: { value: OZ + X312.cut },
     uLP: { value: Array.from({ length: NL }, () => new THREE.Vector4(0, 0, 0, 0)) }, uLC: { value: Array.from({ length: NL }, () => new THREE.Vector3()) },
     uWater: { value: new THREE.Vector3(0.05, 0.3, 0.32) },
+    uCaus: { value: makeCausticTexture() },
   };
   const mat = st.mat = makeMaterial(U);
   const g = ctx.group;
@@ -447,7 +463,7 @@ export function build(ctx) {
   { const b = new GB(); b.str = 1; b.floor(X(P.u0), X(P.u1), Z(P.v0), Z(P.v1), Y(WY));
     const geo = b.geometry();
     const wm = st.water = makeWaterMaterial(U);
-    Object.assign(wm.uniforms, { uTime: U.uTime, uWYw: { value: Y(WY) }, uLP: U.uLP, uLC: U.uLC, uWater: U.uWater, uStretch: U.uStretch, uCut: U.uCut });
+    Object.assign(wm.uniforms, { uTime: U.uTime, uWYw: { value: Y(WY) }, uLP: U.uLP, uLC: U.uLC, uWater: U.uWater, uStretch: U.uStretch, uCut: U.uCut, uCaus: U.uCaus });
     st.waterMesh = mesh(geo, wm, 'X312_water'); st.waterMesh.receiveShadow = false; st.waterMesh.renderOrder = 2; }
   // 灯り(局所 u, y, v・色・強さ・届く距離)
   const L = st.lights = [
@@ -527,6 +543,7 @@ export function dispose(ctx) {
   for (const o of [...ctx.group.children]) { ctx.group.remove(o); o.traverse((m) => { if (m.geometry) m.geometry.dispose(); }); }
   if (ctx.state.mat) ctx.state.mat.dispose();
   if (ctx.state.water) ctx.state.water.dispose();
+  if (ctx.state.U) ctx.state.U.uCaus.value.dispose();
   ctx.cols.length = 0; ctx.lamps.length = 0;
 }
 
