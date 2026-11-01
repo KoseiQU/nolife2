@@ -102,7 +102,8 @@ export class Player {
 
   // 足元(x, 床y, z)へ移動し、向き(yaw, pitch)をセット
   setPose(x, z, yaw = null, pitch = 0) {
-    this.pos.set(x, this.world.floorY, z);
+    this._lift = this.world.floorAt ? this.world.floorAt(x, z) : 0;
+    this.pos.set(x, this.world.floorY + this._lift, z);
     if (yaw !== null) this.controls.object.rotation.set(pitch, yaw, 0, 'YXZ');
     this._applyCamera(0);
   }
@@ -151,7 +152,12 @@ export class Player {
     const ox = this.pos.x, oz = this.pos.z;
     const [rx, rz] = this._resolveXZ(this.pos.x + move.x * dt, this.pos.z + move.z * dt);
     this.pos.x = rx; this.pos.z = rz;
-    this.pos.y = this.world.floorY;
+    // P5b-3: 床の嵩上げ(シアターの段床。world.floorAt(x, z) = 床からの高さ)。段は当たりを置かず、足元の高さを
+    //  段ごとの値へ素早く寄せて登り下りする(0.3m の段を約 0.1 秒)。それ以外の場所では 0
+    const lift = this.world.floorAt ? this.world.floorAt(rx, rz) : 0;
+    this._lift = this._lift || 0;
+    this._lift += THREE.MathUtils.clamp(lift - this._lift, -3.2 * dt, 3.2 * dt);
+    this.pos.y = this.world.floorY + this._lift;
 
     // 実際に進んだ距離で歩行位相を進める(壁に押し付けている間は揺れない)
     const moved = Math.hypot(rx - ox, rz - oz) / Math.max(dt, 1e-4);

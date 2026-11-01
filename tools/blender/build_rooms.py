@@ -857,6 +857,8 @@ def build_common(room, col):
         elif k == 'projector':
             L.pbox(b, 0, W, 0, 0.12, 0, D, 'appliance', gloss=True)
             L.pbox(b, W / 2 - 0.02, W / 2 + 0.02, 0.12, H, D / 2 - 0.02, D / 2 + 0.02, 'black')
+        elif k == 'cushion':   # P5b-3: シアターの段床の座布団
+            L.pbox(b, 0.0, W, 0.0, H, 0.0, D, 'sofa')
         elif k == 'lowtable':
             L.box(b, 0, W, H - 0.03, H, 0, D, 'MR_DeskWood')
             L.pbox(b, 0.05, W - 0.05, 0, H - 0.03, 0.05, D - 0.05, 'wooddark')

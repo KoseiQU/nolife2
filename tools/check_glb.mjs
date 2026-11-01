@@ -246,7 +246,7 @@ function checkFloor(N) {
     for (const gr of groups.values()) if (gr.y1 - gr.y0 > 0.5) faces.push(gr);   // 幅木などの低い面を除く
   }
   let maxDiff = 0, worst = '';
-  const okHeights = [GEOM.CEIL_H, GEOM.FLOOR_H, 2.04];
+  const okHeights = [GEOM.CEIL_H, GEOM.FLOOR_H, 2.04, ...floor.shell.air.filter((a) => a.ceil).map((a) => a.ceil)];   // P5b-3: シアターの天井 2.8m(air.ceil)
   for (const f of faces) {
     const on = boxes.filter((b) => {
       const v = f.axis === 'x' ? (f.sgn > 0 ? b.maxX : b.minX) : (f.sgn > 0 ? b.maxZ : b.minZ);

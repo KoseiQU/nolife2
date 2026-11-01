@@ -475,7 +475,8 @@ function hideSpotsFor(level, zTop, scEnd, rooms = []) {
   }
   if (level === 1) {
     spots.push({ id: 'L1_dining_corner', area: 'C', x: 5.85, z: 5.3, faceTo: [6.9, 11.0] });   // P3b: 配膳カウンターの端(通路の角)
-    spots.push({ id: 'L1_theater_back', area: 'C', x: 9.4, z: 27.4, faceTo: [9.0, 22.6] });     // P3b: スクリーンの脇(通路の奥)
+    // P3b: スクリーンの脇(通路の奥)。P5b-3: スクリーンが北へ移り南が段床になった → 段床の西の脇の平らな通路の奥(内扉を向く)
+    spots.push({ id: 'L1_theater_back', area: 'C', x: 8.38, z: 27.5, faceTo: [9.0, 24.0] });
   }
   return spots.map((h) => ({ ...h, level }));
 }

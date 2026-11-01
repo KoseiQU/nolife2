@@ -64,7 +64,7 @@ B1_HEAD = 2.7    # 地下の踊り場の天井(1F の床スラブの下面 = B1 
 def make_zones():
     zs = []
     for a in SHELL['air']:
-        h = FLOOR_H if a['kind'] in FULL_H_KINDS else CEIL_H
+        h = FLOOR_H if a['kind'] in FULL_H_KINDS else a.get('ceil', CEIL_H)   # P5b-3: シアターは天井 2.8m(air.ceil)
         zs.append(dict(a, y0=BASE_Y, y1=BASE_Y + h, set='floor', outdoor=a['kind'] == 'outdoor' or a.get('outdoor', False)))
     if BASEMENT:
         for a in BASEMENT['air']:
@@ -1657,11 +1657,34 @@ def build_1f_extras(col):
         build_porch(ex0, ez0 + ed, ew, col)
     if th:
         tx0, tz0, tw, td = th['rect']
-        sc = MeshBuilder('TheaterScreen')
-        zs = tz0 + td - 0.07
-        q = sc.quad([(tx0 + 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 0.6, zs), (tx0 + tw - 1.0, BASE_Y + 2.2, zs), (tx0 + 1.0, BASE_Y + 2.2, zs)], (0, 0, -1), 'M_Screen')
-        orient(q, (0, 0, -1))
-        sc.finish(col, {'n2_kind': 'screen'})
+        # P5b-3(DESIGN §2 ④): スクリーンは北の壁(入口側)。前室(北西の角)の東に寄せる(x 10.8〜13.4、幅 2.6m・高さ 1.55m)。
+        #  黒い額(ベルベット調の縁)を壁から 2cm 出して、その手前に幕面
+        sc = MeshBuilder('TheaterScreen'); sf = MeshBuilder('TheaterScreen_frame')
+        zs = tz0 + WALL_T / 2 + 0.03
+        sx0, sx1, sy0, sy1 = 10.8, 13.4, BASE_Y + 0.72, BASE_Y + 2.27
+        sf.box((sx0 - 0.06, sy0 - 0.06, tz0 + WALL_T / 2), (sx1 + 0.06, sy1 + 0.06, zs - 0.002), 'M_Sensor', keep=lambda k, c, n: k != '-z')
+        q = sc.quad([(sx1, sy0, zs), (sx0, sy0, zs), (sx0, sy1, zs), (sx1, sy1, zs)], (0, 0, 1), 'M_Screen')
+        orient(q, (0, 0, 1))
+        sc.finish(col, {'n2_kind': 'screen'}); sf.finish(col, {'n2_kind': 'screen'})
+        # 段床(南): 段ごとに暗いカーペットの箱(上面と蹴上げ・西の側面)、段鼻にアルミの見切り、西の側面の足元に小さな足元灯
+        tb = MeshBuilder('TheaterTiers'); tn = MeshBuilder('TheaterTiers_nosing'); tl = MeshBuilder('TheaterTiers_lights')
+        xin1 = tx0 + tw - WALL_T / 2                      # 東の壁の室内の面
+        zin1 = tz0 + td - WALL_T / 2                      # 南の壁の室内の面
+        prev_h = 0.0
+        for t in th.get('tiers', []):
+            ax, az, aw, ad = t['rect']
+            h = t['h']
+            x0_, x1_, z0_, z1_ = ax, min(ax + aw, xin1), az, min(az + ad, zin1)
+            # 上面・蹴上げ(北の面: 前の段の高さから上)・西の側面(床から)
+            tb.box((x0_, BASE_Y + prev_h, z0_), (x1_, BASE_Y + h, z1_), 'M_Carpet', keep=lambda k, c, n: k in ('+y', '-z'))
+            tb.box((x0_, BASE_Y, z0_), (x1_, BASE_Y + h, z1_), 'M_Carpet', keep=lambda k, c, n: k == '-x')
+            # 段鼻(アルミの見切り 3cm)
+            tn.box((x0_, BASE_Y + h - 0.012, z0_ - 0.004), (x1_, BASE_Y + h + 0.003, z0_ + 0.03), 'M_HairH', keep=lambda k, c, n: k in ('+y', '-z', '-x'))
+            # 足元灯(西の側面、蹴上げの近く)
+            fz0 = z0_ + 0.12
+            tl.box((x0_ - 0.004, BASE_Y + h - 0.12, fz0), (x0_, BASE_Y + h - 0.08, fz0 + 0.1), 'M_StepLight', keep=lambda k, c, n: k == '-x')
+            prev_h = h
+        tb.finish(col, {'n2_kind': 'tiers'}); tn.finish(col, {'n2_kind': 'tiers'}); tl.finish(col, {'n2_kind': 'lampcover'})
 
 
 PORCH_LIGHTS = []
@@ -1821,7 +1844,7 @@ def build():
         if k != 'bwell':    # 地下への階段の吹き抜け(1F の部分)は床なし・天井あり
             fl.quad([(x0, y0, z1), (x1, y0, z1), (x1, y0, z0), (x0, y0, z0)], (0, 1, 0), floor_mat(k))
         if k != 'stair' and not zn['outdoor']:
-            yc = y0 + CEIL_H
+            yc = zn['y1'] if zn.get('ceil') else y0 + CEIL_H
             ce.quad([(x0, yc, z0), (x1, yc, z0), (x1, yc, z1), (x0, yc, z1)], (0, -1, 0), ceil_mat(k))
     fl.finish(col, {'n2_kind': 'floor'}); ce.finish(col, {'n2_kind': 'ceiling'})
 

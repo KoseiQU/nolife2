@@ -324,7 +324,21 @@ function updateDoors(dt) {
 }
 
 // ---------------------------------------------------------------- player
-const player = new Player(camera, renderer.domElement, { collisions: world.collisions(playerLevel), floorY: levelY(playerLevel) });
+// P5b-3: 床の嵩上げ(シアターの段床 room.tiers)。その階の (x, z) の床からの高さ。段床の無い階は null
+const TIERS = new Map();
+for (const f of building.floors) for (const r of f.rooms) for (const t of r.tiers || []) {
+  if (!TIERS.has(f.level)) TIERS.set(f.level, []);
+  TIERS.get(f.level).push(t);
+}
+function liftAt(key, x, z) {
+  const ts = TIERS.get(key);
+  let h = 0;
+  if (ts) for (const t of ts) { const [tx, tz, tw, td] = t.rect; if (x > tx && x < tx + tw && z > tz && z < tz + td && t.h > h) h = t.h; }
+  return h;
+}
+let enemyLift = 0;
+function floorAtFor(key) { return TIERS.has(key) ? (x, z) => liftAt(key, x, z) : null; }
+const player = new Player(camera, renderer.domElement, { collisions: world.collisions(playerLevel), floorY: levelY(playerLevel), floorAt: floorAtFor(playerLevel) });
 player.onUse = onUseKey;
 player.setPose(region.spawn.x, region.spawn.z, region.spawn.yaw, -0.03);
 
@@ -565,7 +579,7 @@ resize();
 function setPlayerLevel(key, { dy = null } = {}) {
   const prev = playerLevel;
   playerLevel = key;
-  player.setWorld({ collisions: world.collisions(key), floorY: levelY(key) });
+  player.setWorld({ collisions: world.collisions(key), floorY: levelY(key), floorAt: floorAtFor(key) });
   if (dy !== null) player.placeAt(player.pos.x, levelY(key), player.pos.z);
   world.focus(key);
   hud.doors = doorsHere();
@@ -797,6 +811,12 @@ function step(dt) {
   if (!TOUR) {
     ai.update(dt);
     enemy.update(dt, camera);
+    // P5b-3: 管理人もシアターの段床に乗る(見た目の足元の高さだけ。当たり・経路・視線の判定は床のまま。段は約 0.1 秒で登る)
+    if (!ai.transit && TIERS.has(ai.level)) {
+      const want = liftAt(ai.level, enemy.pos.x, enemy.pos.z);
+      enemyLift += THREE.MathUtils.clamp(want - enemyLift, -3.2 * dt, 3.2 * dt);
+      enemy.root.position.y = levelY(ai.level) + enemyLift;
+    } else enemyLift = 0;
     movie.update(dt);
     viewLock.update(dt);
   }
