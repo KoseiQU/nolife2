@@ -46,7 +46,7 @@ const TOUR = PARAMS.has('tour');
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
 // P5b-1: 物語(story.js)のモード。通常プレイと ?test=story = 'play'(段・目標・鍵・221/6F の罠・最終追跡・エンディング)、?tour = 'tour'(全部解放・別空間に入れる)、
 //  他のテスト(?test=enemy/rooms/building)= 'off'(物語の扉は施錠のまま、それ以外は P5a までと同じ)
-const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story') ? 'play' : 'off';
+const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -502,9 +502,10 @@ let death = null;   // { t, respawned }
 function inputHeld() { return !!(stairs && stairs.busy) || !!death || movie.active || viewLock.active || !!(story && (story.trans || story.ending)) || !!(rooms && rooms.hidden) || peephole.active; }
 // P2c: ヒット(t=0)の後は血飛沫を見せてから暗転。ATTACK 開始から暗転完了まで ≈0.85+1.75 = 2.6 秒
 const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0.8 };
-function startDeath() {
+function startDeath(why = null) {
   if (death) return;
-  death = { t: 0, respawned: false };
+  death = { t: 0, respawned: false, why };
+  caption.firstChild.textContent = why === 'drown' ? HUD_TEXT.death.drown : HUD_TEXT.death.title;   // P5b-2a: 溺れた時の文言
   if (peephole.active) { peephole.forced = false; peephole.set(false); }
   pendingE = null;
   player.frozen = true;
@@ -531,6 +532,7 @@ function updateDeath(dt) {
     stairs.cancel();   // P5b-1b: 段の途中で死んだ時、上り下りを打ち切る(残ると復帰後に段へ引き戻される)
     player.object.rotation.z = 0;
     player.crouch = false;
+    player.invert = false; player.move = null; player.controls.pointerSpeed = 1;   // P5b-2a: 反転・泳ぎの上書きを戻す
     // P5b-1: 物語の段の開始位置へ(段・持ち物・壊れた扉・解放はそのまま)。物語なし(他のテスト)は従来の 410
     const sp = story && story.active ? story.respawnPoint() : { level: 4, ...CHECKPOINT };
     if (playerLevel !== sp.level) setPlayerLevel(sp.level);
@@ -590,7 +592,10 @@ const stairs = new Stairs({ building, player, camera, getLevel: () => playerLeve
   onStart: (from, to) => { world.focus(to); updateVisibility(); },
   onArrive: (to) => { setPlayerLevel(to); } });
 // P5b-1: 物語の別空間と物語の状態機械。P5b-2a: 空間ごとのモジュール(src/spaces/<key>.js)。共有物は ctx に渡す(story は後から share)
-spaces = new Spaces({ scene, world, building, camera, player, ai, enemy, audio: enemyAudio, hud, getLevel: () => playerLevel });
+spaces = new Spaces({ scene, world, building, camera, player, ai, enemy, audio: enemyAudio, hud, getLevel: () => playerLevel,
+  busy: () => movie.active || viewLock.active || !!death,          // 襲撃ムービー・視点固定・死亡演出の間(カメラを触らない)
+  kill: (why) => { if (!death && !TOUR) startDeath(why); } });     // 空間の中の死(312 の溺れ)
+ai.spaceNav = (lv, fx, fz, tx, tz) => spaces.nav(lv, fx, fz, tx, tz);   // P5b-2a: 別空間の中の管理人の経路(105 の分岐の扉)
 story = new Story({ mode: STORY_MODE, world, building, scene, camera, player, ai, hud, rooms, elevator, doorFx, flags: FLAGS, spaces, audio: enemyAudio, viewLock,
   envTex, aiControl: !TOUR && !PARAMS.has('noai'), getLevel: () => playerLevel,
   teleport: (key, x, z, yaw) => { setPlayerLevel(key); player.setPose(x, z, yaw, 0); updateVisibility(); } });
@@ -947,3 +952,4 @@ if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) =>
 if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'story') import('../tools/test_story.js').then((m) => m.run(window.__N2)).catch(showErr);
+if (PARAMS.get('test') === 'spaces') import('../tools/test_spaces.js').then((m) => m.run(window.__N2)).catch(showErr);   // P5b-2a: 異世界 105・312

@@ -10,7 +10,8 @@
 //    export function dispose(ctx)      作った物を片付ける(ctx.group の中身・ctx.cols)
 //   任意: enter(ctx)(入った時。状態を作り直す)・leave(ctx)(出た時)・exits(ctx)(戻る口 [{ x, z, n, auto, reach, depth, half, onLeave }]。無ければ DEF.exit)・
 //         target(ctx, look)(画面ガイドの対象。story.target が使う)・respawn(ctx)(この空間で死んだ時の戻り先。無ければ物語の段の開始位置)・
-//         canPick(ctx, slot, cam)(物を拾える位置か)・debug(ctx)(テスト用の操作)
+//         canPick(ctx, slot, cam)(物を拾える位置か)・entryPoint(ctx)(入った所の上書き)・slotPos(ctx, slot)(動く置き場所)・
+//         nav(ctx, fx, fz, tx, tz)(管理人の経路 [{x, z}])・debug(ctx)(テスト用の操作)
 //  ctx(空間ごとに 1 つ): { key, def, mod, scene, world, building, group, cols, lamps, state, ...共有(camera・player・ai・enemy・audio・hud・story・kill・getLevel) }
 //  story.js が使うのは SPACE_DEFS[k].entry/exit/back/at(slot) と Spaces.show()/lampsFor()/exits()/target() だけ。
 //  見た目は実行時のメッシュ(ベイクなし)。
@@ -102,4 +103,12 @@ export class Spaces {
   // この空間で死んだ時の戻り先(null = 物語の段の開始位置)
   respawn(key) { const c = this.ctxs.get(key); return c && c.mod.respawn ? c.mod.respawn(c) : null; }
   canPick(key, slot, cam) { const c = this.ctxs.get(key); return c && c.mod.canPick ? c.mod.canPick(c, slot, cam) : true; }
+  // 入った所(null = DEF.entry)。死んだ後のやり直しなどでモジュールが変える
+  entry(key) { const c = this.ctxs.get(key); return c && c.mod.entryPoint ? c.mod.entryPoint(c) : null; }
+  // 物の置き場所(動く空間ではモジュールが今の位置を返す。null = 動かない)
+  slotPos(key, slot) { const c = this.ctxs.get(key); return c && c.mod.slotPos ? c.mod.slotPos(c, slot) : null; }
+  // 管理人の経路(グラフの無い階 = 別空間の中。null ならまっすぐ)。enemy_ai の spaceNav から
+  nav(key, fx, fz, tx, tz) { const c = this.ctxs.get(key); return c && c.mod.nav ? c.mod.nav(c, fx, fz, tx, tz) : null; }
+  // テスト用の操作(モジュールの debug)
+  debug(key) { const c = this.ctxs.get(key); return c && c.mod.debug ? c.mod.debug(c) : null; }
 }

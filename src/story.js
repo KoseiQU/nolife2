@@ -4,7 +4,8 @@
 //  - 221 と 6F の罠 3 室の奥の窓際のロッカーからの飛び出し(ai.lockerBurst = ワープ。P5b-1b: 扉がゆっくり開いて中が見えてから)。
 //    P5b-1b: 221 は初回、奥へ進むと出る → 逃げ切ると机に小さな鍵。冒頭の見せ場(初めて 410 から廊下へ出ると 4F の EV の管理人 → 2F へ)、705 の別空間からの最終追跡(階段で追う)、
 //    最後だけ敷地まで追う管理人(ai.portals に正面玄関)、黒い車でのエンディング
-//  - 別空間(異世界 4 空間の差し替え口): enterSpace(id)/leaveSpace()。今は spaces.js の仮の小部屋
+//  - 別空間(異世界 4 空間の差し替え口): enterSpace(id)/leaveSpace()。中身は src/spaces/<key>.js(P5b-2a: 105 の長い廊下・312 のプール。705・B1 は仮の小部屋)。
+//    戻る口・空間の中の扉・この空間で死んだ時の戻り先・物の置き場所の移動は spaces.exits/target/respawn/slotPos に聞く
 //  - デバッグ: ?stage=N でその段の開始状態から。window.__N2.story で状態(state())と操作(applyStage・give・unlockDoor・enterSpace…)
 //  モード: 'play'(通常・?test=story)/ 'tour'(?tour: 全部解放・別空間にも入れる・目標なし)/ 'off'(他のテスト: 物語の扉は施錠のまま、他は何もしない)
 import * as THREE from 'three';
@@ -111,8 +112,10 @@ export class Story {
     { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2,
       need: () => this.stage === 1 && this.sub === 'return', showIf: () => this.stage > 1 || this.sub === 'return' }); }
     // 3: X312 の床の 105 の鍵 / 4: X105 のメモ
-    add({ id: 'k105', item: '105', level: 'X312', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4 });
-    add({ id: 'memo6F', memo: 'memo6F', level: 'X105', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
+    // P5b-2a: 105 の鍵は X312 のプールの底(潜っている時だけ拾える = spaces.canPick)。メモは X105 の出口の扉の手前
+    add({ id: 'k105', item: '105', level: 'X312', space: 'X312', slot: 'key', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4,
+      need: () => this.spaces.canPick('X312', 'key', this.camera.position) });
+    add({ id: 'memo6F', memo: 'memo6F', level: 'X105', space: 'X105', slot: 'memo', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
     // 5: 609 の机の 220 の鍵・罠の 3 室の机の「鍵に見える物」(札だけの古い鍵)
     { const d = desk(STORY.keyRoom6F); add({ id: 'k220', item: '220', ...d, rotY: 1.1, mesh: P.makeKey('220'), takenAt: 6 }); }
     for (const rid of STORY.trapRooms) { const d = desk(rid); add({ id: 'decoy' + rid, decoy: rid, ...d, rotY: 0.6 + rid.length, mesh: P.makeKey(rid, { tagColor: '#d8cfb8' }), takenAt: 99 }); }
@@ -217,8 +220,9 @@ export class Story {
       }
     }
     if (isSpace(lv)) {
-      const D = SPACE_DEFS[lv];
-      cand(look(D.exit.x, D.exit.z, 1.3), { kind: 'story', sk: 'back', items: [S.back] });
+      // P5b-2a: 戻る口と空間の中の扉はモジュールに聞く
+      for (const e of this.spaces.exits(lv)) if (e.reach > 0) cand(look(e.x, e.z, e.reach), { kind: 'story', sk: 'back', exit: e, items: [S.back] });
+      if (this.mode !== 'off') { const st = this.spaces.target(lv, look); if (st) cand(st.d, { kind: 'story', sk: 'space', st, items: st.items }); }
     }
     return best;
   }
@@ -227,7 +231,8 @@ export class Story {
     const S = HUD_TEXT.story;
     if (!t || t.kind !== 'story') return null;
     if (t.sk === 'pick') return this.pick(t.pk.id);
-    if (t.sk === 'back') { this.leaveSpace(); return 'back'; }
+    if (t.sk === 'back') { this.leaveSpace(t.exit); return 'back'; }
+    if (t.sk === 'space') return t.st.use();
     if (t.sk === 'car') return this.useCar(t.car);
     if (t.sk === 'lock') {
       const need = LOCKS[t.lock];
@@ -397,7 +402,12 @@ export class Story {
   }
 
   // 死亡 → 復帰: 段・持ち物・壊れた扉・解放はそのまま。その段の開始位置へ
-  respawnPoint() { return this.stage === 9 && this.sub === 'chase' ? SPAWN['9c'] : SPAWN[this.stage]; }
+  respawnPoint() {
+    // P5b-2a: 別空間の中で死んだ時はモジュールが決める(X105 = 105 の扉の前。無ければ段の開始位置 = X312 の溺れは第3段の開始位置)
+    const lv = this.getLevel();
+    if (isSpace(lv)) { const r = this.spaces.respawn(lv); if (r) return r; }
+    return this.stage === 9 && this.sub === 'chase' ? SPAWN['9c'] : SPAWN[this.stage];
+  }
   afterRespawn() {
     this.trans = null; this.siteChased = false; this.pending = [];
     // P5b-1b: 221 から逃げる途中で死んだ → 第1段の開始位置から、飛び出しの前(管理人は 2F で待機の体 = 眠る。221 の奥へ進むとまた出る)。
@@ -420,14 +430,15 @@ export class Story {
     const D = SPACE_DEFS[id];
     if (!D || this.trans) return false;
     this.log('enter_space', { id });
-    this._fadeTo(() => { this.spaces.show(id); this.teleport(id, D.entry.x, D.entry.z, D.entry.yaw); });
+    this._fadeTo(() => { this.spaces.show(id); const E = this.spaces.entry(id) || D.entry; this.teleport(id, E.x, E.z, E.yaw); });
     return true;
   }
-  leaveSpace() {
+  leaveSpace(exit = null) {
     const lv = this.getLevel();
     const D = SPACE_DEFS[lv];
     if (!D || this.trans) return false;
     this.log('leave_space', { id: lv });
+    if (exit && exit.onLeave) exit.onLeave();
     this._fadeTo(() => { this.spaces.show(null); this.teleport(D.back.level, D.back.x, D.back.z, D.back.yaw); });
     return true;
   }
@@ -439,6 +450,7 @@ export class Story {
     const lv = this.getLevel(), p = this.player.pos;
     // 物の見え方・瞬き
     for (const pk of this.pickups) {
+      if (pk.space && pk.space === lv) { const q = this.spaces.slotPos(pk.space, pk.slot); if (q) { pk.pos.copy(q); pk.mesh.position.copy(q); } }   // P5b-2a: 動く置き場所
       pk.mesh.visible = this._visible(pk, lv);
       if (pk.mesh.visible && pk.mesh.userData.glint) P.updateGlint(pk.mesh.userData.glint, this.time);
     }
@@ -464,10 +476,14 @@ export class Story {
     const due = this.pending.filter((q) => q.t <= 0); this.pending = this.pending.filter((q) => q.t > 0);
     for (const q of due) q.fn();
     if (this.mode !== 'off') this._checkSpaceDoors(lv, p);
-    // 別空間の入口の扉の前まで戻ると(走って逃げる時も)そのまま外へ出る
+    // 別空間の戻る口の前まで歩くと(走って逃げる時も)そのまま外へ出る。P5b-2a: 口はモジュールが決める(n = 空間の内側への向き)
     if (isSpace(lv) && !this.trans) {
-      const D = SPACE_DEFS[lv];
-      if (p.z < D.exit.z + 0.45 && Math.abs(p.x - D.exit.x) < 0.6) this.leaveSpace();
+      for (const e of this.spaces.exits(lv)) {
+        if (!e.auto) continue;
+        const n = e.n || [0, 1], dx = p.x - e.x, dz = p.z - e.z;
+        const v = dx * n[0] + dz * n[1], u = Math.abs(dx * n[1] - dz * n[0]);
+        if (v < (e.depth ?? 0.45) && v > -1.0 && u < (e.half ?? 0.6)) { this.leaveSpace(e); break; }
+      }
     }
     if (!this.active) { this.hud.setObjective(''); this.hud.setItem(''); return; }
     // P5b-1b 221: 奥へ進むと奥の窓際のロッカーから管理人(初回)→ 逃げ切ると机に小さな鍵

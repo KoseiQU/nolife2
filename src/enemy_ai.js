@@ -197,6 +197,10 @@ export class EnemyAI {
     this.allowStairs = false;        // 第9段の最終追跡だけ階段で追ってくる(§3.8 B の「階の移動は EV だけ」は徘徊の規則。追跡の台本上の例外)
     this.noEV = false;               // 第9段の最終追跡では EV を使わない(EV は来ない)
     this.portals = [];               // [{ id, a:{lv,x,z}, b:{lv,x,z} }] グラフの無い階との出入り口(705 の別空間・正面玄関＝第11段だけ)
+    // P5b-2a: 別空間の中の追跡。spaceNav(lv, fx, fz, tx, tz) → [{x, z}](空間のモジュールの経路。main が spaces.nav をつなぐ)、
+    //  chaseOmni = 追跡中は見失わない(105 の長い廊下の追いかけっこ。扉の向こうへ逃げても追ってくる)
+    this.spaceNav = null;
+    this.chaseOmni = false;
     // P5a
     this.concealed = false;          // 空室の中に潜んでいる(描かない・当たりなし)
     this.lurkMode = null;            // 'room' | 'corner'
@@ -301,6 +305,7 @@ export class EnemyAI {
     if (this._npcDoorId) { const d = this.doors.get(this._npcDoorId); if (d && !d.broken) this.doors.npcClose(this._npcDoorId, 3.0); this._npcDoorId = null; }
     if (this.elevator && this.elevator.npc && this.elevator.npc.ambush) this.elevator.npc = null;
     this.concealed = false; this.lurkRoomId = null; this.lurkMode = null; this.lurkTargetRoom = null; this._lurkWake = null; this._chaseSlowUntil = 0;
+    this.chaseOmni = false;   // P5b-2a
     this.setState('PATROL', { force: true, log: true });
   }
 
@@ -788,7 +793,11 @@ export class EnemyAI {
     // P5b-1: グラフの無い階(敷地・別空間)。同じ階ならまっすぐ、別の階なら出入り口(portals)を通る。出入り口が無ければ行かない(空の経路)
     if ((flv === 'B1' || tlv === 'B1') && flv !== tlv) return [];   // 管理人は地下には来ない(DESIGN §3.8 H 第10段)
     if (graphless(flv) || graphless(tlv)) {
-      if (flv === tlv) return [{ x: toX, z: toZ, lv: tlv, node: null, via: 'walk' }];
+      if (flv === tlv) {
+        const nav = this.spaceNav && isSpace(flv) ? this.spaceNav(flv, fromX, fromZ, toX, toZ) : null;   // P5b-2a
+        if (nav && nav.length) return nav.map((q) => ({ x: q.x, z: q.z, lv: tlv, node: null, via: 'walk' }));
+        return [{ x: toX, z: toZ, lv: tlv, node: null, via: 'walk' }];
+      }
       const P = this._portalBetween(flv, tlv);
       if (!P) return [];
       return [...this._route(fromX, fromZ, P.from.x, P.from.z, flv, flv), { x: P.to.x, z: P.to.z, lv: tlv, node: null, via: 'portal' }, ...this._route(P.to.x, P.to.z, toX, toZ, tlv, tlv)];
@@ -1344,11 +1353,11 @@ export class EnemyAI {
     let route = null, replan = 0;
     while (true) {
       const p = this.player.pos;
-      if (this.canSee || this.inProximity) { lost = 0; this.lastKnown = { x: p.x, z: p.z, lv: this._plv() }; } else lost += this.dt;
+      if (this.canSee || this.inProximity || (this.chaseOmni && this._plv() === this.level)) { lost = 0; this.lastKnown = { x: p.x, z: p.z, lv: this._plv() }; } else lost += this.dt;   // P5b-2a: chaseOmni
       if (lost > AI.chaseLose) { this.setState('ALERT', { react: false }); yield; return; }
       const dist = Math.hypot(p.x - e.pos.x, p.z - e.pos.z);
       if (dist <= AI.attackRange && !this.occluded) { this.setState('ATTACK'); yield; return; }
-      let tgt = (this.canSee || this.inProximity) ? { x: p.x, z: p.z, lv: this._plv() } : this.lastKnown;
+      let tgt = (this.canSee || this.inProximity || (this.chaseOmni && this._plv() === this.level)) ? { x: p.x, z: p.z, lv: this._plv() } : this.lastKnown;
       // P5b-1: 出入り口(705 の別空間の扉・最後の正面玄関)を抜けて逃げた → 追って抜ける(扉を抜けるのを見ている)
       if (this._plv() !== this.level && this._portalBetween(this.level, this._plv())) { tgt = { x: p.x, z: p.z, lv: this._plv() }; lost = 0; this.lastKnown = tgt; }
       const tlv = tgt.lv ?? this.level;
@@ -1357,7 +1366,15 @@ export class EnemyAI {
         e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.1, p.z);
         const close = dist < 3.0;
         const sp = close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? AI.roomLurk.darkChase.speed : AI.speed.CHASE);
-        this._stepToward(tgt.x, tgt.z, sp, close ? 'walk_brutal' : 'run_intent', AI.turnRate.CHASE, 0.3);
+        // P5b-2a: 別空間の経路(105 の分岐の扉を通る)。無ければまっすぐ
+        let wp = tgt;
+        if (this.spaceNav && isSpace(this.level)) {
+          replan -= this.dt;
+          if (!route || replan <= 0) { route = this._route(e.pos.x, e.pos.z, tgt.x, tgt.z); replan = 0.2; }
+          while (route.length > 1 && Math.hypot(route[0].x - e.pos.x, route[0].z - e.pos.z) < 0.35) route.shift();
+          wp = route[0] || tgt;
+        }
+        this._stepToward(wp.x, wp.z, sp, close ? 'walk_brutal' : 'run_intent', AI.turnRate.CHASE, 0.3);
         yield;
         continue;
       }
