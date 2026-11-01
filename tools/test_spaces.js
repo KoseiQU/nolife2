@@ -455,6 +455,22 @@ export async function run(N) {
     return t;
   };
 
+  // 迷路を升ごとに歩く: 今の迷路で道を引き直し、今の升の中心へ寄せてから隣の升の中心へ(升の角に引っかからない・フレーム時間に依らない)
+  const mazeWalk = (toGoal, max = 160) => {
+    const M = DB1().XB1.maze, cell = (u, v) => [Math.floor((u - M.u0) / M.cell), Math.floor((v - M.v0) / M.cell)];
+    const center = (c, r) => [M.u0 + (c + 0.5) * M.cell, M.v0 + (r + 0.5) * M.cell];
+    for (let k = 0; k < max; k++) {
+      const p = N.player.pos, u = p.x - 520, v = p.z;
+      const r = DB1().route(u, v, toGoal);
+      if (!r) return false;
+      const [c0, r0] = cell(u, v), [cu0, cv0] = center(Math.min(Math.max(c0, 0), M.nc - 1), Math.min(Math.max(r0, 0), M.nr - 1));
+      if (v >= M.v0 && Math.hypot(u - cu0, v - cv0) > 0.3) walkTo(...WB1(cu0, cv0), { max: 300, tol: 0.15 });
+      if (!r.length) return true;
+      walkTo(...WB1(r[0][0], r[0][1]), { max: 300, tol: 0.15 });
+    }
+    return false;
+  };
+
   await T('B1_1_loop_three_signs_then_stop_or_turn', async () => {
     const lv = await enterB1();
     const obj = N.hudState().objective;
@@ -499,18 +515,15 @@ export async function run(N) {
       prev = now.map((e) => e.on);
       if (!DB1().connected()) disc++;
     };
-    // 作業場まで: 升ごとに今の迷路で道を引き直して歩く
+    // 作業場まで: 升ごとに今の迷路で道を引き直して歩く。毎フレーム(歩きの合間の止まったフレームも)変わった壁を視錐台で調べる
+    const pump0 = N.pump;
+    N.pump = function (dt, n = 1, render = true) { for (let i = 0; i < n; i++) { pump0.call(N, dt, 1, false); step(); } if (render) N.render(); return null; };
     let ok = false;
-    for (let k = 0; k < 80 && !ok; k++) {
-      const p = N.player.pos;
-      const r = DB1().route(p.x - 520, p.z, true);
-      if (!r) break;
-      const [cu, cv] = r.length ? r[0] : [6, 75];
-      walkTo(...WB1(cu, cv), { max: 300, tol: 0.25, each: () => { step(); return false; } });
-      if (!r.length || (Math.abs(N.player.pos.x - 526) < 1.01 && N.player.pos.z > 74)) { walkPath([WB1(6, 75.5), WB1(6, 77.4)], { max: 300 }); ok = N.player.pos.z > 77; }
-    }
-    // 見ていない間に入口の方の壁が変わっている(戻る道の見え方が変わる)。少し立ち止まって見回すと変わっていく
-    for (let t = 0; t < 3; t += DT) { face(N.player.pos.x, N.player.pos.z + 5, 0); N.pump(DT, 1, false); step(); }
+    try {
+      if (mazeWalk(true)) { walkPath([WB1(6, 75.5), WB1(6, 77.4)], { max: 300 }); ok = N.player.pos.z > 77; }
+      // 見ていない間に入口の方の壁が変わっている(戻る道の見え方が変わる)。少し立ち止まって見回すと変わっていく
+      for (let t = 0; t < 3; t += DT) { face(N.player.pos.x, N.player.pos.z + 5, 0); N.pump(DT, 1, false); }
+    } finally { N.pump = pump0; }
     const s = stB1();
     const pass = ok && changes >= 5 && viol.length === 0 && disc === 0 && s.flips >= 5;
     return { pass, reachedWorkshop: ok, wallChanges: changes, flips: s.flips, changedInView: viol.slice(0, 5), disconnectedFrames: disc, frames };
@@ -525,15 +538,8 @@ export async function run(N) {
     const objKey = N.hudState().objective;
     // 戻る: 迷路の入口 → トンネル → 踊り場の扉(開かない)→ 2 周 → 扉が少し開く → 踊り場 → 鉄扉
     let lampSample = null, okRoute = true;
-    for (let k = 0; k < 80; k++) {
-      const p = N.player.pos;
-      if (p.z < 54.2 && Math.abs(p.x - 520) < 1.2) break;
-      const r = DB1().route(p.x - 520, p.z, false);
-      if (!r) { okRoute = false; break; }
-      const [cu, cv] = r.length ? r[0] : [0, 53];
-      walkTo(...WB1(cu, cv), { max: 300, tol: 0.25 });
-      if (!r.length) { walkTo(...WB1(0, 53.0), { max: 300 }); break; }
-    }
+    okRoute = mazeWalk(false);
+    walkTo(...WB1(0, 51.5), { max: 600 });
     walkTo(...WB1(0, 40), { max: 1500 });
     lampSample = DB1().lampsBehind().filter((l) => Math.abs(l.z - (N.player.pos.z)) < 14);
     walkTo(...WB1(-0.4, 6.2), { max: 3000 });
