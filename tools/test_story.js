@@ -8,7 +8,7 @@
 // 1b) 221 から逃げる途中で死ぬ → 410 から・飛び出しの前(「221号室へ」・管理人は眠る・ロッカーは閉じる)、見せ場は繰り返さない、奥へ進むとまた出る
 //  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
 //  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→105 の鍵→戻る)
-//  4) 第4段: 105 → X105(目標「出口へ」)→ メモ → 第5段
+//  4) 第4段: 105 → X105(目標「出口へ」)→ 出口の手前のメモ → 第5段 → 出口を抜けると 105 の前(P5b-2a: 中の長い廊下は test_spaces.js)
 //  5) 第5段: 6F の罠 3 室で飛び出し・他の部屋では起きない・609 の机の 220 の鍵
 //  6) 第6段: 220(鍵で開く)→ 荒れた部屋 → 正面玄関の鍵
 //  7) 第7段: 正面玄関(鍵スイッチの前は外側の自動ドアが開かない→鍵で開く)→ 駐車場の車 3 台(2 台は鍵・黒い車のグローブボックスに南京錠の鍵)
@@ -356,7 +356,8 @@ export async function run(N) {
     return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back };
   });
 
-  // ---------------------------------------------------------------- 4) 105 → X105 → メモ
+  // ---------------------------------------------------------------- 4) 105 → X105 → (出口の手前の)メモ → 出口 → 105 の前
+  //  P5b-2a: X105 は長い廊下(tools/test_spaces.js が中身を見る)。ここでは鍵・目標・メモ・出口の流れだけ: 中の段取りは飛ばして出口の手前へ移す
   await T('4_105_space_memo', async () => {
     S.applyStage(4); quiet();
     await tp(1, ...front('105', 0.9), -Math.PI / 2);
@@ -365,12 +366,18 @@ export async function run(N) {
     S.item = '105';
     const ent = openAndEnter('105');
     const objIn = N.hudState().objective;
+    const dbg = N.spaces.debug('X105');
+    dbg.skip('loopDone');
+    await N.teleport('X105', 303.3, 164.5, Math.PI); N.pump(DT, 10, false);
     const memoHint = pickAt(pk('memo6F'));
     const toast = N.hudState().toast;
     const st = S.state();
-    const back = leave();
+    walkTo(303.3, 165.97, 400, 0.1);   // 出口の扉の面(166)の手前 0.12m を越えると出る(歩き続けないよう面の直前で止める)
+    waitTrans();
+    const b = N.spaces.def('X105').back;
+    const back = pos();
     const pass = noKey.toast === '鍵がかかっている' && !noKey.unlocked && ent.level === 'X105' && objIn === '出口へ' && memoHint.includes('拾う') && toast.includes('6 階')
-      && st.stage === 5 && st.item === null && N.hudState().objective === '6階の部屋から鍵を探せ' && back.level === 1;
+      && st.stage === 5 && st.item === null && N.hudState().objective === '6階の部屋から鍵を探せ' && back.level === 1 && Math.hypot(back.x - b.x, back.z - b.z) < 0.1;
     return { pass, noKey, enter: ent, objectiveInside: objIn, memoHint, toast, stage: st.stage, back };
   });
 
