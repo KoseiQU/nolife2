@@ -17,7 +17,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Player } from './player.js';
 import { GEOM } from './walls.js';
-import { World, levelY, glbLevel, FACING_N, LEVELS } from './world.js';
+import { World, levelY, glbLevel, FACING_N, LEVELS, isSpace } from './world.js';
 import { Stairs } from './stairs.js';
 import { Elevator, EV } from './elevator.js';
 import { Enemy } from './enemy.js';
@@ -34,6 +34,8 @@ import { DoorFx } from './door_fx.js';
 import { ViewLock } from './view_lock.js';
 import { Watcher } from './watcher.js';
 import { Tutorial } from './tutorial.js';
+import { Story } from './story.js';
+import { Spaces } from './spaces.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -42,6 +44,9 @@ const TOUR = PARAMS.has('tour');
 // P3b: 物語の進行で解放するフラグ(P5 で条件を決める)。roofA = 410 のバルコニーから屋上A へ乗り越えられる(P3b-3: 401 からは不可)。?tour と ?roofA では最初から真
 // P3c-2: entranceOut = 正面玄関の外側の自動ドアが動く(2026-11-01 ユーザー指示: 最初は開かない)。?tour と ?entranceOut では最初から真
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
+// P5b-1: 物語(story.js)のモード。通常プレイと ?test=story = 'play'(段・目標・鍵・221/6F の罠・最終追跡・エンディング)、?tour = 'tour'(全部解放・別空間に入れる)、
+//  他のテスト(?test=enemy/rooms/building)= 'off'(物語の扉は施錠のまま、それ以外は P5a までと同じ)
+const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story') ? 'play' : 'off';
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -274,6 +279,8 @@ let lastUseLocked = false, lastUseAutoLocked = false;
 // E を押した(短押しが確定した)時: EV の呼びボタン/カゴの行き先ボタン、それ以外は扉
 function useAndReport() {
   const t = hud.target;
+  if (t && t.kind === 'story') { story.use(t); return null; }   // P5b-1: 拾う・鍵を使う・調べる・戻る・乗る
+  if (t && (t.kind === 'ev' || t.kind === 'evbutton') && story && story.evDisabled) { hud.flash(HUD_TEXT.ev.noResponse); return null; }   // P5b-1: 第9段から EV は反応しない
   if (t && t.kind === 'ev') {
     const r = elevator.call(playerLevel);
     if (r === 'called' && !TOUR) ai.evGambleCheck(playerLevel);   // P5a: EV の賭け(管理人が降りた直後に呼ぶと、中にいる)
@@ -307,6 +314,7 @@ const doorApi = {
   repairDoor: (id) => world.repairDoor(id),
 };
 let doorFx = null;   // P5a(下で作る)
+let story = null, spaces = null;   // P5b-1(下で作る)
 function updateDoors(dt) {
   world.updateDoors(dt, [
     { level: playerLevel, x: player.pos.x, z: player.pos.z },
@@ -323,6 +331,8 @@ player.setPose(region.spawn.x, region.spawn.z, region.spawn.yaw, -0.03);
 // ---------------------------------------------------------------- enemy (P2b)
 // 常夜灯(manifest.lamps)・非常口サイン・窓の位置に「敵だけに効く」弱い光を置く(enemy.js のシェーダ注入)。階ごと
 function lampDefsFor(lv) {
+  if (isSpace(lv)) return { lamps: [], exitLamps: [], windowLamps: spaces ? spaces.lampsFor(lv) : [] };   // P5b-1: 別空間(裸電球)
+  if (lv === 'G') return { lamps: [], exitLamps: [], windowLamps: building.site.poles.map(([x, z]) => [x, 3.4, z]) };   // P5b-1: 敷地(照明柱)
   const man = manifests[glbLevel(lv)];
   const y = levelY(lv);
   if (lv === 'RB') return { lamps: [], exitLamps: [], windowLamps: (man.brackets || []).slice(-1) };
@@ -453,7 +463,10 @@ player.onKey = (code) => {
   if (code === 'KeyE' && rooms.hidden && rooms.hidden.phase === 'hidden' && !movie.active) { rooms.unhide(); return; }   // P3b: 隠れ場所から出る
   // カゴの中: 数字キーで行き先(1〜7)
   const dm = /^Digit([1-7])$/.exec(code);
-  if (dm && elevator.inCar(player.pos.x, player.pos.z, playerLevel)) { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
+  if (dm && elevator.inCar(player.pos.x, player.pos.z, playerLevel)) {
+    if (story && story.evDisabled) hud.flash(HUD_TEXT.ev.noResponse);
+    else { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
+  }
   // P5a: L キーの施錠/解錠は撤去(DESIGN §3.7・§3.8 B「施錠要素は全廃」)。L は何もしない
   if (code === 'KeyP' && canPeep()) peephole.set(true);
 };
@@ -513,10 +526,14 @@ function updateDeath(dt) {
     rooms.forceUnhide();
     player.object.rotation.z = 0;
     player.crouch = false;
-    if (playerLevel !== 4) setPlayerLevel(4);
-    player.setPose(CHECKPOINT.x, CHECKPOINT.z, CHECKPOINT.yaw, 0);
+    // P5b-1: 物語の段の開始位置へ(段・持ち物・壊れた扉・解放はそのまま)。物語なし(他のテスト)は従来の 410
+    const sp = story && story.active ? story.respawnPoint() : { level: 4, ...CHECKPOINT };
+    if (playerLevel !== sp.level) setPlayerLevel(sp.level);
+    spaces.show(isSpace(sp.level) ? sp.level : null);
+    player.setPose(sp.x, sp.z, sp.yaw, 0);
     player.frozen = false;
     ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+    if (story && story.active) story.afterRespawn();
     deathCount++;
   }
   if (t >= respawnAt + DEATH.fadeIn) { death = null; overlay.style.opacity = '0'; flash.style.opacity = '0'; caption.style.opacity = '0'; }
@@ -530,6 +547,7 @@ const hud = new Hud({
   extraTarget: () => extraTarget(),
   peepKey: () => (peephole.active ? (pendingE && pendingE.held ? 'E' : player.keys.has('KeyP') ? 'P' : 'E') : null),
   isMovie: () => movie.active || viewLock.active, isDead: () => !!death,
+  storyTarget: () => (story ? story.target() : null), isEnding: () => !!(story && story.ending),   // P5b-1
 });
 player.controls.addEventListener('lock', () => { document.body.classList.add('locked'); hud.setPointer(true); });
 player.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); hud.setPointer(false); });
@@ -566,8 +584,16 @@ elevator.attach(scene);
 const stairs = new Stairs({ building, player, camera, getLevel: () => playerLevel,
   onStart: (from, to) => { world.focus(to); updateVisibility(); },
   onArrive: (to) => { setPlayerLevel(to); } });
+// P5b-1: 物語の別空間(仮の小部屋)と物語の状態機械
+spaces = new Spaces({ scene, world, building });
+story = new Story({ mode: STORY_MODE, world, building, scene, camera, player, ai, hud, rooms, elevator, doorFx, flags: FLAGS, spaces, audio: enemyAudio, viewLock,
+  envTex, aiControl: !TOUR && !PARAMS.has('noai'), getLevel: () => playerLevel,
+  teleport: (key, x, z, yaw) => { setPlayerLevel(key); player.setPose(x, z, yaw, 0); updateVisibility(); } });
+story.watcher = watcher; story.watcherBase = watcher.enabled;
+story.onAIReset = () => ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
 // 見せる階: ふだんは今の階だけ。外階段・北階段の区画にいる時と上り下りの最中は上下の階も(吹き抜けで見えるので)
 function updateVisibility() {
+  if (isSpace(playerLevel)) { world.setVisible([]); if (rooms) rooms.syncVisible(world.visible); return; }   // P5b-1: 別空間では建物を描かない
   const c = glbLevel(playerLevel);
   const open = stairs.busy || !!stairs.inStairArea(player.pos.x, player.pos.z) || outdoorsHere();
   world.setVisible(open ? [c - 1, c, c + 1] : [c]);
@@ -749,6 +775,7 @@ function step(dt) {
   stairs.update(dt);
   rooms.update(dt, playerLevel);
   rooms.updateWind(dt, outdoorKind());
+  story.update(dt);   // P5b-1
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
@@ -805,6 +832,12 @@ function frame(now) {
 }
 // P2c: 襲撃ムービーの血(ShaderPass)と血煙(Points)のシェーダを先にコンパイルしておく(初回発動時の 50ms 級の引っかかり対策)
 // P5a: 行動パターンのチュートリアル(仮)。ゲーム開始直後に毎回(?notutorial・?tour・?test では出さない)
+// P5b-1: 物語の開始(?stage=N はその段の開始状態)
+if (STORY_MODE === 'play') {
+  story.applyStage(parseInt(PARAMS.get('stage'), 10) || 1);
+  if (PARAMS.has('roofA')) FLAGS.roofA = true;
+  if (PARAMS.has('entranceOut')) { FLAGS.entranceOut = true; story._applyEntrance(); }
+}
 const tutorial = new Tutorial();
 if (!TOUR && !PARAMS.has('notutorial') && !PARAMS.has('test')) tutorial.start();
 movie.pass.enabled = true; movie.mist.points.visible = true;
@@ -844,6 +877,7 @@ window.__n2 = {
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial,   // P5a
+  story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
   loadExterior: () => (exterior.ready ? Promise.resolve(exterior) : (window.__n2._extLoad ||= exterior.load())),
@@ -905,3 +939,4 @@ if (TOUR) {
 if (PARAMS.get('test') === 'enemy') import('../tools/test_enemy.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);
+if (PARAMS.get('test') === 'story') import('../tools/test_story.js').then((m) => m.run(window.__N2)).catch(showErr);

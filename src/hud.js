@@ -33,6 +33,13 @@ const CSS = `
 #hud-controls { bottom: 6vh; font-size: 13px; letter-spacing: .1em; padding: 7px 16px; white-space: normal; width: max-content; max-width: 92vw; text-align: center; }
 #hud-notice { top: 13vh; font-size: 13px; letter-spacing: .14em; background: rgba(6,7,9,.42); color: #d8d2c8; transition: opacity .6s linear; }
 #hud-center { top: 50%; transform: translate(-50%, -50%); font-size: 16px; letter-spacing: .2em; padding: 9px 20px; }
+#hud-obj { position: absolute; left: 22px; top: 18px; font-size: 13px; letter-spacing: .14em; color: #d9d3c8; opacity: .78; text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  transition: font-size .35s ease, color .35s ease, opacity .35s ease; white-space: nowrap; }
+#hud-obj.em { font-size: 19px; color: #f2ead8; opacity: 1; }
+#hud-obj.off { opacity: 0; }
+#hud-item { position: absolute; left: 22px; top: 44px; font-size: 12px; letter-spacing: .12em; color: #d9c48c; background: rgba(6,7,9,.45); border: 1px solid rgba(217,196,140,.35);
+  border-radius: 2px; padding: 2px 9px; opacity: 0; transition: opacity .3s linear; }
+#hud-item.on { opacity: .9; }
 #hud-dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: rgba(234,230,223,.45); }
 `;
 
@@ -46,13 +53,16 @@ export class Hud {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
-      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>';
+      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>'
+      + '<div id="hud-obj" class="off"></div><div id="hud-item"></div>';
     document.body.appendChild(this.root);
     this.el = {
       dot: this.root.querySelector('#hud-dot'), hint: this.root.querySelector('#hud-hint'), toast: this.root.querySelector('#hud-toast'),
       release: this.root.querySelector('#hud-release'), controls: this.root.querySelector('#hud-controls'), center: this.root.querySelector('#hud-center'),
       notice: this.root.querySelector('#hud-notice'),
+      obj: this.root.querySelector('#hud-obj'), item: this.root.querySelector('#hud-item'),
     };
+    this.objective = ''; this.objEmT = 0; this.objLog = []; this.itemText = '';   // P5b-1
     this.noticeT = 0;
     this.noticeLog = [];
     this.el.controls.textContent = TX.controls;
@@ -76,6 +86,22 @@ export class Hud {
     this.el.notice.textContent = text;
     this.noticeT = sec;
     this.noticeLog.push({ text, sec });
+  }
+  // P5b-1: 目標(一文)。文言が変わった時だけ em 秒強調する(章が変わる時)。空文字で隠す
+  setObjective(text, em = 2.0) {
+    text = text || '';
+    if (text === this.objective) return;
+    this.objective = text;
+    this.el.obj.textContent = text;
+    this.objEmT = text ? em : 0;
+    this.objLog.push({ text });
+  }
+  // P5b-1: 持ち物の札(null で隠す)
+  setItem(text) {
+    text = text || '';
+    if (text === this.itemText) return;
+    this.itemText = text;
+    if (text) this.el.item.textContent = text;
   }
   showControls(sec = HUD.controlsKeySec) { this.controlsT = Math.max(this.controlsT, sec); }
   setPointer(locked) {
@@ -112,6 +138,11 @@ export class Hud {
     this.el.toast.classList.toggle('on', this.toastT > 0 && !hidden && !peeping);
     this.noticeT = Math.max(0, this.noticeT - dt);
     this.el.notice.classList.toggle('on', this.noticeT > 0 && !hidden && !peeping);
+    this.objEmT = Math.max(0, this.objEmT - dt);
+    const showObj = !!this.objective && !this.isDead() && !(this.isEnding && this.isEnding());
+    this.el.obj.classList.toggle('off', !showObj);
+    this.el.obj.classList.toggle('em', showObj && this.objEmT > 0);
+    this.el.item.classList.toggle('on', !!this.itemText && showObj && !hidden);
     this.controlsT = Math.max(0, this.controlsT - dt);
     this.el.controls.classList.toggle('on', this.controlsT > 0 && !hidden && !peeping);
 
@@ -144,6 +175,8 @@ export class Hud {
       const d = look((c.minX + c.maxX) / 2, (c.minZ + c.maxZ) / 2, HUD.reach);
       if (d >= 0 && d < bd) { bd = d; door = dd; }
     }
+    // P5b-1: 物語の物(鍵・メモ・鍵穴・キーボックス・車・南京錠・別空間の扉)は扉や覗き穴より先
+    if (this.storyTarget) { const st = this.storyTarget(); if (st) return st; }
     const items = [];
     const badge = null;
     let kind = null;
@@ -173,6 +206,9 @@ export class Hud {
       controls: this.el.controls.classList.contains('on'),
       center: this.el.center.classList.contains('on') ? this.el.center.textContent : '',
       notice: this.el.notice.classList.contains('on') ? this.el.notice.textContent : '',
+      objective: this.el.obj.classList.contains('off') ? '' : this.objective,
+      objectiveEm: this.el.obj.classList.contains('em'),
+      item: this.el.item.classList.contains('on') ? this.itemText : '',
     };
   }
 }
