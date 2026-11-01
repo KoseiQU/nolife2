@@ -13,6 +13,7 @@ import { HUD_TEXT } from './hud_text.js';
 import { levelY, isSpace, FACING_N } from './world.js';
 import { SPACE_DEFS } from './spaces.js';
 import * as P from './story_props.js';
+import { InsideWatcher } from './watcher.js';   // P5b-2b: 第7段の窓の内側から見下ろす管理人
 
 export const STORY = {
   reach: 1.45,            // 拾う・使うの距離(カメラから水平)
@@ -394,6 +395,7 @@ export class Story {
       if (n >= 11) this._addEntrancePortal();
     }
     this.log('apply_stage', { stage: n });
+    if (this.winWatcher) { this.winWatcher.hide('stage'); this.winWatcher.done = false; }   // P5b-2b
     if (teleport) { const s = SPAWN[n]; this.teleport(s.level, s.x, s.z, s.yaw); }
     if (this.aiControl) {
       if (n === 1) this.ai.setDormant(true);
@@ -448,6 +450,9 @@ export class Story {
   update(dt) {
     this.time += dt;
     const lv = this.getLevel(), p = this.player.pos;
+    // P5b-2b: 第7段の窓の内側の管理人(見えるだけ)。出せるのは第7段だけ(出ている間に第8段になっても敷地にいる間は消える条件まで残る)
+    if (!this.winWatcher && this.watcher && this.mode !== 'tour') { const W = this.watcher; this.winWatcher = new InsideWatcher({ scene: W.scene, camera: W.camera, enemy: W.enemy, world: W.world, building: W.building, ai: W.ai, getLevel: W.getLevel, isBusy: W.isBusy, enabled: !!this.watcherBase }); }
+    if (this.winWatcher) { this.winWatcher.allowed = this.active && this.stage === 7 && !this.ending; this.winWatcher.update(dt); }
     // 物の見え方・瞬き
     for (const pk of this.pickups) {
       if (pk.space && pk.space === lv) { const q = this.spaces.slotPos(pk.space, pk.slot); if (q) { pk.pos.copy(q); pk.mesh.position.copy(q); } }   // P5b-2a: 動く置き場所

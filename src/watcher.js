@@ -292,3 +292,115 @@ export class Watcher {
 }
 
 function rand(a, b) { return a + (b - a) * Math.random(); }
+
+// ================================================================ P5b-2b: 窓の内側から見下ろす管理人(DESIGN §3.8 H 第7段 = §3.8 F の逆)
+//  第7段で敷地・駐車場に出て建物を見上げると、灯りの点いた窓(外観の lit 8 室のうち駐車場から見える 409)の内側に、こちらを見下ろす管理人が立っている。
+//  襲ってこない見えるだけの演出体(Watcher と同じ作り = 本体とは別のメッシュのインスタンス。AI・当たりなし・本体の位置とは無関係)。
+//  - 出る: 第7段・敷地の駐車場のあたりにいて、窓がまだ視野に入っていない時(目の前に湧かない)。1 回だけ(見られないまま離れたら、また出られる)
+//  - 消える: 近づく(窓から水平 near m)/ 見続ける(seeTime 秒)/ 見た後に視線を外す / 敷地から離れる
+//  - 窓の奥のカーテンの発光面(外観 GLB)の手前に立たせる。外から見て分からない程度に前後を薄く(奥行き flat 倍)して、ガラスと発光面の間に収める
+//  - ?test では自動で出さない(enabled = false)。force() で出せる(第7段・敷地にいる時だけ)
+export const INSIDE_WATCHER = {
+  // build/exterior_manifest.json の litWindows の 409(4F・東向き。発光面の中心 x 13.756・z 10.52)。駐車場から見える唯一の上の階の灯りの窓
+  win: { room: '409', level: 4, x: 13.756, z: 10.52, out: [1, 0], w: 1.6 },
+  stand: 0.075,             // 発光面から外へ(m)
+  flat: 0.32,               // 前後の厚みの倍率
+  area: { x0: 26.0, x1: 38.5, z0: -3.5, z1: 14.0 },   // 駐車場のあたり(敷地 'G')
+  near: 11.0,               // 窓から水平にこの距離まで近づいたら消える
+  seeTime: 3.5, minSeen: 0.3, ndc: 0.9,
+  lookDownMax: 0.75,
+  back: { color: 0xffcf9a, intensity: 2.6, range: 3.2 },   // 背後の部屋の灯り(逆光)
+  front: { color: 0xffd9b0, intensity: 0.35, range: 3.0 }, // カーテンの照り返し(顔がかろうじて見える)
+};
+
+export class InsideWatcher extends Watcher {
+  // ctx: Watcher と同じ(scene・camera・enemy・world・building・ai・getLevel・isBusy)。allowed(第7段)は story が毎フレーム入れる
+  constructor(ctx) {
+    super(ctx);
+    this.allowed = false;
+    this.done = false;
+  }
+  _winHead() { const W = INSIDE_WATCHER.win; return new THREE.Vector3(W.x + W.out[0] * INSIDE_WATCHER.stand, levelY(W.level) + 1.6, W.z + W.out[1] * INSIDE_WATCHER.stand); }
+  _inArea(p) { const A = INSIDE_WATCHER.area; return this.getLevel() === 'G' && p.x > A.x0 && p.x < A.x1 && p.z > A.z0 && p.z < A.z1; }
+  _nearDist(p) { const W = INSIDE_WATCHER.win; return Math.hypot(p.x - W.x, p.z - W.z); }
+  _showInside() {
+    this._build();
+    const W = INSIDE_WATCHER.win, I = INSIDE_WATCHER;
+    this.model.scale.set(1, 1, I.flat);
+    const x = W.x + W.out[0] * I.stand, z = W.z + W.out[1] * I.stand, y = levelY(W.level);
+    this.root.position.set(x, y, z);
+    this.root.rotation.set(0, Math.atan2(W.out[0], W.out[1]), 0);
+    this.root.visible = true;
+    this.active = { spot: { id: 'win' + W.room, x, y, z }, win: W, seenT: 0, seenOnce: false, t: 0, away: 0 };
+    this.lampWorld = new THREE.Vector3(x - W.out[0] * 1.2, y + 2.2, z - W.out[1] * 1.2);
+    this.frontWorld = new THREE.Vector3(x + W.out[0] * 0.6, y + 1.3, z + W.out[1] * 0.6);
+    this.log('show', { spot: 'win' + W.room });
+    return true;
+  }
+  hide(why) {
+    if (!this.active) return;
+    this.log('hide', { why, seen: +this.active.seenT.toFixed(2) });
+    if (this.active.seenOnce || why === 'near') this.done = true;
+    this.active = null;
+    if (this.root) this.root.visible = false;
+  }
+  // テスト・デバッグ: 第7段・駐車場にいる時だけ(見ているかは問わない)
+  force() { if (this.active) return true; if (!this.allowed || !this._inArea(this.camera.position)) return false; return this._showInside(); }
+  update(dt) {
+    this.time += dt;
+    const p = this.camera.position;
+    const A = this.active;
+    if (A) {
+      A.t += dt;
+      const head = this._winHead();
+      if (this.getLevel() !== 'G') { this.hide('left'); return; }
+      if (this._nearDist(p) < INSIDE_WATCHER.near) { this.hide('near'); return; }
+      const inView = this._inView(head, INSIDE_WATCHER.ndc);
+      if (inView) { A.seenT += dt; A.away = 0; if (A.seenT >= INSIDE_WATCHER.minSeen) A.seenOnce = true; } else A.away += dt;
+      if (A.seenT >= INSIDE_WATCHER.seeTime) { this.hide('stared'); return; }
+      if (A.seenOnce && !inView && A.away > 0.15) { this.hide('looked_away'); return; }
+      if (this.isBusy()) { this.hide('busy'); return; }
+      this._animateInside(dt);
+      return;
+    }
+    if (!this.enabled || !this.allowed || this.done) return;
+    this.checkT -= dt;
+    if (this.checkT > 0) return;
+    this.checkT = WATCHER.checkEvery;
+    if (!this._inArea(p) || this.isBusy() || this._nearDist(p) < INSIDE_WATCHER.near + 1.5) return;
+    if (this._inView(this._winHead(), 1.1)) return;   // 目の前に湧かせない
+    this._showInside();
+  }
+  _animateInside(dt) {
+    const W = INSIDE_WATCHER.win, I = INSIDE_WATCHER;
+    this.mixer.update(dt);
+    const cam = this.camera.position, s = this.active.spot;
+    // 体は窓の外向きのまま、少しだけプレイヤーの方へ(±0.45 rad)。首を前へ倒して見下ろす
+    const base = Math.atan2(W.out[0], W.out[1]);
+    let dy = Math.atan2(cam.x - s.x, cam.z - s.z) - base; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI;
+    this.root.rotation.y = base + THREE.MathUtils.clamp(dy, -0.45, 0.45);
+    this.root.updateMatrixWorld(true);
+    if (this.neck && this.head) {
+      const hp = this.head.getWorldPosition(new THREE.Vector3());
+      const down = THREE.MathUtils.clamp(Math.atan2(hp.y - cam.y, Math.hypot(cam.x - hp.x, cam.z - hp.z)), 0, I.lookDownMax);
+      const f = new THREE.Vector3(Math.sin(this.root.rotation.y), 0, Math.cos(this.root.rotation.y));
+      const right = new THREE.Vector3(f.z, 0, -f.x).normalize();
+      for (const [bone, k] of [[this.neck, 0.55], [this.head, 0.45]]) {
+        const rWorld = new THREE.Quaternion().setFromAxisAngle(right, down * k);
+        const pWorld = bone.parent.getWorldQuaternion(new THREE.Quaternion());
+        bone.quaternion.copy(pWorld.clone().invert().multiply(rWorld).multiply(pWorld).multiply(bone.quaternion));
+        bone.updateMatrixWorld(true);
+      }
+    }
+    const u = this.uniforms, view = this.camera.matrixWorldInverse;
+    u.n2LampPos.value[0].copy(this.lampWorld).applyMatrix4(view);
+    u.n2LampColor.value[0].set(I.back.color).multiplyScalar(I.back.intensity); u.n2LampRange.value[0] = I.back.range;
+    u.n2LampPos.value[1].copy(this.frontWorld).applyMatrix4(view);
+    u.n2LampColor.value[1].set(I.front.color).multiplyScalar(I.front.intensity); u.n2LampRange.value[1] = I.front.range;
+    for (let i = 2; i < MAX_LAMPS; i++) { u.n2LampColor.value[i].setScalar(0); u.n2LampRange.value[i] = 1; }
+    u.n2UpView.value.set(0, 1, 0).transformDirection(view);
+    u.n2HemiSky.value.set(WATCHER.hemi.sky).multiplyScalar(WATCHER.hemi.intensity * 10);
+    u.n2HemiGround.value.set(WATCHER.hemi.ground).multiplyScalar(WATCHER.hemi.intensity * 10);
+  }
+  stats() { const A = this.active; return { active: A ? { seenT: +A.seenT.toFixed(2), seenOnce: A.seenOnce, t: +A.t.toFixed(1) } : null, visible: !!(this.root && this.root.visible), done: this.done, allowed: this.allowed }; }
+}
