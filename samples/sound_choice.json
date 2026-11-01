@@ -1,16 +1,223 @@
 {
   "_note": "試聴盤の選択。値は A/B/C（採用する候補）、none（採用なし＝その場面は無音でよい）、redo（作り直し。note に欲しい方向）。2026-11-01 ユーザー回答（チャット）を転記。",
   "choices": {
-    "amb_room": { "pick": "none" },
-    "pl_step_room": { "pick": "A" },
-    "pl_flashlight": { "pick": "none" },
-    "pl_crouch": { "pick": "none", "note": "そもそもしゃがむ要素がいらない（しゃがみ廃止。Ctrl は 312 の潜水専用に）" },
-    "door_wood": { "pick": "none" },
-    "amb_corridor": { "pick": "A" },
-    "pl_step_corridor": { "pick": "redo", "note": "こつこつと硬い地面を歩いている感じ" },
-    "door_locked": { "pick": "none" },
-    "pl_peephole": { "pick": "B" },
-    "pl_closet": { "pick": "A" },
-    "room_fall": { "pick": "redo", "note": "パリーン！と割れる感じ" }
+    "amb_room": {
+      "pick": "none"
+    },
+    "pl_step_room": {
+      "pick": "A"
+    },
+    "pl_flashlight": {
+      "pick": "redo"
+    },
+    "pl_crouch": {
+      "pick": "none",
+      "note": "そもそもしゃがむ要素がいらない（しゃがみ廃止。Ctrl は 312 の潜水専用に）"
+    },
+    "door_wood": {
+      "pick": "redo"
+    },
+    "amb_corridor": {
+      "pick": "A"
+    },
+    "pl_step_corridor": {
+      "pick": "redo"
+    },
+    "door_locked": {
+      "pick": "redo"
+    },
+    "pl_peephole": {
+      "pick": "redo"
+    },
+    "pl_closet": {
+      "pick": "A"
+    },
+    "room_fall": {
+      "pick": "A",
+      "note": "パリーン！と割れる感じ"
+    },
+    "opening_ev": {
+      "pick": "none"
+    },
+    "ev_button": {
+      "pick": "none"
+    },
+    "ev_chime": {
+      "pick": "A"
+    },
+    "ev_door": {
+      "pick": "none"
+    },
+    "ev_motor": {
+      "pick": "A"
+    },
+    "ev_car_quiet": {
+      "pick": "none"
+    },
+    "enemy_presence": {
+      "pick": "redo",
+      "note": "なにかぼそぼそ呟いてる"
+    },
+    "enemy_step_walk": {
+      "pick": "redo",
+      "note": "硬いゆかを歩いてる感じ"
+    },
+    "enemy_step_run": {
+      "pick": "redo",
+      "note": "もっと大きい音でドタバタ恐怖感を煽る"
+    },
+    "enemy_breath_close": {
+      "pick": "redo",
+      "note": "息遣いではなく、笑い声かセリフにして"
+    },
+    "enemy_breath_door": {
+      "pick": "redo",
+      "note": "息遣いではなく、笑い声かセリフにして"
+    },
+    "enemy_handle": {
+      "pick": "redo"
+    },
+    "room_door_rattle": {
+      "pick": "redo"
+    },
+    "enemy_door_latch": {
+      "pick": "none"
+    },
+    "enemy_door_smash": {
+      "pick": "redo",
+      "note": "もっと爆発音のような感じ"
+    },
+    "enemy_scream": {
+      "pick": "redo",
+      "note": "もっと叫び声"
+    },
+    "enemy_hit": {
+      "pick": "redo",
+      "note": "もっと重量感のあるものに"
+    },
+    "death": {
+      "pick": "A"
+    },
+    "gameover": {
+      "pick": "none"
+    },
+    "checkpoint": {
+      "pick": "none"
+    },
+    "watcher_silence": {
+      "pick": "none"
+    },
+    "amb_lobby": {
+      "pick": "none"
+    },
+    "door_glass": {
+      "pick": "none"
+    },
+    "door_steel": {
+      "pick": "none"
+    },
+    "story_221_lure": {
+      "pick": "A"
+    },
+    "locker_tease": {
+      "pick": "none"
+    },
+    "locker_open_slow": {
+      "pick": "redo",
+      "note": "キイという音がいい"
+    },
+    "locker_burst": {
+      "pick": "redo",
+      "note": "もっと驚かせる音で"
+    },
+    "pickup_key": {
+      "pick": "A"
+    },
+    "pickup_paper": {
+      "pick": "A"
+    },
+    "key_unlock": {
+      "pick": "redo"
+    },
+    "amb_x312_above": {
+      "pick": "none"
+    },
+    "x312_dive": {
+      "pick": "none"
+    },
+    "amb_x312_under": {
+      "pick": "none"
+    },
+    "pl_step_water": {
+      "pick": "none"
+    },
+    "x312_gasp": {
+      "pick": "none"
+    },
+    "x312_drown": {
+      "pick": "none"
+    },
+    "amb_x105": {
+      "pick": "C"
+    },
+    "x105_scream": {
+      "pick": "redo",
+      "note": "もっと機械音感をなくしたい"
+    },
+    "x105_lamp_off": {
+      "pick": "none"
+    },
+    "space_warp": {
+      "pick": "none"
+    },
+    "decoy_key": {
+      "pick": "none"
+    },
+    "door_auto": {
+      "pick": "none"
+    },
+    "amb_outdoor": {
+      "pick": "B"
+    },
+    "pl_step_outdoor": {
+      "pick": "none"
+    },
+    "pl_step_stairs": {
+      "pick": "none"
+    },
+    "car_door": {
+      "pick": "none"
+    },
+    "room_window": {
+      "pick": "none"
+    },
+    "amb_roof": {
+      "pick": "A"
+    },
+    "amb_x705": {
+      "pick": "none"
+    },
+    "x705_lights_off": {
+      "pick": "B"
+    },
+    "door_creak_slow": {
+      "pick": "none"
+    },
+    "amb_b1": {
+      "pick": "B"
+    },
+    "amb_maze": {
+      "pick": "none"
+    },
+    "space_release": {
+      "pick": "none"
+    },
+    "car_engine": {
+      "pick": "B"
+    },
+    "ending_gate": {
+      "pick": "redo",
+      "note": "ジャリジャリ感をなくして"
+    }
   }
 }
