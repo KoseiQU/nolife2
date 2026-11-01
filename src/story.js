@@ -21,6 +21,8 @@ export const STORY = {
   fade: 0.22,             // 別空間の出入りの暗転(片道・秒)
   siteChaseDist: 6.0,     // 第11段: 敷地へ出て玄関からこれだけ離れたら管理人が玄関から追ってくる
   chaseAppearDelay: 0.5,  // 第9段: 鍵を取ってから管理人が背後に現れるまで
+  // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
+  introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
 // 段の開始位置(チェックポイント・?stage=N)。yaw 0 = 北(−z)
 export const SPAWN = {
@@ -62,6 +64,7 @@ export class Story {
     this.events = []; this.logCount = 0;
     this.trans = null; this.ending = null; this.ended = false;
     this.siteChased = false; this.pending = [];
+    this.introDone = false;   // P5b-1b: 冒頭の見せ場(4F の EV の管理人)を見せたか。死亡しても戻さない(繰り返さない)
     this.group = new THREE.Group(); this.group.name = 'StoryProps';
     this.scene.add(this.group);
     this._buildFade();
@@ -359,6 +362,7 @@ export class Story {
   applyStage(n, { teleport = true } = {}) {
     n = Math.max(1, Math.min(11, n | 0));
     this.ended = false; this.ending = null; this.trans = null; this.pending = []; this.siteChased = false;
+    this.introDone = n > 1;
     this.stage = n; this.sub = n === 1 ? 'memo' : null; this.item = START_ITEM[n];
     this.taken.clear();
     for (const pk of this.pickups) { if (pk.takenAt <= n) this.taken.add(pk.id); pk.mesh.visible = true; }
@@ -449,6 +453,15 @@ export class Story {
       if (p.z < D.exit.z + 0.45 && Math.abs(p.x - D.exit.x) < 0.6) this.leaveSpace();
     }
     if (!this.active) { this.hud.setObjective(''); this.hud.setItem(''); return; }
+    // P5b-1b 冒頭の見せ場: 初めて 410 から廊下へ出た瞬間、4F の EV ホールに管理人 → EV で 2F へ(DESIGN §3.8 H 第1段)
+    if (this.stage === 1 && !this.introDone && lv === 4 && this.aiControl) {
+      const I = STORY.introDoor;
+      if (p.x < I.x - I.out && p.x > I.x - 1.8 && Math.abs(p.z - I.z) < I.half) {
+        this.introDone = true;
+        this.log('intro');
+        this.ai.introEV();
+      }
+    }
     // 6F の罠: 机の上の「鍵に見える物」に近づくとクローゼットから管理人(ワープ)
     if (lv === 6 && this.stage >= 2 && this.aiControl) {
       for (const rid of STORY.trapRooms) {

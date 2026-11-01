@@ -1,6 +1,7 @@
 // test_story.js — P5b-1 動線の骨組み(DESIGN §3.8 H の 11 段)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=story で自動実行。
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。キーは keydown/keyup をペアで送る。結果: window.__N2.testResult
 //  0) ?stage=N の開始状態(段・持ち物・解放・フラグ・開始位置・管理人がいるか)を 1〜11 すべて
+// 1a) P5b-1b 冒頭の見せ場: 410 から廊下へ出ると 4F の EV ホールに管理人(戸口から見える)→ EV で 2F へ(表示 2)→ 2F を歩いても遭遇しない・EV は空で来る
 //  1) 第1段: 館内に管理人がいない・1F 食堂の卓のメモ→「221号室へ」・221 は鍵なしで入れる・机の小さな鍵を拾った瞬間に奥のクローゼットから管理人(ワープ)→
 //     1.5 秒の間→追跡→走って廊下へ逃げ切れる(追跡中 2.5m より近づかれない・OUT なし)
 //  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
@@ -15,6 +16,7 @@
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
 // 13) 目標の文言が段ごとに変わり、章が変わる時だけ 2 秒強調される・持ち物の札
+// 14) P5b-1b フリーズの再現: 追跡中に外階段で 1F へ逃げても描画・視点・操作が戻る、段の途中で死んでも復帰後に歩ける、空振りでムービーが畳まれる
 
 const DT = 1 / 60;
 
@@ -128,6 +130,66 @@ export async function run(N) {
     }
     if (initial) { res.initialFromParam = { q: +q, ...initial }; if (initial.stage !== +q) pass = false; }
     return { pass, res };
+  });
+
+  // ---------------------------------------------------------------- 1a) 冒頭の見せ場(P5b-1b 差し戻し 2): 4F の EV の管理人 → 2F へ → 2F を歩いても遭遇しない
+  await T('1a_intro_ev_manager_to_2F', async () => {
+    S.applyStage(1); await settle(4);
+    N.setFlashlight(false);
+    const dormant0 = N.ai.dormant && !N.enemyObj.root.visible;
+    await tp(4, 8.75, 7.3, Math.PI / 2);   // 410 の玄関(扉を向く)
+    const d410 = door('410');
+    tap('KeyE'); N.pump(DT, 50, false);
+    const notYet = !S.introDone;            // 扉を開けただけでは起きない(廊下へ出た時)
+    key('KeyW', true); let f = 0; for (; f < 90 && !S.introDone; f++) N.pump(DT, 1, false); key('KeyW', false);
+    const atTrigger = pos();
+    N.pump(DT, 2, false);
+    // 戸口から EV ホールの方(南)を見る: 管理人が 4F の EV ホールにいて、視野の中・壁に遮られない
+    const I = N.ai.cfg.intro;
+    const lookAt = (x, z, y = 1.4) => { const c = N.camera.position; const dx = x - c.x, dz = z - c.z; N.player.object.rotation.set(Math.atan2(levelY4(y) - c.y, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0, 'YXZ'); N.player.object.updateMatrixWorld(); };
+    const levelY4 = (y) => 3 * 2.9 + y;
+    const seen = [];
+    const visible = () => {
+      const e = N.enemyObj; if (!e.root.visible || N.ai.level !== N.level) return false;
+      lookAt(e.pos.x, e.pos.z); N.camera.updateMatrixWorld();
+      const head = e.headWorld(new N.THREE.Vector3());
+      const cam = N.camera.position.clone(), dir = head.clone().sub(cam); const dist = dir.length(); dir.normalize();
+      const rc = new N.THREE.Raycaster(cam, dir, 0.05, dist - 0.3);
+      const hits = rc.intersectObject(N.world.floors.get(4).group, true).filter((h) => h.object.visible);
+      const fr = new N.THREE.Frustum().setFromProjectionMatrix(new N.THREE.Matrix4().multiplyMatrices(N.camera.projectionMatrix, N.camera.matrixWorldInverse));
+      return hits.length === 0 && fr.containsPoint(head);
+    };
+    const t0 = N.ai.time;
+    let standVisible = 0, inCarSeen = false, doorOpenSeen = false, aiStates = new Set(), rideAt = null, dormantAt = null, attacked = false;
+    for (let i = 0; i < 60 * 30; i++) {
+      N.pump(DT, 1, false);
+      aiStates.add(N.ai.state);
+      if (['CHASE', 'ATTACK', 'ALERT'].includes(N.ai.state)) attacked = true;
+      if (i % 6 === 0 && N.ai.state === 'INTRO' && !N.ai.transit) { const v = visible(); if (v && N.ai.time - t0 < I.stand) standVisible++; if (v && N.elevator.car.open > 0.9) doorOpenSeen = true; if (v && N.elevator.car.open > 0.9 && N.enemyObj.pos.z > 21.6) inCarSeen = true; }   // inCarSeen = カゴへ歩いて入るところ(戸口の手前)
+      if (rideAt === null && N.ai.events.some((e) => e.ev === 'intro_ride' && e.t >= t0)) rideAt = +(N.ai.time - t0).toFixed(2);
+      if (dormantAt === null && N.ai.dormant) { dormantAt = +(N.ai.time - t0).toFixed(2); }
+      if (dormantAt !== null && N.elevator.car.state !== 'moving' && N.elevator.car.level === 2 && i > 60 * 2) break;
+    }
+    N.pump(DT, 60 * 3, false);
+    const car = N.elevator.state(), shown = N.elevator.shown.floor, shownLog = N.elevator.shownLog.slice(-6).map((q) => q.floor);
+    const end = N.ai.events.find((e) => e.ev === 'intro_end' && e.t >= t0);
+    // 2F の廊下を端から端まで歩いても遭遇しない(管理人は 2F で待機の体 = 眠っている)
+    await tp(2, 6.9, 20.0, Math.PI);
+    const walked2F = walkPath([[6.9, 21.2], [14.0, 21.2], [22.5, 21.2], [14.0, 21.2], [6.9, 21.2], [6.9, 12.0], [6.9, 4.0]]);
+    const met = N.enemyObj.root.visible || !N.ai.dormant || ['CHASE', 'ATTACK'].includes(N.ai.state);
+    // 呼べば EV は普通に来る(中に管理人はいない・賭けもない)
+    N.setView(6.9, 21.2, Math.PI, 0); N.pump(DT, 2, false);
+    const n0 = N.ai.events.length;
+    tap('KeyE');
+    for (let i = 0; i < 60 * 12 && !(N.elevator.car.level === 2 && N.elevator.car.open >= 1); i++) N.pump(DT, 1, false);
+    const evCame = N.elevator.car.level === 2 && N.elevator.car.open >= 1, emptyCar = !N.enemyObj.root.visible && N.ai.dormant && !N.ai.events.slice(n0).some((e) => e.ev === 'ev_ambush');
+    // 一度だけ: 2 回目に廊下へ出ても起きない
+    const again = (() => { S.introDone = true; return !N.ai.events.slice(n0).some((e) => e.ev === 'intro_start'); })();
+    const pass = dormant0 && notYet && S.introDone && standVisible >= 3 && doorOpenSeen && inCarSeen && !attacked && rideAt !== null && dormantAt !== null
+      && end && end.why === 'arrived' && N.ai.level === 2 && car.level === 2 && shown === 2 && shownLog.includes(3) && walked2F && !met && evCame && emptyCar && again && S.stage === 1;
+    quiet();
+    return { pass, dormant0, notYet, atTrigger, standVisibleSamples: standVisible, doorOpenSeen, inCarSeen, attacked, aiStates: [...aiStates], rideAt, dormantAt, end: end || null,
+      aiLevel: N.ai.level, car, shown, shownLog, walked2F, met, evCame, emptyCar };
   });
 
   // ---------------------------------------------------------------- 1) 第1段・221 のロッカーの飛び出し

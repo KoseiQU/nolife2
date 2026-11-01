@@ -98,6 +98,8 @@ export const AI = {
   // P5a: 別の階の音(階差で減衰)。聞こえた大きさ = loud × att[階差]。threshold 以上ならその階へ EV で向かう
   floorHear: { att: [1, 0.5, 0.22, 0], threshold: 0.4, cooldown: 25, runEvery: 1.5,
     loud: { run: 1.0, fall: 1.0, crash: 2.0, door: 0.45, window: 0.3 } },
+  // P5b-1b: 冒頭の見せ場(DESIGN §3.8 H 第1段)。初めて 410 から廊下へ出ると 4F の EV ホールに管理人 → EV で 2F へ → 221 の飛び出しまで姿を見せない
+  intro: { level: 4, to: 2, x: 6.9, z: 20.75, yaw: 0, stand: 2.0, inWalk: 1.0, callTimeout: 12, closeTimeout: 20, travelTimeout: 40 },
   // P5a: EV の賭け。管理人を乗せたカゴが止まってから T 秒以内にプレイヤーが別の階で呼ぶと、中に管理人
   evGamble: { T: 25, reach: 3.0, lunge: 4.0 },
   door: {
@@ -236,6 +238,7 @@ export class EnemyAI {
     this.pending = null;
     this.uninterruptible = false;
     const prev = this.state;
+    if (prev === 'INTRO' && s !== 'INTRO' && this.elevator && this.elevator.npc && !this.elevator.npc.ambush) this.elevator.npcLeave();   // P5b-1b: 見せ場の途中で打ち切られた
     this.state = s;
     this.stateTime = 0;
     this.enemy.aimPoint = null;
@@ -254,6 +257,7 @@ export class EnemyAI {
       ALERT: () => this._alert(opts),
       CHASE: () => this._chase(),
       APPEAR: () => this._appear(opts),
+      INTRO: () => this._intro(opts),
       ATTACK: () => this._attack(),
       EVAMBUSH: () => this._evAmbush(opts),
       SCRIPTED: () => this._scripted(opts),
@@ -319,6 +323,59 @@ export class EnemyAI {
     this.setState('APPEAR', { force: true, log: true, label: 'appear', ...o });
     return true;
   }
+  // P5b-1b: 冒頭の見せ場(台本)。4F の EV ホールに立ち、EV を呼んで乗り、2F へ。襲わない・プレイヤーを見ても反応しない。
+  //  カゴが動き出したら姿を消し(シャフトの中)、2F に着いたら眠る(dormant = 2F で待機の体。221 の飛び出しまで何も感じない)
+  introEV(o = {}) {
+    this.dormant = false;
+    this.setState('INTRO', { force: true, log: true, ...AI.intro, ...o });
+    return true;
+  }
+  *_intro(o) {
+    const e = this.enemy, ev = this.elevator;
+    this.uninterruptible = true;
+    this.transit = false; this.concealed = false; this.lurkRoomId = null;
+    if (o.level !== this.level) this.setLevel(o.level);
+    e.place(o.x, o.z, o.yaw);
+    e.setFace('grin', 0, true); e.setFace('attack', 0, true);
+    e.setFlashlight(true);
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.2 });
+    // カゴは 4F で待っていることにする(呼んですぐ開く。待っている間の表示は 4。プレイヤーは 410 の中なので見ていない)
+    if (ev && ev.car.state === 'idle' && !ev.car.pending.length && !ev.car.riding) { ev.car.level = o.level; ev.car.open = 0; }
+    this.log('intro_start', { lv: o.level, x: o.x, z: o.z });
+    yield* this._wait(o.stand);
+    const finish = (why) => {
+      if (ev && ev.npc && !ev.npc.ambush) ev.npcLeave();
+      this.log('intro_end', { why, car: ev ? ev.car.level : null });
+      this.uninterruptible = false;
+      this.transit = false;
+      if (this.level !== o.to) this.setLevel(o.to);
+      this.setDormant(true);
+    };
+    if (!ev) { finish('no_ev'); yield; return; }
+    const c = ev.car, g = ev.rooms[o.level].geom;
+    // 1) 呼ぶ → 扉が開くまで(カゴの方を向いたまま)
+    ev.call(o.level);
+    this.log('intro_call');
+    let t = 0;
+    while (!(c.level === o.level && c.state === 'open' && c.open >= 1)) { t += this.dt; if (t > o.callTimeout) { this.transit = true; finish('call_timeout'); yield; return; } yield; }
+    // 2) 乗る(カゴの中へ歩く)→ 扉の方を向く → 行き先 2 を押す
+    const inX = g.center[0] + 0.15, inZ = g.center[1];
+    for (let k = 0; k < 4 / Math.max(this.dt, 1e-3); k++) { if (this._stepToward(inX, inZ, o.inWalk, 'walk_oldman', 3.0, 0.15)) break; yield; }
+    yield* this._turnTo(Math.PI);
+    ev.npcSelect(o.to);
+    this.log('intro_select', { to: o.to });
+    // 3) 扉が閉まって動き出したら姿を消す(シャフトの中)
+    t = 0;
+    while (c.state !== 'moving') { t += this.dt; if (t > o.closeTimeout) { this.transit = true; finish('close_timeout'); yield; return; } yield; }
+    this.transit = true;
+    this.setLevel(o.to); e.place(inX, inZ, Math.PI);
+    this.log('intro_ride', { to: o.to });
+    t = 0;
+    while (!(c.level === o.to && c.state !== 'moving')) { t += this.dt; if (t > o.travelTimeout) break; yield; }
+    finish('arrived');
+    yield;
+  }
   *_appear(o) {
     const e = this.enemy, R = AI.roomLurk;
     this.uninterruptible = true;
@@ -381,7 +438,7 @@ export class EnemyAI {
       && this.level === 4 && this._area(this.enemy.pos.x, this.enemy.pos.z) === 'C' && !this.doors.isOpen('410') && !(this.state === 'LURK' && this.lurkFound)) {
       this.setState('SCOPE');
     }
-    if (this.perception && this.state !== 'SCRIPTED' && this.state !== 'DEAD') this._perceive(dt);
+    if (this.perception && this.state !== 'SCRIPTED' && this.state !== 'DEAD' && this.state !== 'INTRO') this._perceive(dt);   // P5b-1b: 見せ場の間は何も感じない(台本)
     else this._updateOcclusionOnly(dt);
     if (this.pending && !this.uninterruptible) { const [s, o] = this.pending; this.pending = null; this.setState(s, o); }
     if (this.task) {
