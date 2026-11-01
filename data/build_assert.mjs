@@ -132,8 +132,14 @@ for (const f of building.floors) {
   const BURST = '221,601,606,611';
   const withBurst = all.filter((q) => q.interior && q.interior.burst).map((q) => q.id).sort().join(',');
   if (withBurst !== BURST) fail(`奥のロッカーの部屋: ${withBurst}(${BURST})`);
-  for (const id of BURST.split(',')) {
-    const r = all.find((q) => q.id === id), it = r && r.interior, bl = it && it.burst;
+  // P5b-1c: 609(220 の鍵の部屋)には同じ見た目の開かないロッカー(管理人の出所にしない = interior.burst を持たない)
+  const SEALED = '609';
+  const withSealed = all.filter((q) => q.interior && q.interior.sealedLocker).map((q) => q.id).sort().join(',');
+  if (withSealed !== SEALED) fail(`開かないロッカーの部屋: ${withSealed}(${SEALED})`);
+  const withLockerItem = all.filter((q) => q.interior && q.interior.items.some((it) => it.k === 'burstlocker')).map((q) => q.id).sort().join(',');
+  if (withLockerItem !== '221,601,606,609,611') fail(`奥の窓際のロッカーの家具がある部屋: ${withLockerItem}(5 室)`);
+  for (const id of [...BURST.split(','), SEALED]) {
+    const r = all.find((q) => q.id === id), it = r && r.interior, bl = it && (it.burst || it.sealedLocker);
     if (!bl) continue;
     const lk = it.items.find((q) => q.k === 'burstlocker');
     if (!lk || JSON.stringify(lk.b) !== JSON.stringify(bl.b)) { fail(`${id}: ロッカーの家具が無い`); continue; }
@@ -153,4 +159,4 @@ for (const f of building.floors) {
 if (units !== 104) fail(`居室数 ${units}`);
 if (balconies !== 104) fail(`バルコニー ${balconies}/104`);
 if (failures) { console.error(`\n内装アサート: ${failures} 件 NG`); process.exit(1); }
-console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 4(220 は内装つき)・奥の窓際のロッカー 4 室(221・601・606・611)`);
+console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 4(220 は内装つき)・奥の窓際のロッカー 5 室(221・601・606・611 = 管理人が出る、609 = 開かない)`);

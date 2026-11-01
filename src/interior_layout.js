@@ -89,7 +89,9 @@ export const UNIT_VARIANTS = {
   // P5b-1(DESIGN §3.8 H): 221(鍵なしで入れる普通の部屋・奥のクローゼットから管理人が飛び出す)・220(前作の痕跡の荒れた部屋)・6F の 7 室(全室を入れる部屋に)。
   //  swap = 机とクローゼットを入れ替える(机が手前 u 3.06〜4.08、クローゼットが奥 u 4.30〜5.26)。机の上の物に近づいた時、
   //  奥のクローゼットから出てくる管理人とプレイヤーの間に机が来る＝玄関へ逃げられる(221・6F の罠 3 室・220 の鍵の部屋 609)
-  //  P5b-1b: burstLocker = 奥の窓際(柱と掃き出し窓の間)に縦長のスチールロッカー。管理人はここから出てくる(221・6F の罠 3 室。609 には置かない)
+  //  P5b-1b: burstLocker = 奥の窓際(柱と掃き出し窓の間)に縦長のスチールロッカー。管理人はここから出てくる(221・6F の罠 3 室)
+  //  P5b-1c: burstLocker 'sealed' = 同じ見た目で開かないロッカー(609 = 220 の鍵の部屋。罠の部屋がロッカーの有無で見分けられないように。
+  //   E の対象にならない・管理人も出ない・中は空。interior.burst は作らず interior.sealedLocker に記録)
   221: { swap: true, burstLocker: true, type: 'lived', curtain: 'gray', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'rail', desk: ['monitor', 'cup', 'papers'], floor: ['bag'], poster: 'p4', fall: ['vase', 'books'] },
   220: { type: 'wrecked', curtain: 'oldgray', curtainState: 'half', bedding: 'charcoal', rug: 'rust', laundry: null, desk: ['papers', 'cans'], floor: ['box', 'trash', 'clothes'], poster: null, fall: ['cans'] },
   601: { swap: true, burstLocker: true, type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: 'p2', fall: ['vase', 'mug'] },
@@ -97,7 +99,7 @@ export const UNIT_VARIANTS = {
   605: { type: 'tidy', curtain: 'lightblue', curtainState: 'open', bedding: 'white', rug: 'green', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p4', fall: ['vase', 'mug'] },
   606: { swap: true, burstLocker: true, type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box'], poster: 'p5', fall: ['cans', 'books'] },
   608: { type: 'vacant', curtain: 'oldgray', curtainState: 'half', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
-  609: { swap: true, type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: 'gray', laundry: 'balcony', desk: ['monitor', 'lamp', 'cup'], floor: ['bag'], poster: 'p1', fall: ['mug', 'vase'] },
+  609: { swap: true, burstLocker: 'sealed', type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: 'gray', laundry: 'balcony', desk: ['monitor', 'lamp', 'cup'], floor: ['bag'], poster: 'p1', fall: ['mug', 'vase'] },
   611: { swap: true, burstLocker: true, type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'sage', rug: 'beige', laundry: null, desk: ['laptop', 'plant'], floor: [], poster: 'p3', fall: ['books', 'vase'] },
 };
 // 色(build_rooms.py のパレットのキー。値はガンマ補正前の sRGB 16 進)
@@ -140,18 +142,20 @@ export function unitInterior(room, opt = {}) {
   if (wreck) put('chairfallen', 4.30, 5.18, 0.64, 1.02, 0, 0.44, '+v', 1);   // 倒れた椅子(横倒し。背もたれが窓の方)
   else put('chair', 4.62 + du, 5.06 + du, 0.64, 1.00, 0, 0.88, '-v', 1);
   put('pillar', 5.40, 5.94, 0.06, 0.48, 0, CEIL_H, '+v', 2);
-  let burst = null;
+  let burst = null, sealedLocker = null;
   if (V.burstLocker) {
     const BL = BURST_LOCKER;
     // 蝶番の側: 局所 v の小さい側(柱)。正面(-u)から見た左右(build_rooms.py の IL: a = 正面から見て左→右)を世界の点で決める
     const fv = FACING_VEC[F.face('-u')], R = [fv[1], -fv[0]];
     const pLo = F.pt((BL.u0 + BL.u1) / 2, BL.v0), pHi = F.pt((BL.u0 + BL.u1) / 2, BL.v1);
     const hinge = ((pLo[0] - pHi[0]) * R[0] + (pLo[1] - pHi[1]) * R[1]) > 0 ? 'R' : 'L';
-    const lk = put('burstlocker', BL.u0, BL.u1, BL.v0, BL.v1, 0, BL.h, '-u', 2, { hinge });
+    const sealed = V.burstLocker === 'sealed';
+    const lk = put('burstlocker', BL.u0, BL.u1, BL.v0, BL.v1, 0, BL.h, '-u', 2, { hinge, ...(sealed ? { sealed: true } : {}) });
     const feet = F.pt(BL.feet, (BL.v0 + BL.v1) / 2).map(r4);   // 背板寄り(体の前が扉の面より奥に収まる)
     burst = { room: room.id, b: lk.b, f: lk.f, hinge, h: BL.h, feet, out: F.pt(...BL.out).map(r4), maxOpen: BL.maxOpen,
       front: F.pt(BL.u0, (BL.v0 + BL.v1) / 2).map(r4),                                        // 扉の面の中央
       hingePt: F.pt(BL.u0, BL.v0 + 0.03).map(r4) };                                           // 蝶番(柱の側)
+    if (sealed) { sealedLocker = { ...burst, sealed: true }; burst = null; }                   // P5b-1c: 開かない(管理人の出所にしない)
   }
   put('ac', 5.70, 5.94, 0.62, 1.42, 2.0, 2.3, '-u', 0);
   // --- B 側 ---
@@ -270,6 +274,7 @@ export function unitInterior(room, opt = {}) {
   }
   return {
     kind: 'unit', variant: { ...V }, items, decor, solids, fallables, hide, window, points, burst,
+    ...(sealedLocker ? { sealedLocker } : {}),
     passage: passage.map((p) => ({ ...p, rect: F.rect(p.u0, p.u1, p.v0, p.v1) })),
   };
 }
