@@ -320,6 +320,108 @@ export async function run(N) {
       exits: ex.map((e) => ({ x: +e.x.toFixed(2), z: +e.z.toFixed(2) })), northClosed, aiStates: [...states], gone, back: at, aiLevel: N.ai.level };
   });
 
+  // ================================================================ 705(P5b-2b)
+  const W705 = (u, v) => [420 + u, v];
+  const D705 = () => SP.debug('X705');
+  const st705 = () => D705().state();
+  const frustum = () => { const F = new N.THREE.Frustum(), M = new N.THREE.Matrix4(); N.camera.updateMatrixWorld(); M.multiplyMatrices(N.camera.projectionMatrix, N.camera.matrixWorldInverse); F.setFromProjectionMatrix(M); return F; };
+  const boxIn = (F, x0, y0, z0, x1, y1, z1) => F.intersectsBox(new N.THREE.Box3(new N.THREE.Vector3(x0, y0, z0), new N.THREE.Vector3(x1, y1, z1)));
+  const enter705 = async () => {
+    S.applyStage(9); quiet();
+    N.ai.dormant = false;
+    const b = SP.def('X705').back;
+    await tp(7, b.x, b.z, b.yaw + Math.PI);
+    return openAndEnter('705');
+  };
+  const pickNow = (id) => { const p = S.pickups.find((q) => q.id === id); face(p.pos.x, p.pos.z, -0.6); N.pump(DT, 2, false); const h = N.hudState().hint; tap('KeyE'); N.pump(DT, 2, false); return h; };
+
+  await T('705_1_pillars_grow_hide_exit', async () => {
+    const lv = await enter705();
+    const obj = N.hudState().objective;
+    const s0 = st705();
+    const visibleAtStart = !D705().exitHiddenWith(0, 30.3, ['base']);   // 最初の柱だけなら机の前から出口が見える
+    const bad = []; let prev = D705().pillars();
+    const fillBy = [];
+    walkTo(...W705(0, 30.3), { max: 3000, each: () => {
+      const now = D705().pillars(), F = frustum(), p = N.player.pos;
+      now.forEach((q, i) => { if (q.on && !prev[i].on) {
+        const inView = boxIn(F, 420 + q.u - 0.33, -60, q.v - 0.33, 420 + q.u + 0.33, -60 + 4.4, q.v + 0.33);
+        const d = Math.hypot(420 + q.u - p.x, q.v - p.z);
+        if (inView || d < 1.5) bad.push({ u: q.u, v: q.v, kind: q.kind, inView, d: +d.toFixed(2) });
+        if (q.kind === 'fill') fillBy.push([+p.z.toFixed(1), q.v]);
+      } });
+      prev = now; return false;
+    } });
+    const s1 = st705();
+    const at = pos();
+    const hidden = D705().exitHidden(at.x - 420, at.z);
+    // 振り返ると入口の扉は柱の列の向こう(画面の中央の線上に柱)
+    const pass = lv === 'X705' && obj === '705号室へ' && s0.pillarsOn < 45 && visibleAtStart && s1.pillarsOn >= s0.pillarsOn + 20 && bad.length === 0 && hidden && !!s1.exitHiddenAt
+      && fillBy.length >= 6 && fillBy.every(([pz, v]) => pz >= v - 6.01) && Math.abs(at.z - 30.3) < 0.2;
+    return { pass, level: lv, objective: obj, pillarsStart: s0.pillarsOn, pillarsAtDesk: s1.pillarsOn, appearedInViewOrNear: bad, exitVisibleFromDeskAtStart: visibleAtStart,
+      exitHiddenAtDesk: hidden, exitHiddenFirstAt: s1.exitHiddenAt, fillAppearedAt_playerZ_vs_pillarV: fillBy.slice(0, 8), at };
+  });
+
+  await T('705_2_key_lightsout_reverse_manager_chase_7F', async () => {
+    if (N.level !== 'X705') return { pass: false, why: 'needs 705_1' };
+    const t0 = N.ai.time;
+    const D = SP.def('X705');
+    const exBefore = SP.exits('X705').map((e) => +e.z.toFixed(2));
+    const hint = pickNow('kB1');
+    const st = S.state();
+    const objChase = N.hudState().objective;
+    N.pump(DT, 30, false);
+    const s1 = st705();
+    const exAfter = SP.exits('X705');
+    const portal = N.ai.portals.find((p) => p.id === 'X705');
+    N.pump(DT, 20, false);
+    const appear = N.ai.events.find((e) => e.t > t0 && e.ev === 'appear_705');
+    const ePos = { x: N.enemyObj.pos.x, z: N.enemyObj.pos.z, lv: N.ai.level };
+    const atAmbush = appear && ePos.lv === 'X705' && Math.hypot(ePos.x - D.at('ambush').x, ePos.z - D.at('ambush').z) < 0.8;
+    const fromNewExit = Math.abs(ePos.z - exAfter[0].z) < 4.5 && Math.abs(exBefore[0] - ePos.z) > 40;
+    while (N.viewLock.active) N.pump(DT, 1, false);
+    // 逃げる: 西の壁際を回って南の出口へ(柱の林の外側。追ってくる管理人とすれ違う)
+    const path = [W705(-6, 29.5), W705(-13.7, 26), W705(-13.7, 46.0), W705(-0.0, 46.0), W705(0, 50.6)];
+    let dead = false, minD = 1e9, maxWarp = 0, wi = 0, colsEq = null;
+    const cols0 = D705().colsSnapshot();
+    key('ShiftLeft', true); key('KeyW', true);
+    for (let i = 0; i < 60 * 40 && N.level === 'X705' && wi < path.length; i++) {
+      const p = N.player.pos, [x, z] = path[wi];
+      if (Math.hypot(x - p.x, z - p.z) < 0.4) { wi++; continue; }
+      face(x, z, 0); N.pump(DT, 1, false);
+      if (N.ai.level === 'X705') minD = Math.min(minD, Math.hypot(N.enemyObj.pos.x - p.x, N.enemyObj.pos.z - p.z));
+      const w = st705().warp; if (w > maxWarp) { maxWarp = w; if (w > 0.99 && colsEq === null) colsEq = D705().colsSnapshot() === cols0 || D705().colsSnapshot().length >= cols0.length; }
+      if (N.ai.state === 'ATTACK' || N.deathState()) { dead = true; break; }
+    }
+    key('ShiftLeft', false); key('KeyW', false);
+    waitTrans();
+    const on7 = N.level === 7, back = pos();
+    // 管理人も出口(出入り口)を通って 7F へ追ってくる
+    let enemyOn7 = null;
+    walkTo(16.0, 21.2, { max: 300, run: true });
+    for (let i = 0; i < 60 * 8 && enemyOn7 === null; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 && !N.ai.transit) enemyOn7 = +(N.ai.time - t0).toFixed(2); if (N.ai.state === 'ATTACK') { dead = true; break; } }
+    const pass = hint.includes('拾う') && st.item === 'b1' && objChase === '逃げろ' && s1.on < 0.05 && s1.revealed && exAfter.length === 1 && exAfter[0].z > 49 && exBefore[0] < 1
+      && portal && portal.a.z > 49 && !!appear && atAmbush && fromNewExit && !dead && maxWarp > 0.99 && on7 && Math.hypot(back.x - D.back.x, back.z - D.back.z) < 0.1 && enemyOn7 !== null && N.ai.state === 'CHASE';
+    return { pass, pickHint: hint, item: st.item, objective: objChase, lightsOn: s1.on, revealed: s1.revealed, exitsBefore_z: exBefore, exitsAfter_z: exAfter.map((e) => +e.z.toFixed(2)), portalA: portal && portal.a,
+      appear: appear || null, enemyAt: ePos, atAmbush, fromNewExit, dead, minDist: +minD.toFixed(2), maxWarp, colsUnchangedAtWarp1: colsEq, on7, back, enemyOn7_s: enemyOn7, aiState: N.ai.state };
+  });
+
+  await T('705_3_warp_visual_only_same_collision', async () => {
+    const lv = await enter705();
+    D705().showAll(); N.pump(DT, 2, false);
+    const c0 = D705().colsSnapshot();
+    // 柱 (−4, 15) に北から歩いて当たる: 歪み 0 と 1 で止まる所が同じ
+    const bump = (w) => { D705().st.forceWarp = w; return (async () => { await tp('X705', ...W705(-4, 12.5), Math.PI); N.pump(DT, 10, false); walkTo(...W705(-4, 17), { max: 240 }); return +N.player.pos.z.toFixed(3); })(); };
+    const z0 = await bump(0);
+    const w0 = D705().st.U.uWarp.value;
+    const z1 = await bump(1);
+    const w1 = D705().st.U.uWarp.value;
+    const c1 = D705().colsSnapshot();
+    D705().st.forceWarp = null;
+    const pass = lv === 'X705' && w0 === 0 && w1 === 1 && c0 === c1 && Math.abs(z0 - z1) < 1e-3 && z0 < 15 - 0.33;
+    return { pass, level: lv, warp: [w0, w1], stoppedAt_z: [z0, z1], colsSame: c0 === c1, cols: c0.split(';').length };
+  });
+
   // ================================================================ 性能: ?test=building 10 番と同じ計り方(1080p・40 フレームの中央値を 3 回取り最小)。描画コール・三角形数
   await T('P_perf_vs_4F_corridor', async () => {
     const gl = N.renderer.getContext(), px1 = new Uint8Array(4);
