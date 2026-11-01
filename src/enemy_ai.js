@@ -31,7 +31,9 @@
 import * as THREE from 'three';
 import { segmentHitT } from './enemy.js';
 import { buildAIGraph, nodeId, P0_NODES } from './ai_graph.js';
-import { levelY, FACING_N } from './world.js';
+import { levelY, FACING_N, isSpace, SPACE_HOST } from './world.js';
+// P5b-1: 移動グラフの無い階(敷地 'G'・物語の別空間 'X…')。そこでは経路を引かず、まっすぐ追う。階の間は portals(story.js が足す)で移る
+const graphless = (lv) => lv === 'G' || isSpace(lv);
 
 export const AI = {
   radius: 0.30,
@@ -182,6 +184,11 @@ export class EnemyAI {
       }
     }
     this._enterWatch = 0;
+    // P5b-1(DESIGN §3.8 H): 物語からの制御
+    this.dormant = false;            // 第1段(221 の飛び出しまで)は館内に管理人がいない(描かない・動かない・何も感じない)
+    this.allowStairs = false;        // 第9段の最終追跡だけ階段で追ってくる(§3.8 B の「階の移動は EV だけ」は徘徊の規則。追跡の台本上の例外)
+    this.noEV = false;               // 第9段の最終追跡では EV を使わない(EV は来ない)
+    this.portals = [];               // [{ id, a:{lv,x,z}, b:{lv,x,z} }] グラフの無い階との出入り口(705 の別空間・正面玄関＝第11段だけ)
     // P5a
     this.concealed = false;          // 空室の中に潜んでいる(描かない・当たりなし)
     this.lurkMode = null;            // 'room' | 'corner'
@@ -245,6 +252,7 @@ export class EnemyAI {
       PATROL: () => this._patrol(),
       ALERT: () => this._alert(opts),
       CHASE: () => this._chase(),
+      APPEAR: () => this._appear(opts),
       ATTACK: () => this._attack(),
       EVAMBUSH: () => this._evAmbush(opts),
       SCRIPTED: () => this._scripted(opts),
@@ -285,9 +293,76 @@ export class EnemyAI {
     this.setState('PATROL', { force: true, log: true });
   }
 
+  // ------------------------------------------------------------ P5b-1: 物語(story.js)から
+  setDormant(on) {
+    this.dormant = !!on;
+    if (on) {
+      this.uninterruptible = false;
+      this.setState('SCRIPTED', { force: true });
+      this.enemy.setFlashlight(false); this.enemy.speed = 0;
+      this.concealed = true; this.lurkRoomId = null;
+    } else this.concealed = false;
+    this.log('dormant', { on: this.dormant });
+  }
+  // ロッカー(居室のクローゼット)から飛び出す(DESIGN §3.8 D①・H 第1段/第5段)。本体の現在地と無関係にその部屋のクローゼットの中に現れる(ワープ)
+  lockerBurst(rid) {
+    const c = this.roomsSys && this.roomsSys.closets.get(String(rid));
+    if (!c) return false;
+    this.dormant = false;
+    this.setState('APPEAR', { force: true, log: true, closet: c, level: c.level, x: c.h.feet[0], z: c.h.feet[1], out: c.h.out, label: 'locker_burst', room: String(rid) });
+    return true;
+  }
+  // 指定の場所に現れて(ワープ)、体勢を立て直す間の後に追う(705 の別空間で鍵を取った時・最後の敷地)。o: { level, x, z, lock(視点固定の秒・0 で無し), recover }
+  appear(o) {
+    this.dormant = false;
+    this.setState('APPEAR', { force: true, log: true, label: 'appear', ...o });
+    return true;
+  }
+  *_appear(o) {
+    const e = this.enemy, R = AI.roomLurk;
+    this.uninterruptible = true;
+    this.transit = false; this.concealed = false; this.lurkRoomId = null;
+    if (o.level !== this.level) this.setLevel(o.level);
+    const p0 = this.player.pos;
+    e.place(o.x, o.z, Math.atan2(p0.x - o.x, p0.z - o.z));
+    e.setFace('grin', 1.0, true);
+    e.setFlashlight(true);
+    this._encounter(o.label || 'appear');
+    this.log(o.label || 'appear', { room: o.room || null, lv: o.level, x: +o.x.toFixed(2), z: +o.z.toFixed(2) });
+    if (o.closet && this.roomsSys) { this.roomsSys.openCloset(o.room, 3.5); o.closet.revealed = true; if (this.audio) this.audio.play('slam', new THREE.Vector3(o.x, this.floorY + 1.1, o.z), 0.9, { dur: 0.6 }); }
+    const lock = o.lock ?? 1.0, recover = o.recover ?? 1.5;
+    if (lock > 0 && this.onViewLock) this.onViewLock({ total: lock, label: o.label || 'appear', returnView: true });
+    e.play('walk_brutal', { fade: 0.1 });
+    let t = 0;
+    if (o.out) for (; t < 0.7; t += this.dt) { if (this._stepToward(o.out[0], o.out[1], 1.8, 'walk_brutal', 8.0, 0.08)) break; yield; }
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.25 });
+    for (; t < recover; t += this.dt) {   // 体勢を立て直す間(こちらを向いて照らす)
+      const p = this.player.pos;
+      e.yaw += THREE.MathUtils.clamp(wrap(Math.atan2(p.x - e.pos.x, p.z - e.pos.z) - e.yaw), -5 * this.dt, 5 * this.dt);
+      e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.3, p.z);
+      yield;
+    }
+    this.uninterruptible = false;
+    this.lastKnown = { x: this.player.pos.x, z: this.player.pos.z, lv: this._plv() };
+    this.lastSeenTime = this.time;
+    this._chaseSlowUntil = this.time + (o.slow ?? R.darkChase.time);   // P5a の消灯の飛び出しと同じ「走れば逃げ切れる」基準
+    this.setState('CHASE');
+    yield;
+  }
+  // 階の間の出入り口(グラフの無い階)
+  _portalBetween(a, b) {
+    for (const p of this.portals) {
+      if (p.a.lv === a && p.b.lv === b) return { from: p.a, to: p.b, id: p.id };
+      if (p.b.lv === a && p.a.lv === b) return { from: p.b, to: p.a, id: p.id };
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------ update
   update(dt) {
     if (!this.enemy.ready) return;
+    if (this.dormant) { this.concealed = true; this.selfBox.disabled = true; this.enemy.speed = 0; return; }   // P5b-1: 第1段
     this.dt = dt;
     this.time += dt;
     this.stateTime += dt;
@@ -560,6 +635,14 @@ export class EnemyAI {
 
   // 経路(ダイクストラ)。階をまたぐと EV/階段の辺を使う。返り値: [{x,z,lv,node,via}]
   _route(fromX, fromZ, toX, toZ, flv = this.level, tlv = flv) {
+    // P5b-1: グラフの無い階(敷地・別空間)。同じ階ならまっすぐ、別の階なら出入り口(portals)を通る。出入り口が無ければ行かない(空の経路)
+    if ((flv === 'B1' || tlv === 'B1') && flv !== tlv) return [];   // 管理人は地下には来ない(DESIGN §3.8 H 第10段)
+    if (graphless(flv) || graphless(tlv)) {
+      if (flv === tlv) return [{ x: toX, z: toZ, lv: tlv, node: null, via: 'walk' }];
+      const P = this._portalBetween(flv, tlv);
+      if (!P) return [];
+      return [...this._route(fromX, fromZ, P.from.x, P.from.z, flv, flv), { x: P.to.x, z: P.to.z, lv: tlv, node: null, via: 'portal' }, ...this._route(P.to.x, P.to.z, toX, toZ, tlv, tlv)];
+    }
     const G = this.G;
     const a = this._nearestNode(fromX, fromZ, flv), b = this._nearestNode(toX, toZ, tlv);
     const dist = new Map(), prev = new Map(), prevEdge = new Map(), done = new Set();
@@ -567,8 +650,10 @@ export class EnemyAI {
     const cost = (e, u, v) => {
       const nu = G.nodes[u], nv = G.nodes[v];
       // P3b-A: EV は乗るまでの待ちを最初の1区間にだけ足す
+      if (e.kind === 'ev' && this.noEV) return Infinity;   // P5b-1: 最終追跡では EV を使わない
       if (e.kind === 'ev') { const pe = prevEdge.get(u); return 3 * Math.abs(nu.lv - nv.lv) + (pe && pe.kind === 'ev' ? 0 : 8); }
-      if (e.kind === 'stair') return Infinity;   // P5a: 管理人は階段を使わない(階の移動は EV だけ。DESIGN §3.8 B)
+      // P5a: 管理人は階段を使わない(階の移動は EV だけ。DESIGN §3.8 B)。P5b-1: 第9段の最終追跡だけ外階段・北階段の 2〜3F を使う(1F の北階段は建物の外の地面なので使わない)
+      if (e.kind === 'stair') return this.allowStairs && !((nu.name === 'NS' && nu.lv === 1) || (nv.name === 'NS' && nv.lv === 1)) ? 9 * Math.abs(nu.lv - nv.lv) : Infinity;
       return Math.hypot(nu.x - nv.x, nu.z - nv.z);
     };
     while (true) {
@@ -769,6 +854,9 @@ export class EnemyAI {
     while (route.length) {
       if (stopIf && stopIf()) return 'stopped';
       const wp = route[0];
+      if (wp.lv !== this.level && wp.via === 'portal') {   // P5b-1: 出入り口を抜ける(扉の向こうの点へ移る)
+        this.setLevel(wp.lv); e.place(wp.x, wp.z, e.yaw); this.log('portal', { to: wp.lv }); route.shift(); continue;
+      }
       if (wp.lv !== this.level) { yield* this._transfer(wp); route.shift(); continue; }
       {
         const bd = this._blockingDoor(e.pos.x, e.pos.z, wp.x, wp.z);
@@ -825,6 +913,16 @@ export class EnemyAI {
     this.uninterruptible = true;
     this.enemy.aimPoint = new THREE.Vector3(door.collision ? (door.collision.minX + door.collision.maxX) / 2 : f.x, this.floorY + 1.0, f.z);
     yield* this._turnTo(f.yaw);
+    // P5b-1: 鍵で開く物語の扉(220)は、プレイヤーが鍵で開けるまで管理人も開けない
+    if (door.storyLock) {
+      door.rattle = 0.25;
+      if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.6);
+      this.log('door_story_locked', { room: door.roomId });
+      yield* this._wait(1.2);
+      this.uninterruptible = false;
+      this.enemy.aimPoint = null;
+      return 'locked';
+    }
     // P2d: 中にいると知らなければ(目撃も光漏れも物音もない)、閉じた扉は開けない。ノブを確かめて去る
     if (this._rid(this.player.pos.x, this.player.pos.z, this._plv()) === door.roomId && this.knownRoomId !== door.roomId && !this.doors.isOpen(door.roomId)) {
       door.rattle = 0.25;
@@ -874,6 +972,13 @@ export class EnemyAI {
   // ------------------------------------------------------------ PATROL
   *_patrol() {
     const e = this.enemy;
+    // P5b-1: グラフの無い階(敷地・別空間)では巡回しない。出入り口があれば建物へ戻る
+    if (graphless(this.level)) {
+      const P = this.portals.find((q) => q.a.lv === this.level || q.b.lv === this.level);
+      if (P) { const [from, to] = P.a.lv === this.level ? [P.a, P.b] : [P.b, P.a]; yield* this._goTo(to.x, to.z, 'PATROL', { lv: to.lv }); void from; }
+      else { e.speed = 0; e.play('look_idle', { fade: 0.4 }); yield* this._wait(5); }
+      return;
+    }
     e.setFace('grin', 0);
     // 室内にいたら廊下へ戻り、扉を閉める
     if (this._rid(e.pos.x, e.pos.z) && this._keyDoor(this._rid(e.pos.x, e.pos.z))) yield* this._leaveRoom();
@@ -902,7 +1007,7 @@ export class EnemyAI {
       else e.play('look_idle', { fade: 0.4 });
       yield* this._wait(tgt === '410' ? 3.0 + this._rand() * 2.0 : 1.5 + this._rand() * 2.0);
       const door = this.doors.get(tgt);
-      if (door && door.operable && this._rand() < 0.6) {
+      if (door && door.operable && !door.storyLock && this._rand() < 0.6) {
         // 覗く: 開いていればそのまま、施錠ならノブを確かめて去る
         const res = yield* this._doorEntry(door, false);
         if (res === 'entered') {
@@ -1093,8 +1198,19 @@ export class EnemyAI {
       if (lost > AI.chaseLose) { this.setState('ALERT', { react: false }); yield; return; }
       const dist = Math.hypot(p.x - e.pos.x, p.z - e.pos.z);
       if (dist <= AI.attackRange && !this.occluded) { this.setState('ATTACK'); yield; return; }
-      const tgt = (this.canSee || this.inProximity) ? { x: p.x, z: p.z, lv: this._plv() } : this.lastKnown;
+      let tgt = (this.canSee || this.inProximity) ? { x: p.x, z: p.z, lv: this._plv() } : this.lastKnown;
+      // P5b-1: 出入り口(705 の別空間の扉・最後の正面玄関)を抜けて逃げた → 追って抜ける(扉を抜けるのを見ている)
+      if (this._plv() !== this.level && this._portalBetween(this.level, this._plv())) { tgt = { x: p.x, z: p.z, lv: this._plv() }; lost = 0; this.lastKnown = tgt; }
       const tlv = tgt.lv ?? this.level;
+      // P5b-1: グラフの無い階(敷地・別空間)では、まっすぐ追う
+      if (tlv === this.level && graphless(this.level)) {
+        e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.1, p.z);
+        const close = dist < 3.0;
+        const sp = close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? AI.roomLurk.darkChase.speed : AI.speed.CHASE);
+        this._stepToward(tgt.x, tgt.z, sp, close ? 'walk_brutal' : 'run_intent', AI.turnRate.CHASE, 0.3);
+        yield;
+        continue;
+      }
       // 別の階へ逃げた: その場所まで(EV/階段で)追う
       if (tlv !== this.level) {
         const r = yield* this._goTo(tgt.x, tgt.z, 'CHASE', { lv: tlv, stopIf: () => this.canSee });
@@ -1256,6 +1372,7 @@ export class EnemyAI {
   }
   _playerFloorNum() {
     const p = this._plv();
+    if (isSpace(p)) return typeof SPACE_HOST[p] === 'number' ? SPACE_HOST[p] : 1;   // P5b-1: 別空間は入口の階
     return typeof p === 'number' ? p : p === 'RB' ? 7 : 1;   // 屋上B=7F、敷地・地下=1F として数える
   }
   // 各階の重み(1〜7F)。phase を省くと今の監督役の段階
