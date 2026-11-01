@@ -94,5 +94,6 @@ export const HUD_TEXT = {
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },
   start: 'クリックで開始',
   resume: 'クリックで再開',
+  breath: '息',   // P5b-2a: X312 で潜っている間の息ゲージの札
   death: { title: '見つかった', sub: '…　チェックポイントへ戻ります', drown: '溺れた' },   // P5b-2a: drown = 312 のプールで息が切れた
 };
