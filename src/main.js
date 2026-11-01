@@ -761,6 +761,7 @@ function step(dt) {
   updateDoors(dt);
   elevator.update(dt);
   enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit && !ai.concealed;   // P5a: 空室の中に潜んでいる間は描かない
+  updateCarLamp();
   doorFx.update(dt, { level: playerLevel, x: player.pos.x, z: player.pos.z,
     busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : ai.lurkRoomId);
   updateVisibility();
@@ -771,6 +772,19 @@ function step(dt) {
   updateDeath(dt);
   hud.update(dt);
   grainPass.uniforms.time.value = simTime;
+}
+// P5a 監査: EV のカゴの中・戸口の管理人をカゴの照明で照らす(敵だけに効く光。カゴの照明が点いている時だけ)。
+//  天井の乳白パネルの前寄り(扉側)から＝顔と胸の前に当たる。値は CAR_LAMP
+const CAR_LAMP = { color: 0xfff2e0, intensity: 1.1, range: 3.4, y: 2.05, toDoor: 0.55, reach: 2.4 };
+const _carLampC = new THREE.Color(CAR_LAMP.color).multiplyScalar(CAR_LAMP.intensity);
+function updateCarLamp() {
+  const c = elevator.car, lit = elevator.light.visible;
+  const g = elevator.rooms[c.level] && elevator.rooms[c.level].geom;
+  const e = enemy.pos;
+  if (!lit || !g || ai.level !== c.level || ai.transit || Math.hypot(e.x - g.center[0], e.z - g.center[1]) > CAR_LAMP.reach) { enemy.carLamp = null; return; }
+  const lamp = enemy.carLamp || { p: new THREE.Vector3(), c: _carLampC, r: CAR_LAMP.range };
+  lamp.p.set(g.center[0], levelY(c.level) + CAR_LAMP.y, g.center[1] - CAR_LAMP.toDoor);
+  enemy.carLamp = lamp;
 }
 const _bufSize = new THREE.Vector2();
 function render() {

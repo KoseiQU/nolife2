@@ -70,6 +70,7 @@ export class Enemy {
     this.speed = 0;                // 実移動速度(足音・アニメの判定用。AI が設定)
     this.faceFill = 0;             // 襲撃ムービーの顔の補助光(0 = 消灯)
     this.lean = 0;                 // 上体を前へ倒す角度(rad)。スコープを覗き込む時など(mixer の後に背骨へ足す)
+    this.carLamp = null;           // P5a: EV のカゴの照明(敵だけに効く光の 1 枠。main がカゴの中・戸口にいる間だけ { p, c, r } を入れる)
     this.ready = false;
   }
 
@@ -374,7 +375,9 @@ export class Enemy {
       this._lampWorld = this._lampAll.slice().sort((a, b) => a.p.distanceToSquared(rp) - b.p.distanceToSquared(rp)).slice(0, MAX_LAMPS - 2);
     }
     let i = 0;
-    for (const l of this._lampWorld) {
+    // P5a: カゴの照明(天井の乳白パネル＋壁の照り返し)。カゴの PointLight は真上からなので顔・胸の前が暗く、黒い人影になっていた
+    const lamps = this.carLamp ? [this.carLamp, ...this._lampWorld.slice(0, MAX_LAMPS - 3)] : this._lampWorld;
+    for (const l of lamps) {
       u.n2LampPos.value[i].copy(l.p).applyMatrix4(view);
       u.n2LampColor.value[i].copy(l.c);
       u.n2LampRange.value[i] = l.r;
