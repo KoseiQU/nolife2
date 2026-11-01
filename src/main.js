@@ -577,7 +577,9 @@ function setPlayerLevel(key, { dy = null } = {}) {
 const levelLog = [];
 const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel,
   setLevel: (key, o) => setPlayerLevel(key, o) });
-elevator.onRideStart = (to) => world.focus(to);     // 行き先(±1)を先に読み始める(到着は読み終わってから)
+// 行き先(±1)を先に読み始める(到着は読み終わってから)。P5b-3: 出発階(カゴを描いている階)は到着まで解放しない
+//  (旧: 2 階以上離れた行き先では出発階が解放され、移動中は何も描かれず画面が暗転していた = docs/p5b3/NOTES.md §1)
+elevator.onRideStart = (to) => world.focus(to, { keep: [playerLevel] });
 // P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
 rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel, flags: FLAGS,
   onNoise: (f) => { if (!TOUR) ai.noiseRoom(f.room, f.x, f.z, f.level); },

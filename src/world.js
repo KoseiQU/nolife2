@@ -273,9 +273,11 @@ export class World {
   isReady(level) { const r = this.floors.get(level); return !!(r && r.state === 'ready'); }
 
   // プレイヤーの階 ±1 を読み、それ以外を解放。返り値: その階が読めた時に解決
-  focus(key) {
+  //  P5b-3: keep = 解放しない階(EV で移動中のカゴのある出発階。到着して setPlayerLevel が focus し直すまで残す)
+  focus(key, { keep = [] } = {}) {
     const c = glbLevel(key);
     const want = new Set([c - 1, c, c + 1].filter((l) => l >= 1 && l <= 7));
+    for (const k of keep) { const l = glbLevel(k); if (l >= 1 && l <= 7) want.add(l); }
     for (const l of [...this.floors.keys()]) if (!want.has(l)) this.unload(l);
     const center = this.load(c);
     for (const l of want) if (l !== c) center.then(() => this.load(l));
