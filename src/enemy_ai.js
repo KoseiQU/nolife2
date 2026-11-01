@@ -439,7 +439,7 @@ export class EnemyAI {
     e.setFace('grin', 0, true); e.setFace('attack', 0, true);
     e.setFlashlight(false);
     e.underLight = 0;
-    e.play('look_idle', { fade: 0.05, timeScale: 0, restart: true });   // 見回さず、じっと立っている(最初の姿勢で止める)
+    e.play('look_idle', { fade: 0, timeScale: 0, restart: true });   // 見回さず、じっと立っている(最初の姿勢で止める)。P5b-2a: 前の動き(歩き)と混ぜない = 最初の 1〜2 フレームに頭が閉じた扉から出ない
     this._encounter(o.label);
     this.log(o.label, { room: id, lv: o.level, x: +o.x.toFixed(2), z: +o.z.toFixed(2), reveal: true });
     rs.setBurst(id, 0, 0);
