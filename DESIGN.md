@@ -280,7 +280,7 @@ fable-method §7（rAF停止／keydown-keyupペア／ESMキャッシュ／ポイ
 
 ## 10. 再開手順（コンテキスト圧縮後に読む）
 1. 本書 §7 フェーズ表で現在地を確認し、§9 決定ログの末尾 10 行を読む
-2. サーバー：`python3 -m http.server 8001`（プロジェクト直下）→ http://localhost:8001/ 。更新後は Cmd+Shift+R（ESM のヒューリスティックキャッシュ）。`?test=enemy` で決定的テスト、`?noai` で管理人停止、`window.__N2` にデバッグ API（`pump`・`enemy.place/setState/play/face`・`testResult`）
+2. サーバー：`python3 tools/serve.py 8001`（プロジェクト直下。2026-11-01 P4a-2 から。全応答 no-store なので更新後の Cmd+Shift+R は不要。`POST /api/sound_choice` で試聴盤の選択を `samples/sound_choice.json` に保存）→ http://127.0.0.1:8001/ 。旧 `python3 -m http.server` は ESM のヒューリスティックキャッシュで古いモジュールが残るため使わない。`?test=enemy` で決定的テスト、`?noai` で管理人停止、`window.__N2` にデバッグ API（`pump`・`enemy.place/setState/play/face`・`testResult`）
 3. 機械テスト：`node tools/check_glb.mjs`／`node tools/check_enemy.mjs`／ブラウザ `?test=enemy`
 4. 建物だけ見る：`?tour`（管理人なし・全扉解錠・`&floor=1〜7|RB|B1`）、`?noai`（管理人は立ったまま）。再生成：建物 `tools/build.sh`、敵 `tools/build_enemy_final.sh`（MPFB→07）→ `tools/build_enemy_rigged.sh`（Mixamo FBX→`build/enemy/07_rigged.glb`）。`build/enemy/` と `ref/` は gitignore（ローカル資産。消えたら `docs/enemy-candidates/*/NOTES.md` の手順で再生成、Mixamo のアニメは `build/enemy/mixamo/*.fbx`）
 5. 引き継ぎ文書：`docs/enemy-candidates/p1b/NOTES.md`（敵の作り）、`p2a/NOTES.md`（GLB 仕様）、`docs/p2b〜p2d/NOTES.md`（AI・音・演出の調整値、録音差し替えのファイル名体系）
