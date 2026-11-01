@@ -1,6 +1,7 @@
 // player.js — 一人称の移動(前作 NOLIFE player.js の移植)。
-// PointerLock + WASD(Shift 走り・Ctrl しゃがみ)、壁AABB(building.json→walls.js)への円柱押し戻し、
+// PointerLock + WASD(Shift 走り)、壁AABB(building.json→walls.js)への円柱押し戻し、
 // 歩行の上下動、懐中電灯(F トグル・カチッのラグ・手ブレ揺れ)。
+// P4a-2: しゃがみ(Ctrl で目線が下がる・遅くなる)は廃止。Ctrl はキー状態(keys)に入るだけで、312 の水中で潜る専用(spaces/x312.js が見る)。
 // update(dt) は rAF 非依存(外から dt を渡してポンプ可能)。
 // P0 で落としたもの: 起床演出・スタミナ・電池・階段ランプ(P0 区間は平床のみ)。
 
@@ -9,11 +10,9 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 
 export const PLAYER = {
   height: 1.62,       // 目線(立ち)。前作1.7はやや高く、天井2.4mが近く見えたので下げた
-  crouchHeight: 1.0,
   radius: 0.28,
   walkSpeed: 1.6,     // 前作3.2は駆け足。探索ホラーの歩き(ADoNの歩速に近い)に落とす
   runSpeed: 3.6,
-  crouchSpeed: 0.9,
   bobFreq: 1.85,      // 歩幅の周期(Hz相当 × walkSpeed比で伸縮)
   bobAmp: 0.022,      // 上下動(m)
   bobSway: 0.012,     // 左右の揺れ(m)
@@ -36,7 +35,6 @@ export class Player {
     this.world = world; // { collisions, floorY }
     this.controls = new PointerLockControls(camera, domElement);
     this.pos = new THREE.Vector3(0, world.floorY, 0);
-    this.crouch = false;
     this.keys = new Set();
     this._justPressed = new Set();
     this.flashlightOn = false;
@@ -49,7 +47,7 @@ export class Player {
     this.onKey = null;      // 押された瞬間のキー(e.code)ごとに呼ぶ。main.js が設定(L 施錠・P 覗き穴など)
     this.frozen = false;    // 死亡演出・覗き穴の間は移動とカメラ更新を止める(キー状態の追跡は続ける)
     // P5b-2a: 別空間からの上書き。invert = 画面が上下反転している間(X105 の反転。A/D を入れ替えて画面どおりに動く)、
-    //  move = { speed(m/s), eyeY(目の高さ・世界の y。null なら立ち/しゃがみ), noRun, noBob }(X312 の泳ぎ・潜水)
+    //  move = { speed(m/s), eyeY(目の高さ・世界の y。null なら立ち), noRun, noBob }(X312 の泳ぎ・潜水)
     this.invert = false;
     this.move = null;
     this._buildFlashlight();
@@ -89,15 +87,13 @@ export class Player {
     const down = (e) => {
       if (!this.keys.has(e.code)) this._justPressed.add(e.code);
       this.keys.add(e.code);
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.crouch = true;
     };
     const up = (e) => {
       this.keys.delete(e.code);
-      if (e.code === 'ControlLeft' || e.code === 'ControlRight') this.crouch = false;
     };
     document.addEventListener('keydown', down);
     document.addEventListener('keyup', up);
-    window.addEventListener('blur', () => { this.keys.clear(); this.crouch = false; });
+    window.addEventListener('blur', () => { this.keys.clear(); });
   }
 
   // 足元(x, 床y, z)へ移動し、向き(yaw, pitch)をセット
@@ -118,7 +114,7 @@ export class Player {
   setWorld(world) { this.world = world; }
 
   _applyCamera(bob) {
-    const eye = this.crouch ? PLAYER.crouchHeight : PLAYER.height;
+    const eye = PLAYER.height;
     const o = this.controls.object;
     // 上下動は目線、左右揺れはカメラ右方向へ
     const sway = Math.sin(this._walkPhase * 0.5) * PLAYER.bobSway * this._moveRatio;
@@ -139,8 +135,8 @@ export class Player {
     const fwd = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
     const str = ((this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0)) * (this.invert ? -1 : 1);
     const M = this.move;
-    const run = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && !this.crouch && !(M && M.noRun);
-    const speed = M && M.speed != null ? M.speed : this.crouch ? PLAYER.crouchSpeed : run ? PLAYER.runSpeed : PLAYER.walkSpeed;
+    const run = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && !(M && M.noRun);
+    const speed = M && M.speed != null ? M.speed : run ? PLAYER.runSpeed : PLAYER.walkSpeed;
 
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -203,7 +199,7 @@ export class Player {
       for (const c of this.world.collisions) {
         if (c.disabled) continue;
         if (c.y0 !== undefined) {
-          const head = y + (this.crouch ? PLAYER.crouchHeight : PLAYER.height);
+          const head = y + PLAYER.height;
           if (y > c.y1 || head < c.y0) continue;
         }
         const dx1 = (x + r) - c.minX, dx2 = c.maxX - (x - r);

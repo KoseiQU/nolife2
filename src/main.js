@@ -545,7 +545,6 @@ function updateDeath(dt) {
     rooms.forceUnhide();
     stairs.cancel();   // P5b-1b: 段の途中で死んだ時、上り下りを打ち切る(残ると復帰後に段へ引き戻される)
     player.object.rotation.z = 0;
-    player.crouch = false;
     player.invert = false; player.move = null; player.controls.pointerSpeed = 1;   // P5b-2a: 反転・泳ぎの上書きを戻す
     // P5b-1: 物語の段の開始位置へ(段・持ち物・壊れた扉・解放はそのまま)。物語なし(他のテスト)は従来の 410
     const sp = story && story.active ? story.respawnPoint() : { level: 4, ...CHECKPOINT };
@@ -943,7 +942,7 @@ window.__n2 = {
   stats,
   step, render,
   // カメラを直接置く(ヘッドレスではポインタロックが張れないため)。x,z は足元、yaw/pitch はラジアン
-  setView(x, z, yaw, pitch = 0, crouch = false) { player.crouch = crouch; player.setPose(x, z, yaw, pitch); },
+  setView(x, z, yaw, pitch = 0) { player.setPose(x, z, yaw, pitch); },   // P4a-2: しゃがみ廃止で crouch 引数を外した
   setFlashlight(on) { player.setFlashlight(on); },
   openDoor(roomId, open = true) {
     const d = doors.find((dd) => dd.roomId === String(roomId));

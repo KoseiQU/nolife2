@@ -1,7 +1,7 @@
 // enemy_ai.js — 管理人の AI(P2b)。前作 tenko/src/phantom.js の状態機械と知覚を移植・簡素化。
 //  状態: PATROL / ALERT / CHASE / ATTACK / SCRIPTED
-//  知覚: 視錐(半頂角45°・距離は懐中電灯/しゃがみ/静止で段階)＋遮蔽(壁箱・閉扉の XZ 線分判定)＋聴覚半径
-//        (走り 12m / 歩き 6m / しゃがみ 2.4m / 扉操作 9m)。phantom.js の _visionCheck を移植。
+//  知覚: 視錐(半頂角45°・距離は懐中電灯/静止で段階)＋遮蔽(壁箱・閉扉の XZ 線分判定)＋聴覚半径
+//        (走り 12m / 歩き 6m / 扉操作 9m。P4a-2 でしゃがみは廃止)。phantom.js の _visionCheck を移植。
 //        遮蔽はメッシュではなく当たり判定の箱(building.json 由来=データが真実)に対して取る(結合済みメッシュより軽く正確)。
 //  経路: P0 は直線廊下＋EVホールなので、廊下軸上の点列＋410 室内の点のグラフ(ダイクストラ＋見通しで間引き)。
 //  入室: door_open_in で扉を押し開けて入る(ルートモーション)。P5a で「鍵束→錠」の段取りは撤去(施錠要素の全廃)。
@@ -44,12 +44,11 @@ export const AI = {
   vision: {
     flashlight: 18.0,      // 懐中電灯 ON: 視錐内・遮蔽なしなら廊下全長級
     darkBase: 5.0,         // OFF・立って移動
-    darkCrouch: 3.5,       // OFF・しゃがみ
     darkStill: 2.5,        // OFF・静止
     halfAngle: Math.PI / 4,
     rayEvery: 0.12,
   },
-  hear: { run: 12.0, walk: 6.0, crouch: 2.4, door: 9.0, occludedMul: 0.6 },
+  hear: { run: 12.0, walk: 6.0, door: 9.0, occludedMul: 0.6 },
   proximity: 2.0,          // この距離で遮蔽なしなら視線問わず気づく
   levelGap: 1.0,           // P5b-1b: プレイヤーの足元が管理人の階の床からこれ以上離れている(外階段・北階段の段の途中)なら見えない・届かない
   attackRange: 1.4,        // CHASE でこの距離 → ATTACK
@@ -634,7 +633,7 @@ export class EnemyAI {
       // プレイヤーが別の階で走っている(数秒おきに 1 回として数える)
       if (this.playerMoving && !this.transit && this.time - this._lastRunHeard >= AI.floorHear.runEvery) {
         const k = this.player.keys;
-        const run = k && (k.has('ShiftLeft') || k.has('ShiftRight')) && !this.player.crouch && this.playerSpeed > 2.0;
+        const run = k && (k.has('ShiftLeft') || k.has('ShiftRight')) && this.playerSpeed > 2.0;
         if (run) { this._lastRunHeard = this.time; this.floorNoise(this._plv(), p.x, p.z, 'run'); }
       }
       return;
@@ -653,8 +652,8 @@ export class EnemyAI {
     let hearR = 0;
     if (this.playerMoving) {
       const k = this.player.keys;
-      const run = k && (k.has('ShiftLeft') || k.has('ShiftRight')) && !this.player.crouch && this.playerSpeed > 2.0;
-      hearR = this.player.crouch ? AI.hear.crouch : run ? AI.hear.run : AI.hear.walk;
+      const run = k && (k.has('ShiftLeft') || k.has('ShiftRight')) && this.playerSpeed > 2.0;
+      hearR = run ? AI.hear.run : AI.hear.walk;
       if (this.occluded) hearR *= AI.hear.occludedMul;
     }
     this.heard = dist <= hearR;
@@ -796,7 +795,6 @@ export class EnemyAI {
     let range;
     if (this.player.flashlightOn) range = V.flashlight;
     else if (!this.playerMoving) range = V.darkStill;
-    else if (this.player.crouch) range = V.darkCrouch;
     else range = V.darkBase;
     if (dist > range) return false;
     const e = this.enemy;
@@ -1792,7 +1790,7 @@ export class EnemyAI {
     e.setFace('grin', 1.0, true);
     e.play('walk_brutal', { fade: 0.1 });
     if (lit) {
-      // 振り向かされる → 詰めて → 襲撃ムービー(しゃがみ等の救済なし)
+      // 振り向かされる → 詰めて → 襲撃ムービー(救済なし)
       if (this.onViewLock) this.onViewLock({ total: 0, label: 'burst_lit', returnView: false });
       for (let t = 0; t < 1.4; t += this.dt) {
         const p = this.player.pos;

@@ -90,7 +90,7 @@ export const HUD_TEXT = {
     { title: '賭け', body: '管理人が降りたばかりのエレベーターを呼ぶと、\nまだ中にいるかもしれない。チャイムが鳴ったら、離れろ。' },
   ],
   tutorialNext: 'クリック／Esc で次へ',
-  controls: 'WASD 移動　／　Shift 走る　／　Ctrl しゃがむ　／　F 懐中電灯　／　E 調べる　／　H 操作の表示',
+  controls: 'WASD 移動　／　Shift 走る　／　F 懐中電灯　／　E 調べる　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },
   start: 'クリックで開始',
   resume: 'クリックで再開',

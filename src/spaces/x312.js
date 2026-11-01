@@ -576,7 +576,7 @@ export function update(dt, ctx) {
   // 泳ぎ・潜水(目の高さ・速さ・息)
   const d = st.stretch;
   const water = inPool(u, v, d);
-  const deckEye = SPACE_Y + (pl.crouch ? 1.0 : 1.62);
+  const deckEye = SPACE_Y + 1.62;
   const wy = SPACE_Y + WY;
   if (st.eye === null) st.eye = deckEye;
   let target, rate, speed = null;
@@ -585,7 +585,7 @@ export function update(dt, ctx) {
     const stand = floorY + 1.62, flt = wy + S.floatEye;
     const rest = Math.max(stand, flt);
     const dive = Math.min(rest, floorY + S.diveEye);
-    const diving = pl.crouch && !busy;
+    const diving = (pl.keys.has('ControlLeft') || pl.keys.has('ControlRight')) && !busy;   // P4a-2: しゃがみ廃止。Ctrl の押下そのもの(水の外では何もしない)
     target = diving ? dive : rest + (stand < flt ? Math.sin(st.t * 1.2) * S.bob : 0);
     rate = !st.inWater ? S.enter : diving ? S.down : S.up;
     speed = st.eye < wy - 0.05 ? S.under : stand >= flt ? S.wade : S.swim;
