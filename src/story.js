@@ -1,7 +1,8 @@
 // story.js — P5b-1: 物語の状態機械(DESIGN §3.8 G・H「章構成と解放の連鎖 v3」の 11 段)。動線の骨組み。
 //  - 段 1〜11・持ち物(鍵 1 本)・解放(roofA・entranceOut・物語の扉・キーボックス・グローブボックス)・チェックポイント(各段の開始時)
 //  - 目標の常時表示(hud_text.objective)と持ち物の札、拾う/鍵を使う/調べる/戻る/乗る(画面ガイドの対象 = hud.storyTarget)
-//  - 221 と 6F の罠 3 室のロッカー(クローゼット)からの飛び出し(ai.lockerBurst = ワープ)、705 の別空間からの最終追跡(階段で追う)、
+//  - 221 と 6F の罠 3 室の奥の窓際のロッカーからの飛び出し(ai.lockerBurst = ワープ。P5b-1b: 扉がゆっくり開いて中が見えてから)。
+//    P5b-1b: 221 は初回、奥へ進むと出る → 逃げ切ると机に小さな鍵。冒頭の見せ場(初めて 410 から廊下へ出ると 4F の EV の管理人 → 2F へ)、705 の別空間からの最終追跡(階段で追う)、
 //    最後だけ敷地まで追う管理人(ai.portals に正面玄関)、黒い車でのエンディング
 //  - 別空間(異世界 4 空間の差し替え口): enterSpace(id)/leaveSpace()。今は spaces.js の仮の小部屋
 //  - デバッグ: ?stage=N でその段の開始状態から。window.__N2.story で状態(state())と操作(applyStage・give・unlockDoor・enterSpace…)
@@ -21,6 +22,9 @@ export const STORY = {
   fade: 0.22,             // 別空間の出入りの暗転(片道・秒)
   siteChaseDist: 6.0,     // 第11段: 敷地へ出て玄関からこれだけ離れたら管理人が玄関から追ってくる
   chaseAppearDelay: 0.5,  // 第9段: 鍵を取ってから管理人が背後に現れるまで
+  // P5b-1b 221 の組み替え: 初回は 221 の奥(玄関の壁から u 3.5m = 洋室の入口 LIVING_U0)へ進むと奥の窓際のロッカーから管理人(鍵は拾わない)。
+  //  逃げ切る(追跡が解ける・階を変える)と奥の机に小さな鍵が現れる(sub: null → 'flee' → 'return')
+  burst221U: 3.5,
   // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
   introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
@@ -64,6 +68,7 @@ export class Story {
     this.events = []; this.logCount = 0;
     this.trans = null; this.ending = null; this.ended = false;
     this.siteChased = false; this.pending = [];
+    this.burst221 = false;    // P5b-1b: 221 の奥のロッカーから出たか(第1段の初回。逃げる途中で死ぬと戻す)
     this.introDone = false;   // P5b-1b: 冒頭の見せ場(4F の EV の管理人)を見せたか。死亡しても戻さない(繰り返さない)
     this.group = new THREE.Group(); this.group.name = 'StoryProps';
     this.scene.add(this.group);
@@ -86,6 +91,8 @@ export class Story {
   objectiveKey() {
     if (this.ended) return 'end';
     if (this.stage === 1 && this.sub === 'memo') return '1m';
+    if (this.stage === 1 && this.sub === 'flee') return '1f';     // P5b-1b
+    if (this.stage === 1 && this.sub === 'return') return '1r';
     if (this.stage === 4 && this.getLevel() === 'X105') return '4x';
     if (this.stage === 9 && this.sub === 'chase') return '9c';
     return this.stage;
@@ -100,7 +107,9 @@ export class Story {
     const desk = (rid) => { const { r, level } = this._room(rid); const [x, z] = r.interior.points.desk; return { level, pos: new THREE.Vector3(x, levelY(level) + 0.722, z) }; };
     // 1: 1F 食堂の卓の上のメモ(2026-11-01 ユーザー指示: スタート地点でなく食堂に)・221 の机の小さな鍵
     add({ id: 'memo221', memo: 'memo221', level: 1, pos: new THREE.Vector3(4.15, levelY(1) + 0.705, 8.15), rotY: 0.3, mesh: P.makeMemo(['221']), takenAt: 2, need: () => this.stage === 1 && this.sub === 'memo' });
-    { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2 }); }
+    // P5b-1b: 小さな鍵は初回は無い(見せない)。221 の奥のロッカーから出た管理人から逃げ切ると机の上に現れる
+    { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2,
+      need: () => this.stage === 1 && this.sub === 'return', showIf: () => this.stage > 1 || this.sub === 'return' }); }
     // 3: X312 の床の 105 の鍵 / 4: X105 のメモ
     add({ id: 'k105', item: '105', level: 'X312', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4 });
     add({ id: 'memo6F', memo: 'memo6F', level: 'X105', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
@@ -152,6 +161,7 @@ export class Story {
   _visible(pk, lv) {
     if (this.taken.has(pk.id)) return false;
     if (this.mode === 'off') return false;
+    if (pk.showIf && this.mode === 'play' && !pk.showIf()) return false;   // P5b-1b: 221 の小さな鍵は逃げ切るまで無い
     const vis = (pk.level === lv) || (typeof lv === 'number' && typeof pk.level === 'number' && Math.abs(pk.level - lv) <= 1);
     return vis;
   }
@@ -244,17 +254,15 @@ export class Story {
     if (pk.memo) {
       this._sfx('paper');
       this.hud.flash(pk.memo === 'memo221' ? S.memo221 : S.memo6F, 2.2);
-      if (pk.memo === 'memo221') { this.sub = null; this.log('stage', { stage: 1, sub: null }); }
+      if (pk.memo === 'memo221' && this.sub === 'memo') { this.sub = null; this.log('stage', { stage: 1, sub: null }); }   // 先に 221 で出会っていたら段はそのまま
       if (pk.memo === 'memo6F') this.setStage(5);
       return 'memo';
     }
     this.item = pk.item;
     this._sfx('key');
     this.hud.flash(S.got(S.tags[pk.item]), 1.4);
-    if (pk.item === 'small') {   // 第1段: 小さな鍵を拾った瞬間、奥のクローゼットから管理人(初遭遇)
-      this.setStage(2);
-      if (this.aiControl) this.ai.lockerBurst('221');
-    } else if (pk.item === '312') this.setStage(3);
+    if (pk.item === 'small') this.setStage(2);   // P5b-1b: 逃げ切ってから戻って拾う(飛び出しは奥へ進んだ時 = _check221)
+    else if (pk.item === '312') this.setStage(3);
     else if (pk.item === '105') this.setStage(4);
     else if (pk.item === '220') this.setStage(6);
     else if (pk.item === 'entrance') this.setStage(7);
@@ -363,6 +371,8 @@ export class Story {
     n = Math.max(1, Math.min(11, n | 0));
     this.ended = false; this.ending = null; this.trans = null; this.pending = []; this.siteChased = false;
     this.introDone = n > 1;
+    this.burst221 = n > 1;
+    if (this.rooms.resetBursts) this.rooms.resetBursts();   // P5b-1b: 奥の窓際のロッカーの扉を閉じる(221・罠の部屋)
     this.stage = n; this.sub = n === 1 ? 'memo' : null; this.item = START_ITEM[n];
     this.taken.clear();
     for (const pk of this.pickups) { if (pk.takenAt <= n) this.taken.add(pk.id); pk.mesh.visible = true; }
@@ -390,7 +400,14 @@ export class Story {
   respawnPoint() { return this.stage === 9 && this.sub === 'chase' ? SPAWN['9c'] : SPAWN[this.stage]; }
   afterRespawn() {
     this.trans = null; this.siteChased = false; this.pending = [];
-    if (this.aiControl && this.stage === 1) this.ai.setDormant(true);
+    // P5b-1b: 221 から逃げる途中で死んだ → 第1段の開始位置から、飛び出しの前(管理人は 2F で待機の体 = 眠る。221 の奥へ進むとまた出る)。
+    //  冒頭の見せ場は繰り返さない。逃げ切った後(sub 'return')の死亡は鍵が机にあるまま・管理人は徘徊を続ける
+    if (this.stage === 1 && this.sub === 'flee') {
+      this.sub = null; this.burst221 = false;
+      if (this.rooms.setBurst) this.rooms.setBurst('221', 0, 0);
+      this.log('stage', { stage: 1, sub: null, why: 'respawn_before_escape' });
+    }
+    if (this.aiControl && this.stage === 1 && this.sub !== 'return') this.ai.setDormant(true);
     if (this.aiControl && this.stage === 9 && this.sub === 'chase') {   // 最終追跡のやり直し: 705 の戸口から現れる
       const D = SPACE_DEFS.X705;
       this.pending.push({ t: 2.0, fn: () => this.ai.appear({ level: 7, x: D.back.x, z: D.back.z, lock: 0.8, recover: 1.2, label: 'appear_705' }) });
@@ -453,6 +470,8 @@ export class Story {
       if (p.z < D.exit.z + 0.45 && Math.abs(p.x - D.exit.x) < 0.6) this.leaveSpace();
     }
     if (!this.active) { this.hud.setObjective(''); this.hud.setItem(''); return; }
+    // P5b-1b 221: 奥へ進むと奥の窓際のロッカーから管理人(初回)→ 逃げ切ると机に小さな鍵
+    if (this.stage === 1) this._check221(lv, p);
     // P5b-1b 冒頭の見せ場: 初めて 410 から廊下へ出た瞬間、4F の EV ホールに管理人 → EV で 2F へ(DESIGN §3.8 H 第1段)
     if (this.stage === 1 && !this.introDone && lv === 4 && this.aiControl) {
       const I = STORY.introDoor;
@@ -486,6 +505,33 @@ export class Story {
     this.hud.setObjective(HUD_TEXT.objective[this.objectiveKey()]);
     this.hud.setItem(this.item ? HUD_TEXT.story.item(HUD_TEXT.story.tags[this.item]) : '');
     if (this.watcher) this.watcher.enabled = this.watcherBase && this.stage >= 2;
+  }
+
+  // P5b-1b: 部屋の中での玄関の壁(扉の面)からの奥行 u(部屋の外は -1)
+  _roomU(rid, p, lv) {
+    const R = this._room(rid);
+    if (!R || R.level !== lv) return -1;
+    const [rx, rz, rw, rd] = R.r.rect;
+    if (!(p.x > rx && p.x < rx + rw && p.z > rz && p.z < rz + rd)) return -1;
+    const [nx, nz] = FACING_N[R.r.door.facing];
+    return -((p.x - R.r.door.pos[0]) * nx + (p.z - R.r.door.pos[1]) * nz);
+  }
+  _check221(lv, p) {
+    if (!this.burst221 && (this.sub === 'memo' || this.sub === null) && lv === 2 && this._roomU('221', p, 2) >= STORY.burst221U) {
+      this.burst221 = true;
+      if (!this.aiControl) { this.sub = 'return'; this.log('stage', { stage: 1, sub: 'return', why: 'noai' }); return; }   // ?noai: 管理人なしで鍵だけ出す
+      this.sub = 'flee';
+      this.log('burst221');
+      this.log('stage', { stage: 1, sub: 'flee' });
+      this.ai.lockerBurst('221');
+      return;
+    }
+    // 逃げ切った: 追跡が解けた(見失った)か、プレイヤーが階を変えた(飛び出しの演出中・襲撃中・死亡演出中は数えない)
+    if (this.sub === 'flee' && this.aiControl && !['APPEAR', 'ATTACK', 'DEAD'].includes(this.ai.state) && (this.ai.state !== 'CHASE' || lv !== this.ai.level)) {
+      this.sub = 'return';
+      this.log('escaped', { lv, ai: this.ai.state });
+      this.log('stage', { stage: 1, sub: 'return' });
+    }
   }
 
   // 開いた物語の扉(105・312・705・地下の鉄扉)の戸口を奥へ越えたら別空間へ
