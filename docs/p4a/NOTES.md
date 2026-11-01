@@ -75,3 +75,5 @@
 - `locker_burst`(ロッカーから出てくる)は今は無音の所。P4b で `_reveal` の emerge に接続。
 - `samples/sound_choice.json` はまだ無い(ユーザーが選んで保存する)。サンプル盤の `localStorage` は内蔵ブラウザで検証に使った分を消してある。
 - 検証用の `window.__SB` はサンプル盤だけにある(ゲーム本体には入れていない)。
+
+- 配信は tools/serve.py(P4a-2 から。`python3 tools/serve.py 8001`、全応答 no-store・試聴盤の選択は POST /api/sound_choice で samples/sound_choice.json に自動保存。§2 の http.server は使わない)
