@@ -514,6 +514,46 @@ export class World {
     });
     if (this.onBind) this.onBind(level, rec.binds);
     for (const d of this.doors) if (d.level === level && d.kind === 'auto') this._applyAuto(d);
+    this._rebuildLurkMerged(level);
+  }
+
+  // P5a: 空室の扉板(14 枚前後/階 × 3 材質)を別ノードのまま描くと描画コールが 1 階で約 +100 になる(影・GTAO の走査込み)。
+  //  止まっている扉板は階ごとに材質単位で 1 つへ結合して描き、動いている扉(管理人の出入り・ガタガタ・壊れた・ノブを試した)だけ別ノードを見せる
+  _leafAtRest(d) { return !d.broken && d.angle === 0 && d.target === 0 && !(d.shake > 0) && !(d.rattle > 0); }
+  _rebuildLurkMerged(level) {
+    const rec = this.floors.get(level);
+    if (!rec || rec.state !== 'ready' || !rec.group) return;
+    for (const m of rec.lurkMerged || []) { m.removeFromParent(); m.geometry.dispose(); }
+    rec.lurkMerged = [];
+    rec.group.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(rec.group.matrixWorld).invert();
+    const groups = new Map();
+    for (const d of this.doors) {
+      if (d.level !== level || !d.lurkable || !d.node) continue;
+      const rest = this._leafAtRest(d);
+      d._merged = rest;
+      d.node.visible = !rest;
+      if (!rest) continue;
+      d.node.traverse((o) => {
+        if (!o.isMesh) return;
+        const key = o.material.uuid + (o.castShadow ? ':s' : ':n');
+        if (!groups.has(key)) groups.set(key, { material: o.material, castShadow: o.castShadow, geoms: [] });
+        const g = o.geometry.clone();
+        g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+        for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv', 'uv1'].includes(name)) g.deleteAttribute(name);
+        groups.get(key).geoms.push(g);
+      });
+    }
+    for (const { material, castShadow, geoms } of groups.values()) {
+      const merged = geoms.length ? mergeGeometries(geoms, false) : null;
+      for (const g of geoms) g.dispose();
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, material);
+      mesh.name = 'merged_lurkLeaves_' + material.name;
+      mesh.castShadow = castShadow; mesh.receiveShadow = true;
+      rec.group.add(mesh);
+      rec.lurkMerged.push(mesh);
+    }
   }
 
   // P3b-4: 怖い扉の「生乾きの垂れ」(見た目だけ。扉の前に初めて来ると伸びる)
@@ -527,6 +567,7 @@ export class World {
   // movers: [{ level, x, z }](プレイヤー・管理人)。自動ドアは同じ階で 1.7m 以内に誰かいれば開く
   updateDoors(dt, movers) {
     const SPEED = 2.4;
+    let dirty = null;
     for (const d of this.doors) {
       if (d.kind === 'auto') {
         const near = movers.some((m) => (m.level === d.level || (d.alsoLevel && m.level === d.alsoLevel)) && Math.hypot(m.x - d.pos[0], m.z - d.pos[1]) < 1.7);
@@ -566,7 +607,9 @@ export class World {
         if (d.shake > 0) { d.shake -= dt; d.shakeT += dt; }
       }
       if (d.node && !d.operable) this._poseLeaf(d);
+      if (d.lurkable && d.node && this._leafAtRest(d) !== d._merged) (dirty ||= new Set()).add(d.level);
     }
+    if (dirty) for (const lv of dirty) this._rebuildLurkMerged(lv);
   }
 
   // P5a: 開かない扉の扉板の姿勢(開き角・壊れた傾き・ガタガタの揺れ・ノブを試した時のごく小さな揺れ)
