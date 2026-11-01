@@ -398,10 +398,16 @@ export async function run(N) {
   await T('8_exterior', async () => {
     const gl = N.renderer.getContext();
     const px1 = new Uint8Array(4);
-    const frameMs = (n = 40) => {
-      const ts = [];
-      for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
-      ts.sort((a, b) => a - b); return +ts[ts.length >> 1].toFixed(2);
+    // P5a 監査: 1 回 40 フレームの中央値は内蔵ブラウザで ±5ms 揺れる(P5a 前の 34fec7c でも同じ窓が 13〜19ms。docs/p5a/NOTES.md §8)。
+    //  40 フレームの中央値を 3 回取り、一番小さいものを記録する(一時的な GC・裏の処理の影響を除く)
+    const frameMs = (n = 40, reps = 3) => {
+      let best = Infinity;
+      for (let r = 0; r < reps; r++) {
+        const ts = [];
+        for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
+        ts.sort((a, b) => a - b); best = Math.min(best, ts[ts.length >> 1]);
+      }
+      return +best.toFixed(2);
     };
     const V = {
       roofA: [4, 2.0, 2.5, 2.356, 0.1, '3,4,5'],
@@ -495,10 +501,16 @@ export async function run(N) {
     await N.loadExterior();
     const gl = N.renderer.getContext();
     const px1 = new Uint8Array(4);
-    const frameMs = (n = 40) => {
-      const ts = [];
-      for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
-      ts.sort((a, b) => a - b); return +ts[ts.length >> 1].toFixed(2);
+    // P5a 監査: 1 回 40 フレームの中央値は内蔵ブラウザで ±5ms 揺れる(P5a 前の 34fec7c でも同じ窓が 13〜19ms。docs/p5a/NOTES.md §8)。
+    //  40 フレームの中央値を 3 回取り、一番小さいものを記録する(一時的な GC・裏の処理の影響を除く)
+    const frameMs = (n = 40, reps = 3) => {
+      let best = Infinity;
+      for (let r = 0; r < reps; r++) {
+        const ts = [];
+        for (let i = 0; i < n; i++) { const a = performance.now(); N.step(DT); N.render(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px1); ts.push(performance.now() - a); }
+        ts.sort((a, b) => a - b); best = Math.min(best, ts[ts.length >> 1]);
+      }
+      return +best.toFixed(2);
     };
     const W = 320, H = 180;
     const buf = new Uint8Array(W * H * 4), buf2 = new Uint8Array(W * H * 4);

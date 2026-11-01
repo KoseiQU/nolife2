@@ -550,7 +550,8 @@ export class World {
       if (!merged) continue;
       const mesh = new THREE.Mesh(merged, material);
       mesh.name = 'merged_lurkLeaves_' + material.name;
-      mesh.castShadow = castShadow; mesh.receiveShadow = true;
+      // 閉じた扉板は壁の面に収まっていて影は壁と同じ → 影のパス(懐中電灯 2 灯)には入れない(P5a 監査: 描画コールを減らす)
+      mesh.castShadow = false; mesh.receiveShadow = true; void castShadow;
       rec.group.add(mesh);
       rec.lurkMerged.push(mesh);
     }
