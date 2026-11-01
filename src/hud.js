@@ -31,6 +31,7 @@ const CSS = `
 #hud-toast { top: calc(50% + 70px); font-size: 14px; }
 #hud-release { bottom: 3.5vh; font-size: 13px; }
 #hud-controls { bottom: 6vh; font-size: 13px; letter-spacing: .1em; padding: 7px 16px; white-space: normal; width: max-content; max-width: 92vw; text-align: center; }
+#hud-notice { top: 13vh; font-size: 13px; letter-spacing: .14em; background: rgba(6,7,9,.42); color: #d8d2c8; transition: opacity .6s linear; }
 #hud-center { top: 50%; transform: translate(-50%, -50%); font-size: 16px; letter-spacing: .2em; padding: 9px 20px; }
 #hud-dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: rgba(234,230,223,.45); }
 `;
@@ -45,12 +46,15 @@ export class Hud {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
-      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div>';
+      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>';
     document.body.appendChild(this.root);
     this.el = {
       dot: this.root.querySelector('#hud-dot'), hint: this.root.querySelector('#hud-hint'), toast: this.root.querySelector('#hud-toast'),
       release: this.root.querySelector('#hud-release'), controls: this.root.querySelector('#hud-controls'), center: this.root.querySelector('#hud-center'),
+      notice: this.root.querySelector('#hud-notice'),
     };
+    this.noticeT = 0;
+    this.noticeLog = [];
     this.el.controls.textContent = TX.controls;
     this.started = false;
     this.locked = false;
@@ -66,6 +70,12 @@ export class Hud {
   flash(text, sec = HUD.flashSec) {
     this.el.toast.textContent = text;
     this.toastT = sec;
+  }
+  // P5a: 画面上部の小さなお知らせ(管理人が同じ階に来た時など。3 秒)
+  notice(text, sec = 3.0) {
+    this.el.notice.textContent = text;
+    this.noticeT = sec;
+    this.noticeLog.push({ text, sec });
   }
   showControls(sec = HUD.controlsKeySec) { this.controlsT = Math.max(this.controlsT, sec); }
   setPointer(locked) {
@@ -100,6 +110,8 @@ export class Hud {
 
     this.toastT = Math.max(0, this.toastT - dt);
     this.el.toast.classList.toggle('on', this.toastT > 0 && !hidden && !peeping);
+    this.noticeT = Math.max(0, this.noticeT - dt);
+    this.el.notice.classList.toggle('on', this.noticeT > 0 && !hidden && !peeping);
     this.controlsT = Math.max(0, this.controlsT - dt);
     this.el.controls.classList.toggle('on', this.controlsT > 0 && !hidden && !peeping);
 
@@ -160,6 +172,7 @@ export class Hud {
       release: this.el.release.classList.contains('on') ? this.el.release.textContent : '',
       controls: this.el.controls.classList.contains('on'),
       center: this.el.center.classList.contains('on') ? this.el.center.textContent : '',
+      notice: this.el.notice.classList.contains('on') ? this.el.notice.textContent : '',
     };
   }
 }

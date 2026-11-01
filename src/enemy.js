@@ -44,7 +44,7 @@ export const ENEMY = {
   irradianceKnee: 4,              // 敵材質の直接光の膝(W/m² 相当)。小さいほど近距離の白飛びを抑える
 };
 
-const MAX_LAMPS = 7;   // 常夜灯など最大 5 ＋ 照り返し 1 ＋ 襲撃ムービーの顔の補助光 1
+export const MAX_LAMPS = 7;   // 常夜灯など最大 5 ＋ 照り返し 1 ＋ 襲撃ムービーの顔の補助光 1
 
 export class Enemy {
   constructor(scene, { floorY = 0, collisions = [], lamps = [], exitLamps = [], windowLamps = [] } = {}) {
@@ -544,7 +544,7 @@ function makeBeamMaterial(color, opacity, L) {
 }
 
 // ---- 敵専用ライト(シェーダ注入)
-function makeEnemyLightUniforms() {
+export function makeEnemyLightUniforms() {
   return {
     n2LampPos: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Vector3()) },
     n2LampColor: { value: Array.from({ length: MAX_LAMPS }, () => new THREE.Color(0, 0, 0)) },
@@ -554,7 +554,7 @@ function makeEnemyLightUniforms() {
     n2HemiGround: { value: new THREE.Color(0, 0, 0) },
   };
 }
-function patchEnemyMaterial(mat, uniforms) {
+export function patchEnemyMaterial(mat, uniforms) {
   const mats = Array.isArray(mat) ? mat : [mat];
   for (const m of mats) {
     if (!m || m.userData.n2EnemyPatched) continue;

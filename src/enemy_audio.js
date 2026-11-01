@@ -34,6 +34,11 @@ export class EnemyAudio {
       hit: synthHit(this.ctx),
       breath: synthBreath(this.ctx),      // P3b 演出②: 目の前で立ち止まった時の息遣い(enemy_breath_close_01)
       handle: synthHandle(this.ctx),      // P3b 演出②: クローゼット/ロッカーの取っ手に触れる音(enemy_handle_touch_01)
+      // P5a(仮音。P4 で録音に差し替え。ファイル名は docs/p5a/NOTES.md)
+      crash: synthCrash(this.ctx),        // 扉を破って飛び出す(enemy_door_smash_01)
+      breathDoor: synthBreathDoor(this.ctx),   // 潜伏中の扉の向こうの、ごく小さな呼吸(enemy_breath_behind_door_01)
+      latch: synthLatch(this.ctx),        // 空室の扉を普通に開け閉めする(ラッチ＋蝶番のきしみ)(door_latch_creak_01)
+      slam: synthSlam(this.ctx),          // ガタガタ扉: 中で何かが暴れて扉が激しく鳴る(room_door_rattle_violent_01)
     };
     this.hum = this._makeSource(enemy.bones.head, true);
     this.hum.setBuffer(this.buffers.hum);
@@ -70,8 +75,10 @@ export class EnemyAudio {
   setOccluded(v) { this.occludedTarget = v ? 1 : 0; }
 
   // name: buffers のキー('step' は 4 種から選ぶ)。pos: 世界座標
-  play(name, pos, volume = 1) {
-    this.log.push({ name, t: this.ctx.currentTime, pos: pos ? [pos.x, pos.y, pos.z].map((v) => +v.toFixed(2)) : null });
+  // opts(P5a): cutoff = この音だけ固定のこもり(Hz。管理人の遮蔽に従わない＝扉・別の階の音)、ref = 距離減衰の基準距離(大きいほど遠くまで届く)、
+  //  dur = この秒数で切る(長い音の一部だけ鳴らす)
+  play(name, pos, volume = 1, opts = {}) {
+    this.log.push({ name, t: this.ctx.currentTime, vol: +volume.toFixed(3), pos: pos ? [pos.x, pos.y, pos.z].map((v) => +v.toFixed(2)) : null, ...(opts.cutoff ? { cutoff: opts.cutoff } : {}) });
     if (this.log.length > 200) this.log.shift();
     if (this.ctx.state !== 'running') return;
     const buf = name === 'step' ? this.buffers.steps[(Math.random() * 4) | 0] : this.buffers[name];
@@ -83,8 +90,13 @@ export class EnemyAudio {
     a.setBuffer(buf);
     a.setLoop(false);
     a.setPlaybackRate(name === 'step' ? 0.92 + Math.random() * 0.16 : 1);
-    a.setVolume(volume * (1 - this.occluded * (1 - ENEMY_AUDIO.occludedGain)));
+    a.setRefDistance(opts.ref ?? ENEMY_AUDIO.refDistance);
+    a.userData.fixedCutoff = opts.cutoff || null;
+    if (opts.cutoff) a.userData.lp.frequency.setValueAtTime(opts.cutoff, this.ctx.currentTime);
+    a.gain.gain.cancelScheduledValues(this.ctx.currentTime);
+    a.setVolume(volume * (opts.cutoff ? 1 : (1 - this.occluded * (1 - ENEMY_AUDIO.occludedGain))));
     a.play();
+    if (opts.dur) a.gain.gain.setTargetAtTime(0, this.ctx.currentTime + Math.max(0.05, opts.dur - 0.25), 0.08);
   }
 
   update(dt) {
@@ -94,7 +106,7 @@ export class EnemyAudio {
     // cutoff は対数で補間(耳の感じ方に合わせる)
     const lc = Math.log(ENEMY_AUDIO.cutoffClear), lo = Math.log(ENEMY_AUDIO.cutoffOccluded);
     this.cutoff = Math.exp(lc + (lo - lc) * this.occluded);
-    for (const a of [this.hum, ...this.pool]) a.userData.lp.frequency.setTargetAtTime(this.cutoff, this.ctx.currentTime, 0.05);
+    for (const a of [this.hum, ...this.pool]) a.userData.lp.frequency.setTargetAtTime(a.userData.fixedCutoff || this.cutoff, this.ctx.currentTime, 0.05);
     const gOcc = 1 - this.occluded * (1 - ENEMY_AUDIO.occludedGain);
     const cur = this.hum.getVolume();
     const want = this.humTarget * gOcc;
@@ -245,5 +257,90 @@ function synthHandle(ctx) {
       const i0 = Math.round(s0 * sr2);
       for (let i = i0; i < n; i++) { const t = (i - i0) / sr2; d[i] += a * Math.exp(-t * 60) * (Math.sin(2 * Math.PI * f * t) * 0.7 + (r() - 0.5) * 0.4); }
     }
+  });
+}
+
+// ------------------------------------------------------------ P5a(仮音)
+// 扉を破る: 低い衝撃(体当たり)＋板の裂ける音(広帯域の割れ)＋木片の細かい弾け＋金具の転がる尾
+function synthCrash(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 1.8, sr, (d, sr2, n) => {
+    const r = rng(907);
+    let lp = 0, lp2 = 0;
+    const cracks = Array.from({ length: 34 }, () => [0.02 + r() ** 1.6 * 0.75, 0.2 + r() * 0.8, 900 + r() * 3800]);
+    for (let i = 0; i < n; i++) {
+      const t = i / sr2;
+      const thump = Math.sin(2 * Math.PI * 48 * t * (1 - 0.5 * t)) * Math.exp(-t * 9) * 1.2 + Math.sin(2 * Math.PI * 95 * t) * Math.exp(-t * 16) * 0.5;
+      lp += ((r() - 0.5) - lp) * 0.35; lp2 += (lp - lp2) * 0.12;
+      const split = (r() - 0.5) * Math.exp(-t * 7) * 1.1 + lp * Math.exp(-t * 4) * 1.4;
+      const body = lp2 * Math.exp(-t * 2.2) * 2.2;
+      d[i] = thump + split + body;
+    }
+    for (const [s0, a, f] of cracks) {
+      const i0 = Math.round(s0 * sr2);
+      for (let i = i0; i < Math.min(n, i0 + sr2 * 0.05); i++) { const t = (i - i0) / sr2; d[i] += a * Math.exp(-t * 120) * (Math.sin(2 * Math.PI * f * t) * 0.5 + (r() - 0.5)) * 0.6; }
+    }
+    // 金具(ラッチの受け)が床に落ちて跳ねる
+    for (const [s0, a] of [[0.55, 0.35], [0.74, 0.22], [0.86, 0.13], [0.93, 0.08]]) {
+      const i0 = Math.round(s0 * sr2);
+      for (let i = i0; i < n; i++) { const t = (i - i0) / sr2; d[i] += a * Math.exp(-t * 40) * Math.sin(2 * Math.PI * 2900 * t) * 0.5; }
+    }
+    for (let i = 0; i < n; i++) d[i] = Math.tanh(d[i] * 1.3) * 0.9;
+  });
+}
+// 扉の向こうの呼吸: 鼻からの長い吸気と、ゆっくりの呼気。ごく低く、こもった雑音(呼吸 1 回 ≈3.6 秒)
+function synthBreathDoor(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 3.8, sr, (d, sr2, n) => {
+    const r = rng(83);
+    let lp = 0, lp2 = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr2;
+      let a = 0;
+      if (t < 1.5) a = Math.sin(Math.PI * t / 1.5) ** 1.8 * 0.6; else if (t > 1.8 && t < 3.6) a = Math.sin(Math.PI * (t - 1.8) / 1.8) ** 1.4 * 0.9;
+      lp += ((r() - 0.5) - lp) * 0.08; lp2 += (lp - lp2) * 0.15;
+      d[i] = lp2 * 3.0 * a;
+    }
+  });
+}
+// 空室の扉を普通に開け閉め: ラッチの「カチャ」＋短い蝶番のきしみ
+function synthLatch(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 1.1, sr, (d, sr2, n) => {
+    const r = rng(17);
+    for (const [s0, a, f] of [[0.0, 0.5, 1700], [0.05, 0.35, 2400]]) {
+      const i0 = Math.round(s0 * sr2);
+      for (let i = i0; i < n; i++) { const t = (i - i0) / sr2; d[i] += a * Math.exp(-t * 80) * (Math.sin(2 * Math.PI * f * t) * 0.6 + (r() - 0.5) * 0.7) * 0.6; }
+    }
+    let ph = 0;
+    for (let i = Math.round(0.18 * sr2); i < n; i++) {
+      const t = (i - 0.18 * sr2) / sr2;
+      const f = 620 - 160 * t + 25 * Math.sin(t * 2 * Math.PI * 9);
+      ph += f / sr2;
+      const env = Math.min(1, t / 0.06) * Math.max(0, 1 - t / 0.8);
+      d[i] += Math.sin(2 * Math.PI * ph) * (0.5 + 0.5 * Math.sin(t * 2 * Math.PI * 31)) * env * 0.08;
+    }
+  });
+}
+// ガタガタ: 扉板が掛け金に当たる重い連打(2 Hz の波の中に 11〜15 Hz)＋ノブの金属のガチャつき。5 秒(短く切って使う)
+function synthSlam(ctx) {
+  const sr = 24000;
+  return makeBuffer(ctx, 5.0, sr, (d, sr2, n) => {
+    const r = rng(311);
+    const hits = [];
+    for (let t = 0.02; t < 4.9;) {
+      const surge = Math.max(0, Math.sin(t * 2 * Math.PI * 1.9)) ** 2;
+      hits.push([t, 0.25 + 0.75 * surge * (0.6 + 0.4 * r())]);
+      t += surge > 0.3 ? 1 / (11 + r() * 4) : 0.09 + r() * 0.08;
+    }
+    for (const [s0, a] of hits) {
+      const i0 = Math.round(s0 * sr2);
+      const f = 85 + r() * 30;
+      for (let i = i0; i < Math.min(n, i0 + sr2 * 0.12); i++) {
+        const t = (i - i0) / sr2;
+        d[i] += a * (Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 30) * 0.9 + (r() - 0.5) * Math.exp(-t * 90) * 0.8 + Math.sin(2 * Math.PI * (1800 + r() * 900) * t) * Math.exp(-t * 70) * 0.15);
+      }
+    }
+    for (let i = 0; i < n; i++) { const t = i / sr2; d[i] = Math.tanh(d[i] * 1.4) * 0.8 * Math.min(1, t / 0.05) * Math.min(1, (5.0 - t) / 0.3); }
   });
 }

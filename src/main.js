@@ -30,6 +30,8 @@ import { Rooms } from './rooms.js';
 import { HUD_TEXT } from './hud_text.js';
 import { storyDecor, setLiveDrip } from './story_doors.js';
 import { Exterior, EXT_U } from './exterior.js';
+import { DoorFx } from './door_fx.js';
+import { ViewLock } from './view_lock.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -260,8 +262,7 @@ function useNearestDoor() {
     best.speedMul = 1;
     if (ai) ai.noise((best.collision.minX + best.collision.maxX) / 2, (best.collision.minZ + best.collision.maxZ) / 2, 9.0);   // 扉の開閉音(聴覚 9m)
   } else {
-    best.rattle = 0.25; lastUseLocked = true;   // 施錠: ノブだけ鳴る。ごく小さく揺らす
-    if (best.node) best.node.rotation.y = best.sign * 0.004;
+    best.rattle = 0.25; lastUseLocked = true;   // 開かない扉: ノブだけ鳴る。ごく小さく揺らす(扉板の姿勢は world._poseLeaf)
     // P3a-2: 開かない扉はガチャ音(地下の鉄扉など)
     enemyAudio.play('rattle', new THREE.Vector3((best.collision.minX + best.collision.maxX) / 2, levelY(playerLevel) + 1.0, (best.collision.minZ + best.collision.maxZ) / 2), 0.8);
   }
@@ -273,6 +274,7 @@ function useAndReport() {
   const t = hud.target;
   if (t && t.kind === 'ev') {
     const r = elevator.call(playerLevel);
+    if (r === 'called' && !TOUR) ai.evGambleCheck(playerLevel);   // P5a: EV の賭け(管理人が降りた直後に呼ぶと、中にいる)
     hud.onUse(null);
     hud.flash(r === 'open' ? HUD_TEXT.ev.opened : HUD_TEXT.ev.called);
     return null;
@@ -296,13 +298,18 @@ const doorApi = {
   open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = d.openAngle; d.speedMul = speed; } },
   close: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = 0; d.speedMul = speed; } },
   setLocked: (id, v) => { const d = doorApi.get(id); if (d) d.locked = !!v; },
+  // P5a: 空室(管理人が潜む施錠された部屋)の扉。プレイヤーは開けられないが、管理人は普通に開けて出入りし、飛び出す時は壊す
+  npcOpen: (id, angle = 1.15, speed = 1) => { const d = doorApi.get(id); if (d && d.lurkable && !d.broken) { if (doorFx) doorFx.prepare(id); d.target = angle; d.speedMul = speed; } },
+  npcClose: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.lurkable && !d.broken) { d.target = 0; d.speedMul = speed; } },
+  breakDoor: (id) => world.breakDoor(id),
+  repairDoor: (id) => world.repairDoor(id),
 };
+let doorFx = null;   // P5a(下で作る)
 function updateDoors(dt) {
   world.updateDoors(dt, [
     { level: playerLevel, x: player.pos.x, z: player.pos.z },
     ...(ai && !ai.transit && !TOUR ? [{ level: ai.level, x: enemy.pos.x, z: enemy.pos.z }] : []),
   ]);
-  for (const d of doors) if (!d.operable && d.rattle <= 0 && d.node) d.node.rotation.y = 0;
   world.updateDecor(dt, playerLevel, player.pos.x, player.pos.z);
 }
 
@@ -346,7 +353,9 @@ const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管�
 const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getPlayerLevel: () => playerLevel, doors: doorApi, doorInfo,
   onLevel: (lv) => enemy.setLevel(levelY(lv), world.collisions(lv), lampDefsFor(lv)),
   onKill: () => { movie.hit(); startDeath(); },
-  onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; movie.start(); },
+  onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; viewLock.handoff(); movie.start(); },
+  // P5a: 管理人がプレイヤーの階に着いた(EV で降りた)時に一度だけ「同じ階で…」(DESIGN §3.8 C)。着くたびに新しい滞在
+  onArrive: (lv) => { if (!TOUR && lv === playerLevel) hud.notice(HUD_TEXT.sameFloor, 3.0); },
   // P2d: スコープ演出の入出力(覗いているか／扉が開く瞬間に覗き穴視点を閉じる／レンズ位置)
   isPeeking: () => peephole.active,
   onScopeOpen: () => { peephole.forced = false; peephole.set(false); pendingE = null; },
@@ -355,6 +364,13 @@ const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getP
 // P2c: 襲撃ムービー(固定カメラ・顔の補助光・血飛沫)。血の合成は最終段(粒子の後)
 const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
 composer.addPass(movie.pass);
+// P5a: 視点を管理人へ向ける短いムービー(潜伏室からの飛び出し・EV の賭け)
+const viewLock = new ViewLock({ camera, player });
+ai.onViewLock = (o) => viewLock.start((out) => enemy.headWorld(out).add(new THREE.Vector3(0, 0.02, 0)), o);
+// P5a: 空室の扉まわり(扉の下の隙間・奥の闇の箱・壊れた扉の破片・ガタガタ扉)
+doorFx = new DoorFx({ scene, world, building, audio: enemyAudio });
+world.onDoorBroken = (d) => doorFx.onBroken(d);
+world.onDoorRepaired = (d) => doorFx.onRepaired(d);
 if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
 else if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
@@ -486,6 +502,7 @@ function updateDeath(dt) {
     death.respawned = true;
     door410.angle = 0; door410.target = 0; door410.locked = false; door410.speedMul = 1;
     if (door410.collision) door410.collision.disabled = false;
+    viewLock.cancel();
     movie.end();
     rooms.forceUnhide();
     player.object.rotation.z = 0;
@@ -506,7 +523,7 @@ const hud = new Hud({
   inRoomOf: (door) => ai._rid(player.pos.x, player.pos.z, playerLevel) === door.roomId,
   extraTarget: () => extraTarget(),
   peepKey: () => (peephole.active ? (pendingE && pendingE.held ? 'E' : player.keys.has('KeyP') ? 'P' : 'E') : null),
-  isMovie: () => movie.active, isDead: () => !!death,
+  isMovie: () => movie.active || viewLock.active, isDead: () => !!death,
 });
 player.controls.addEventListener('lock', () => { document.body.classList.add('locked'); hud.setPointer(true); });
 player.controls.addEventListener('unlock', () => { document.body.classList.remove('locked'); hud.setPointer(false); });
@@ -733,10 +750,13 @@ function step(dt) {
     ai.update(dt);
     enemy.update(dt, camera);
     movie.update(dt);
+    viewLock.update(dt);
   }
   updateDoors(dt);
   elevator.update(dt);
-  enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit;
+  enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit && !ai.concealed;   // P5a: 空室の中に潜んでいる間は描かない
+  doorFx.update(dt, { level: playerLevel, x: player.pos.x, z: player.pos.z,
+    busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : ai.lurkRoomId);
   updateVisibility();
   updateOutdoorLook(dt);
   if (!TOUR) enemyAudio.update(dt);
@@ -755,7 +775,7 @@ function render() {
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
   const t0 = performance.now();
-  if (!window.__n2 || !window.__n2.paused) step(Math.min(dt, 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める
+  if (!window.__n2 || !window.__n2.paused) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める
   render();
   const cpu = performance.now() - t0;
   frameTimes.push([now, dt * 1000, cpu]);
@@ -799,6 +819,7 @@ window.__n2 = {
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
+  doorFx, viewLock,   // P5a
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
   loadExterior: () => (exterior.ready ? Promise.resolve(exterior) : (window.__n2._extLoad ||= exterior.load())),

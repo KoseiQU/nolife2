@@ -19,6 +19,7 @@ export const EV = {
   travelBase: 2.4,     // 移動の基本時間＋1階あたり
   travelPerFloor: 1.5,
   callReact: 0.5,      // 呼んでから動き出すまで
+  chimeLead: 0.3,      // P5a: 到着のチャイムから扉が開き始めるまで(チャイム→開き切るまで = 0.3 + doorTime 1.5 = 1.8 秒。EV の賭けの猶予)
   carLightIntensity: 1.3,
   carCeiling: 0.3,     // 天井の乳白パネルの発光の倍率(manifest の発光の強さ × これ)
   stops: [1, 2, 3, 4, 5, 6, 7],
@@ -43,6 +44,8 @@ export class Elevator {
     this.shown = { floor: null, dir: null };     // 表示中の階数と矢印(0=なし 1=▲ 2=▼)
     this.shownLog = [];                          // 表示が切り替わった履歴(テスト用)
     this.npc = null;                             // 管理人が乗っている({ to })
+    this.time = 0;                               // P5a: カゴの時計(EV の賭け: 管理人を乗せたカゴが止まった時刻)
+    this.npcStop = null;                         // P5a: { level, t } 管理人が最後に降りた階と時刻
     this._initAudio();
   }
 
@@ -111,6 +114,7 @@ export class Elevator {
   // ------------------------------------------------------------ 毎フレーム
   update(dt) {
     const c = this.car;
+    this.time += dt;
     const key = this.getLevel();
     const p = this.player.pos;
     const someoneInDoor = this.inDoorway(p.x, p.z, key) && key === c.level;
@@ -137,11 +141,16 @@ export class Elevator {
           this._sfx('chime');
           if (c.riding) { this.setLevel(c.level, { dy: levelY(c.level) - levelY(from) }); }
           c.riding = false;
-          c.state = 'opening'; this._sfx('door');
-          this.log('arrive', { from });
+          c.state = 'arrived'; c.lead = EV.chimeLead;
+          if (this.npc && !this.npc.ambush) this.npcStop = { level: c.level, t: this.time };   // P5a: EV の賭けの起点
+          this.log('arrive', { from, npc: !!this.npc });
         }
         break;
       }
+      case 'arrived':   // P5a: チャイムが鳴ってから扉が開き始めるまで
+        c.lead -= dt;
+        if (c.lead <= 0) { c.state = 'opening'; this._sfx('door'); }
+        break;
       case 'opening':
         c.open = Math.min(1, c.open + dt / EV.doorTime);
         if (c.open >= 1) { c.state = 'open'; c.hold = EV.hold; }
