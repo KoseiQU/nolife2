@@ -13,8 +13,8 @@
 //  6) 第6段: 220(鍵で開く)→ 荒れた部屋 → 正面玄関の鍵
 //  7) 第7段: 正面玄関(鍵スイッチの前は外側の自動ドアが開かない→鍵で開く)→ 駐車場の車 3 台(2 台は鍵・黒い車のグローブボックスに南京錠の鍵)
 //  8) 第8段: 410 の隔て板の南京錠(鍵なしでは越えられない→鍵で roofA)→ 屋上A の 705 の鍵
-//  9) 第9段: 705 → X705 → 地下の鉄扉の鍵 → 背後に管理人 → 追跡(EV は反応しない・管理人は階段で追う経路)→ 7F へ戻ると管理人も出てくる → 1F で第10段
-// 10) 第10段: 地下の鉄扉(鍵)→ XB1 → 車のキー(管理人は地下へ来ない)
+//  9) 第9段: 705 → X705(P5b-2b: 柱の広間。机まで歩く)→ 地下の鉄扉の鍵 → 灯りが消え、反対側(南)の出口から管理人 → 西の壁際を回って南の出口へ → 追跡(EV は反応しない・管理人は階段で追う経路)→ 7F へ戻ると管理人も出てくる → 1F で第10段
+// 10) 第10段: 地下の鉄扉(鍵)→ XB1 → 車のキー(管理人は地下へ来ない。P5b-2b: ループ・迷路は test_spaces.js、ここでは抜けたことにして作業場へ)
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
 // 13) 目標の文言が段ごとに変わり、章が変わる時だけ 2 秒強調される・持ち物の札
@@ -542,9 +542,9 @@ export async function run(N) {
     const noKey = tryLocked('705');
     S.item = '705';
     const ent = openAndEnter('705');
-    const D = N.spaces.def('X705');
+    const D = { ...N.spaces.def('X705'), x0: N.spaces.def('X705').origin[0] };
     const deskP = pk('kB1').pos;
-    walkTo(deskP.x - 0.75, deskP.z, 300);
+    walkTo(deskP.x, deskP.z - 0.95, 3000);   // P5b-2b: 入口から広間の中央の机の前まで
     const t0 = N.ai.time;
     const pickHint = pickAt(pk('kB1'));
     const objChase = (N.pump(DT, 2, false), N.hudState().objective);
@@ -553,11 +553,18 @@ export async function run(N) {
     const appear = N.ai.events.find((e) => e.t > t0 && e.ev === 'appear_705');
     const ePos = { x: N.enemyObj.pos.x, z: N.enemyObj.pos.z, lv: N.ai.level };
     const behind = appear && ePos.lv === 'X705' && Math.hypot(ePos.x - D.at('ambush').x, ePos.z - D.at('ambush').z) < 0.6;
-    // 逃げる: 出口へ走ると 7F の廊下へ(自動で戻る)
+    // 逃げる: P5b-2b 反転で出口は南の壁(管理人が現れた側)。西の壁際を回って南の出口へ走ると 7F の廊下へ(自動で戻る)
     while (N.viewLock.active) N.pump(DT, 1, false);
     let dead = false;
+    const ex = N.spaces.exits('X705')[0];
+    const path = [[D.x0 - 6, 29.5], [D.x0 - 13.7, 26], [D.x0 - 13.7, 46.0], [D.x0, 46.0], [ex.x, ex.z + 0.6]];
+    let wi = 0;
     key('ShiftLeft', true); key('KeyW', true);
-    for (let i = 0; i < 300 && N.level === 'X705'; i++) { face(D.exit.x, D.exit.z, 0); N.pump(DT, 1, false); if (N.ai.state === 'ATTACK') { dead = true; break; } }
+    for (let i = 0; i < 60 * 40 && N.level === 'X705' && wi < path.length; i++) {
+      const p = N.player.pos, [x, z] = path[wi];
+      if (Math.hypot(x - p.x, z - p.z) < 0.4) { wi++; continue; }
+      face(x, z, 0); N.pump(DT, 1, false); if (N.ai.state === 'ATTACK') { dead = true; break; }
+    }
     key('ShiftLeft', false); key('KeyW', false);
     waitTrans();
     const on7 = N.level === 7;
@@ -600,12 +607,17 @@ export async function run(N) {
     const noKey = tryLocked('B1DOOR');
     S.item = 'b1';
     const ent = openAndEnter('B1DOOR');
+    // P5b-2b: トンネルのループと迷路は test_spaces.js(B1_1〜3)。ここではループを抜けたことにして作業場へ移り、キーを取って踊り場から出る
+    const DB = N.spaces.debug('XB1'), ox = N.spaces.def('XB1').origin[0];
+    DB.release('test_story');
+    await tp('XB1', ox + 6, 77.4, Math.PI);
     walkTo(pk('kCar').pos.x, pk('kCar').pos.z - 0.8, 600);
     const pickHint = pickAt(pk('kCar'));
     const st = S.state();
     // 管理人は地下へ来ない(経路が無い)
     const routeB1 = N.ai._route(17.6, 23.5, 8.5, 1.45, 1, 'B1');
     const routeXB1 = N.ai._route(17.6, 23.5, 300, 3, 1, 'XB1');
+    await tp('XB1', ox - 3.1, 2.0, 0);
     const back = leave();
     const pass = noKey.toast === '鍵がかかっている' && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.level === 'XB1' && pickHint.includes('拾う')
       && st.stage === 11 && st.item === 'car' && N.hudState().objective === '駐車場の車で逃げろ' && routeB1.length === 0 && routeXB1.length === 0 && back.level === 'B1';
