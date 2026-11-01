@@ -401,34 +401,49 @@ export async function run(N) {
     return { pass, hintNoKey, toastNoKey, stillLocked, hintKey, open, hooks, keysOnFloor1: onlyKey, pickHint, stage: st.stage, item: st.item, events: evs(n0) };
   });
 
-  // ---------------------------------------------------------------- 3) 312 → X312 → 105 の鍵
+  // ---------------------------------------------------------------- 3) 312 → X312(無限の自室)→ R5 の机の 105 の鍵 → 312 の扉から 3F
   await T('3_312_space_key105', async () => {
     S.applyStage(3); quiet();
     await tp(3, ...front('312', 0.9), -Math.PI / 2);
     S.item = null;
     const noKey = tryLocked('312');
     S.item = '312';
-    const ent = openAndEnter('312');
+    // P5b-4: 戸口を越えたら止まる(X312 の入口の扉は真後ろ = 歩き続けると 312 の扉からすぐ出てしまう)
+    const ent = (() => {
+      const d = door('312');
+      face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
+      const hint = N.hudState().hint, n0 = S.logCount;
+      tap('KeyE'); N.pump(DT, 60, false);
+      const angle = +d.angle.toFixed(2);
+      key('KeyW', true);
+      for (let i = 0; i < 240 && !S.trans && N.level === 3; i++) { face(d.pos[0] + 0.6, d.pos[1], 0); N.pump(DT, 1, false); }
+      key('KeyW', false); waitTrans();
+      return { hint, angle, events: evs(n0), level: N.level };
+    })();
     const inSpace = N.level === 'X312';
-    // P5b-2a: X312 はプール(中身は tools/test_spaces.js)。通路を抜けて底の鍵まで潜る → 浮上 → 南の新しい入口から戻る
+    // P5b-4: X312 は無限の自室(中身は tools/test_spaces.js)。窓の扉を開けて R5 まで歩き、机の 105 の鍵 → 戻りの最後の部屋(B7)へ移して 312 の扉から出る
+    const SPX = N.spaces, D = SPX.debug('X312');
+    for (let i = 0; i < 200 && !D.ready(); i++) await new Promise((r) => setTimeout(r, 50));
+    const Wr = (i, tu, tz) => { const p = D.world(D.roomAt(i), tu, tz); return [p.x, p.z]; };
     const trace = [];
-    [[330.8, 4], [330.8, 12.6], [330.8, 16.4], [330.8, 23.0]].forEach(([x, z]) => { walkTo(x, z, 2000, 0.2); trace.push(pos()); });
-    const k = pk('k105');
-    key('ControlLeft', true);   // Ctrl = 312 の水中で潜る(P4a-2 でしゃがみは廃止)
-    let pickHint = '';
-    for (let i = 0; i < 240; i++) { face(k.pos.x, k.pos.z, -0.9); N.pump(DT, 1, false); const h = N.hudState().hint; if (h.includes('拾う')) { pickHint = h; break; } }
-    tap('KeyE');
+    for (let i = 0; i < 4; i++) {
+      walkTo(...Wr(i, 5.15, 1.45), 900, 0.12);
+      face(...Wr(i, 6, 1.45), 0); N.pump(DT, 2, false); tap('KeyE'); N.pump(DT, 50, false);
+      walkTo(...Wr(i, 6.9, 1.45), 900, 0.12); N.pump(DT, 30, false);
+      trace.push(D.state().room.id);
+    }
+    walkTo(...Wr(4, 4.42, 1.72), 900, 0.12);
+    const pickHint = pickAt(pk('k105'));
     const st = S.state();
-    N.pump(DT, 90, false);
-    key('ControlLeft', false);
-    N.pump(DT, 200, false);
-    [[330.8, 28.6], [330.8, 30.4], [330.8, 38.0]].forEach(([x, z]) => { walkTo(x, z, 3000, 0.2); trace.push(pos()); });
-    key('KeyW', true); for (let i = 0; i < 600 && N.level === 'X312' && !S.trans; i++) { face(330.8, 44.5, 0); N.pump(DT, 1, false); } key('KeyW', false);   // 戻りの扉の手前 0.45m を越えると出る
-    trace.push(pos());
-    waitTrans();
+    N.pump(DT, 30, false);
+    D.jump(7, 1.2, 1.45); N.pump(DT, 20, false);
+    trace.push(D.state().room.id);
+    key('KeyW', true);
+    for (let i = 0; i < 300 && !S.trans && N.level === 'X312'; i++) { face(...Wr(7, -0.5, 1.45), 0); N.pump(DT, 1, false); }   // 戸口の手前 0.45m を越えると出る
+    key('KeyW', false); waitTrans();
     const back = pos();
     const pass = noKey.toast === '鍵がかかっている' && noKey.angle < 0.01 && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.angle >= 0.45
-      && ent.events.includes('unlock_door') && ent.events.includes('enter_space') && inSpace && pickHint.includes('拾う') && st.stage === 4 && st.item === '105'
+      && ent.events.includes('unlock_door') && ent.events.includes('enter_space') && inSpace && trace.join() === 'R2,R3,R4,R5,B7' && pickHint.includes('拾う') && st.stage === 4 && st.item === '105'
       && back.level === 3 && Math.hypot(back.x - front('312', 0.9)[0], back.z - front('312', 0.9)[1]) < 0.1;
     return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back, trace };
   });
