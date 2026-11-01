@@ -9,6 +9,7 @@
 //  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
 //  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い。P3b-3: 内装のない部屋(空室 73・物語の部屋 5)の扉は開かない
+//     P5b-1: 空室 66 は開かない。入れる居室 35(220 を含む)と物語の扉 105・312・705・地下の鉄扉は開く(奥は別空間)
 //     (「開ける」が出ない・E で「鍵がかかっている」)、内装のある部屋の扉は開く、地下の鉄扉は開かない
 //  6) 1F 風除室: 内側の自動ドアは近づくと開く(P3c: 外側の正面玄関も開くようになった。外への出入りは 8 番)
 //  8) P3c 外観と外環境: 読み込み前後の負荷・屋上A/屋上B/エントランス前から見える・屋内の奥では描かない・敷地の境で止まる・玄関の出入り
@@ -70,8 +71,9 @@ export async function run(N) {
         for (const r of f.rooms) {
           if (r.kind !== 'unit' && r.id !== 'OFFICE' && r.id !== 'KITCHEN') continue;
           const dd = N.doorApi.get(r.id);
-          const want = !!(r.door.enterable && r.interior);
-          if (r.kind === 'unit') { units++; if (want) enter++; if (r.story) story++; }
+          // P5b-1: 見学モードでは物語の扉(105・312・705。奥は別空間)も開く(DESIGN P5b-1「見学モードでは全ての解放を真にし、仮空間にも入れる」)
+          const want = !!(r.door.enterable && r.interior) || ['105', '312', '705'].includes(r.id);
+          if (r.kind === 'unit') { units++; if (r.door.enterable && r.interior) enter++; if (r.story) story++; }
           if (!dd || dd.operable !== want) bad.push(r.id);
         }
       }
@@ -80,8 +82,8 @@ export async function run(N) {
       const pass = !inScene && st0.state === 'SCRIPTED' && JSON.stringify(st0.pos) === JSON.stringify(st1.pos)
         && !emptyHint.includes('開ける') && emptyToast.includes('鍵がかかっている') && !emptyOpened
         && roomHint.includes('開ける') && roomOpened
-        && bad.length === 0 && units === 104 && enter === 26 && story === 5
-        && !b1.operable && !!tag && tag.textContent === '見学モード';
+        && bad.length === 0 && units === 104 && enter === 35 && story === 4
+        && b1.operable && !!tag && tag.textContent === '見学モード';   // P5b-1: 入れる居室 26→35(221・220・6F の 7 室)、物語の部屋 5→4(221 は普通の部屋)、地下の鉄扉も見学では開く
       return { pass, enemyInScene: inScene, aiState: st0.state, aiMoved: JSON.stringify(st0.pos) !== JSON.stringify(st1.pos),
         empty407: { hint: emptyHint, toast: emptyToast, opened: emptyOpened }, room413: { hint: roomHint, opened: roomOpened },
         doors: { units, enterableUnits: enter, storyRooms: story, closedUnits: units - enter, mismatch: bad }, b1Operable: b1.operable, tag: tag && tag.textContent };

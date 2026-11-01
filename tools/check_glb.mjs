@@ -207,12 +207,14 @@ function checkFloor(N) {
         const ys = t.v.map((p) => p[1]);
         if (Math.max(...ys) - Math.min(...ys) < 0.1) continue;   // 幅木の上面など
         const cx = (t.v[0][0] + t.v[1][0] + t.v[2][0]) / 3, cz = (t.v[0][2] + t.v[1][2] + t.v[2][2]) / 3;
-        const r = walled.find((rr) => cx > rr.rect[0] - 0.2 && cx < rr.rect[0] + rr.rect[2] + 0.2 && cz > rr.rect[1] - 0.2 && cz < rr.rect[1] + rr.rect[3] + 0.2);
-        if (!r) continue;   // 管理室の受付の小窓の見込みなど(部屋の外側)
-        const [x, z, w, d] = r.rect, t2 = GEOM.WALL_T / 2;
-        const planes = { x: [x + t2, x + w - t2], z: [z + t2, z + d - t2] };
+        // P5b-1: 隣り合う入れる部屋(221/220・601/602 など)では、隣の部屋の壁の面も ±0.2m に入るので、いちばん近い部屋の面で測る
+        const cands = walled.filter((rr) => cx > rr.rect[0] - 0.2 && cx < rr.rect[0] + rr.rect[2] + 0.2 && cz > rr.rect[1] - 0.2 && cz < rr.rect[1] + rr.rect[3] + 0.2);
+        if (!cands.length) continue;   // 管理室の受付の小窓の見込みなど(部屋の外側)
         const pl = t.v[0][axis === 'x' ? 0 : 2];
-        const dev = Math.min(...planes[axis].map((q) => Math.abs(q - pl)));   // 幅木の前面(1.2cm 出る)も許容内
+        const t2 = GEOM.WALL_T / 2;
+        const devOf = (rr) => { const [x, z, w, d] = rr.rect; const planes = { x: [x + t2, x + w - t2], z: [z + t2, z + d - t2] }; return Math.min(...planes[axis].map((q) => Math.abs(q - pl))); };
+        const r = cands.reduce((a, b) => (devOf(b) < devOf(a) ? b : a));
+        const dev = devOf(r);   // 幅木の前面(1.2cm 出る)も許容内
         if (dev > 0.15) continue;   // 部屋の外の見込み
         rmMax = Math.max(rmMax, dev); rmFaces++;
         if (dev > 0.02) { fail(`F${N}: ${r.id} の内装の壁の面が部屋の矩形の内側の面からずれている(${axis}=${pl.toFixed(3)})`); break; }
