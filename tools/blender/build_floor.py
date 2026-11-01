@@ -601,9 +601,14 @@ def build_door(dd, col, base_y=None, zsets=('floor',)):
     zin = zone_at(px - fx * 0.2, pz - fz * 0.2, sets=zsets)
     top_in = (zin['y1'] - y0) if zin else CEIL_H
     zout = zone_at(px + fx * 0.2, pz + fz * 0.2, sets=zsets)
-    top = max(top_in, (zout['y1'] - y0) if zout else CEIL_H)
-    lin.box((gx0, y0 + DOOR_H + HEAD_H, gz0), (gx1, y0 + top, gz1), 'M_WallDamp' if base_y is not None else 'M_Wall',
-            keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03, sets=zsets) is not None)
+    top_out = (zout['y1'] - y0) if zout else CEIL_H
+    top = max(top_in, top_out)
+    # P5b-3: 両側の天井の高さが違う扉(シアターの内扉: 前室 2.4m / 室内 2.8m)は垂れ壁を低い天井で 2 段に分ける
+    #  (1 枚の面だと面の中心が低い側の天井より上になり、低い側の面が張られなかった)
+    lin_ys = [DOOR_H + HEAD_H] + ([min(top_in, top_out)] if abs(top_in - top_out) > 1e-3 else []) + [top]
+    for ya, yb in zip(lin_ys[:-1], lin_ys[1:]):
+        lin.box((gx0, y0 + ya, gz0), (gx1, y0 + yb, gz1), 'M_WallDamp' if base_y is not None else 'M_Wall',
+                keep=lambda k, c, n: k != '+y' and zone_at(c[0] + n[0] * 0.03, c[2] + n[2] * 0.03, c[1] + n[1] * 0.03, sets=zsets) is not None)
     # 垂れ壁の材質を面ごとの空気に合わせる
     lin_ob = lin.finish(col, {'n2_kind': 'lintel', 'n2_room': rid})
     if lin_ob and base_y is None:

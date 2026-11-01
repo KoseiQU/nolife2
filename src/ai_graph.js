@@ -69,7 +69,9 @@ export function buildAIGraph(building) {
     if (lv === 1) {
       add(1, 'DN', 6.9, 9.0); add(1, 'NP', 6.9, 1.2);
       doorLink(1, top, nodeId(1, 'DN'), 'DINING'); link(nodeId(1, 'DN'), nodeId(1, 'NP'));
-      add(1, 'TH', 9.0, 24.6); doorLink(1, nearestH(9.0), nodeId(1, 'TH'), 'THEATER');
+      // P5b-3: シアターは前室を挟む二重扉(廊下 →THEATER_V の外扉→ 前室 TV →THEATER の内扉→ 室内 TH)
+      add(1, 'TV', 9.0, 22.8); doorLink(1, nearestH(9.0), nodeId(1, 'TV'), 'THEATER_V');
+      add(1, 'TH', 9.0, 24.6); doorLink(1, nodeId(1, 'TV'), nodeId(1, 'TH'), 'THEATER');
       add(1, 'LB', 17.6, 23.5); link(nearestH(17.6), nodeId(1, 'LB'));
       add(1, 'WB', 17.6, 26.6); doorLink(1, nodeId(1, 'LB'), nodeId(1, 'WB'), 'ENTRANCE');
     } else if (lv <= 3) {

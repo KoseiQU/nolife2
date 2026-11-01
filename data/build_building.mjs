@@ -307,6 +307,14 @@ const C1F = {
   windbreakZ: SOUTH_ROOM_Z0 + 3.2, // ロビーと風除室の境(内側の自動ドア)。風除室の奥行 2.8m
   autoDoorW: 1.8,                 // 自動ドアの開口(ガラス2枚)
   mailOpen: [1.4, 2.0],           // メールコーナーの口(風除室の北端からの中心位置, 幅)
+  // P5b-3(DESIGN §2 ③④ 2026-11-01): シアターの前室(扉 2 枚が続く。鉄枠のガラス扉)と段床・天井
+  theaterDoorX: EAST_COL_X0 + 1.2,  // 扉の中心 x(前室の外扉・内扉とも同じ線上)
+  vestW: 2.4,                       // 前室の幅(西の壁から)
+  vestD: 1.4,                       // 前室の奥行 = 2 枚の扉の間隔(1.2〜1.6m)
+  theaterCeil: 2.8,                 // シアター(前室を除く)の天井高。段床の最上段(0.9m)に立っても目線(1.62m)が天井に届かない
+  // 段床: 西の通路(壁際 1.04m は平ら)を残して東の壁まで。北(スクリーン側)から 3 段上がる [z0, z1, 高さ]
+  tierX: [EAST_COL_X0 + 1.1, 14.0],
+  tiers: [[25.0, 26.0, 0.3], [26.0, 27.0, 0.6], [27.0, SOUTH_ROOM_Z1, 0.9]],
 };
 
 // 1F共用部(図面: 西棟北端に厨房+食堂、南棟南面は西からシアター/メール/ロビー・風除室/管理室)
@@ -334,10 +342,19 @@ function commonAreas1F() {
   //   → ロビー(廊下に大きく開いた石目タイルのホール) → 風除室(ロビーの南。内側=北の自動ドア・外側=南の正面玄関の自動ドア。
   //   どちらも透明ガラス2枚が左右反対方向へ開く) → 管理室(幅≈2.4m。風除室の東壁に受付の小窓)。管理室の東は屋外(図面の柱列)。
   //   旧データは4等分(各4.35m)で、メールコーナーが廊下に扉を持っていた。
+  // P5b-3(DESIGN §2 ②): シアターの入口は鉄枠のガラス扉が 2 枚続く前室。外扉 = THEATER_V(廊下→前室)、内扉 = THEATER(前室→室内)。
+  //  前室は室の北西の角の矩形(幅 vestW × 奥行 vestD)。THEATER の矩形は従来どおり室全体(前室を含む。壁は前室の矩形の東・南の壁が仕切る)
   rooms.push({
     id: 'THEATER', kind: 'multi',
     rect: [C1F.theater[0], SOUTH_ROOM_Z0, C1F.theater[1] - C1F.theater[0], ROOM_D],
-    door: { pos: [C1F.theater[0] + 1.2, SOUTH_CORR_Z1], facing: 'N', locked: false, common: true },
+    door: { pos: [C1F.theaterDoorX, SOUTH_ROOM_Z0 + C1F.vestD], facing: 'N', locked: false, common: true, glazed: 'steel' },
+    tiers: C1F.tiers.map(([z0, z1, h]) => ({ rect: [C1F.tierX[0], z0, C1F.tierX[1] - C1F.tierX[0], z1 - z0], h })),
+  });
+  rooms.push({
+    id: 'THEATER_V', kind: 'vestibule',
+    rect: [C1F.theater[0], SOUTH_ROOM_Z0, C1F.vestW, C1F.vestD],
+    door: { pos: [C1F.theaterDoorX, SOUTH_CORR_Z1], facing: 'N', locked: false, common: true, glazed: 'steel' },
+    openings: [{ side: 'S', pos: [C1F.theaterDoorX, SOUTH_ROOM_Z0 + C1F.vestD], width: 0.9 }],   // 内扉(THEATER の扉)の開口
   });
   rooms.push({
     id: 'MAILBOX', kind: 'lobby',
@@ -613,7 +630,11 @@ function shellFor(level, inv, scEnd, rooms) {
     // 地下への階段(1F の部分): 踊り場は館内と同じ仕上げ、下り口から先は床なし(bwell。天井は 1F の天井高)
     A('bst_landing', BST_GEOM.landing, 'room');
     A('bst_well', [BST_GEOM.s0, BST_RECT[1], BST_RECT[0] + BST_RECT[2] - BST_GEOM.s0, BST_RECT[3]], 'bwell');
-    A('theater', [C1F.theater[0], SOUTH_ROOM_Z0, C1F.theater[1] - C1F.theater[0], ROOM_D], 'theater');
+    // P5b-3: シアター = 前室(天井 2.4m)＋室内(天井 2.8m。段床の最上段に立てる高さ)。室内は前室の南と東の 2 矩形
+    const tx0 = C1F.theater[0], tw = C1F.theater[1] - C1F.theater[0], vz1 = SOUTH_ROOM_Z0 + C1F.vestD;
+    A('theater_v', [tx0, SOUTH_ROOM_Z0, C1F.vestW, C1F.vestD], 'theater');
+    A('theater', [tx0, vz1, tw, SOUTH_ROOM_Z1 - vz1], 'theater', { ceil: C1F.theaterCeil });
+    A('theater_n', [tx0 + C1F.vestW, SOUTH_ROOM_Z0, tw - C1F.vestW, C1F.vestD], 'theater', { ceil: C1F.theaterCeil });
     A('mail', [C1F.mail[0], SOUTH_ROOM_Z0, C1F.mail[1] - C1F.mail[0], ROOM_D], 'lobby');
     A('lobby', [C1F.lobby[0], SOUTH_ROOM_Z0, C1F.lobby[1] - C1F.lobby[0], C1F.windbreakZ - SOUTH_ROOM_Z0], 'lobby');
     A('windbreak', [C1F.lobby[0], C1F.windbreakZ, C1F.lobby[1] - C1F.lobby[0], SOUTH_ROOM_Z1 - C1F.windbreakZ], 'lobby');
@@ -655,7 +676,7 @@ function shellFor(level, inv, scEnd, rooms) {
   }
   if (level === 1) {
     exits.push({ room: 'DINING', pos: [VCORR_CX, 11.6], facing: 'N', inside: true });
-    exits.push({ room: 'THEATER', pos: [C1F.theater[0] + 1.2, SOUTH_ROOM_Z0], facing: 'S', inside: true });
+    exits.push({ room: 'THEATER', pos: [C1F.theaterDoorX, SOUTH_ROOM_Z0 + C1F.vestD], facing: 'S', inside: true });   // P5b-3: 内扉の上(室内側)
   }
   // ゲーム内で開閉できる扉(それ以外の扉は施錠のまま開かない)
   const operable = rooms.filter((r) => r.door && (r.door.steel || r.door.common || r.door.enterable)).map((r) => r.id);
@@ -1247,7 +1268,11 @@ function build() {
         const a = rs[i].rect, c = rs[j].rect;
         const ox = Math.min(a[0] + a[2], c[0] + c[2]) - Math.max(a[0], c[0]);
         const oz = Math.min(a[1] + a[3], c[1] + c[3]) - Math.max(a[1], c[1]);
-        if (ox > 0.05 && oz > 0.05) {
+        // P5b-3: シアターの前室(THEATER_V)は THEATER の矩形の中の入れ子(前室の東・南の壁が仕切る)。他は重ならない
+        const nested = (r, q) => r.id === q.id + '_V' && r.kind === 'vestibule'
+          && r.rect[0] >= q.rect[0] - 1e-6 && r.rect[1] >= q.rect[1] - 1e-6
+          && r.rect[0] + r.rect[2] <= q.rect[0] + q.rect[2] + 1e-6 && r.rect[1] + r.rect[3] <= q.rect[1] + q.rect[3] + 1e-6;
+        if (ox > 0.05 && oz > 0.05 && !nested(rs[i], rs[j]) && !nested(rs[j], rs[i])) {
           throw new Error(`ASSERT失敗: F${f.level} 部屋重なり ${rs[i].id}×${rs[j].id}`);
         }
       }
