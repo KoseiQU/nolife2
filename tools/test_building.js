@@ -5,6 +5,7 @@
 //  2) 各階の扉数(居室)= 図面の号室数。GLB の号室プレート・EV 扉・外階段の鉄扉が結び付いている
 //  3) EV: 4F で呼ぶ→カゴが来て開く→歩いて乗る→7 を押す→7F で開く→歩いて降りる。閉じた扉は通れない
 //  3c) P3b-A: 階数表示がカゴの現在地に追従(1→2→3→4、▲)。カゴの天井は常時点灯。管理人の EV 移動でも表示が動く
+//  3d) P5b-3: EV で 1F→4F に乗って移動中(扉が閉まってから開くまで)、画面中央と四隅の平均輝度が出発時の ±15% 以内(毎フレーム)
 //  4) 外階段: 4F の鉄扉→踊り場→上る(5F,6F,7F,屋上B)→屋上を歩く(落ちない)→下る(…→1F)。段の手前の当たりで階段へ踏み外さない
 //  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
@@ -14,6 +15,7 @@
 //  6) 1F 風除室: 内側の自動ドアは近づくと開く(P3c: 外側の正面玄関も開くようになった。外への出入りは 8 番)
 //  8) P3c 外観と外環境: 読み込み前後の負荷・屋上A/屋上B/エントランス前から見える・屋内の奥では描かない・敷地の境で止まる・玄関の出入り
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
+//  11) P5b-3: 食堂のガラス扉・シアターの二重扉(前室)を E で開けて通る・段床を登る・管理人が 2 枚を抜けて来る
 //  10) P3c-2 廊下端の窓: 各窓の正面でガラスが透明・開口が抜けている・外を描く・窓越しに外が見える(画素の差)・1フレームの時間
 
 const DT = 1 / 60;
@@ -25,7 +27,9 @@ export async function run(N) {
   pre.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9;color:#9fe39f;background:rgba(0,0,0,.75);font:11px/1.35 monospace;padding:8px;max-width:46vw;max-height:94vh;overflow:auto;white-space:pre-wrap;';
   document.body.appendChild(pre);
   const show = () => { pre.textContent = JSON.stringify(out, null, 1); };
+  const ONLY = new URLSearchParams(location.search).get('only');   // P5b-3: ?test=building&only=11 で番号の前方一致だけ走らせる(調整用)
   const T = async (name, fn) => {
+    if (ONLY && !name.startsWith(ONLY)) return;
     try { const r = await fn(); out.cases[name] = r; if (!r.pass) out.ok = false; }
     catch (e) { out.cases[name] = { pass: false, error: String(e && e.stack || e) }; out.ok = false; }
     show();
@@ -234,6 +238,49 @@ export async function run(N) {
       && ceilingLitIdle && sub(floors2, want2) && floors2[floors2.length - 1] === 6 && npcRode && ai.level === 4 && evs.some((e) => e.startsWith('transfer_end:ev'));
     return { pass, call4: { floors: floors1, arrowsUpWhileMoving: arrows1, texStart: startTex, texEnd: endTex, sec: +t.toFixed(1) }, ceilingLitIdle,
       managerRide2to6: { floors: floors2, npcRode, events: evs, sec: +t2.toFixed(1) } };
+  });
+
+  await T('3d_ev_ride_no_blackout', async () => {
+    // P5b-3(DESIGN §2 ④): EV で 1F→4F に乗って移動している間(扉が閉まってから開き始めるまで)、画面中央と四隅の平均輝度が
+    // 出発時(扉が閉まり切った最初のフレーム)の ±15% 以内(毎フレーム)。旧: 出発階が解放されて移動中は何も描かれなかった
+    const ev = N.elevator;
+    const g = ev.rooms[1].geom;
+    await N.teleport(1, g.center[0], g.center[1] + 0.2, Math.PI, -0.05); await settle('1,2');   // カゴの奥の壁を向く
+    N.pump(DT, 30, false);
+    Object.assign(ev.car, { level: 1, state: 'idle', open: 0, hold: 0, pending: [], riding: false, to: null });
+    N.pump(DT, 4, false);
+    const gl = N.renderer.getContext();
+    const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight, S = 24;
+    const px = new Uint8Array(4 * S * S);
+    const pts = [[0.5, 0.5], [0.1, 0.1], [0.9, 0.1], [0.1, 0.9], [0.9, 0.9]];
+    const lum = () => pts.map(([u, v]) => {
+      gl.readPixels(Math.floor(u * W) - S / 2, Math.floor(v * H) - S / 2, S, S, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let s = 0; for (let i = 0; i < px.length; i += 4) s += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+      return s / (S * S);
+    });
+    const avg = (a) => a.reduce((s, v) => s + v, 0) / a.length;
+    ev.select(4);
+    let base = null, worst = 0, worstAt = null, frames = 0, t = 0;
+    const lv0 = [];
+    while (t < 40) {
+      N.pump(DT, 1, true);
+      t += DT;
+      const st = ev.car.state;
+      if (st === 'opening' || st === 'open') break;
+      if (st === 'idle' || st === 'closing') continue;     // まだ扉が開いている/閉まりかけ
+      const L = lum();
+      if (!base) base = L;
+      frames++;
+      for (let i = 0; i < 5; i++) {
+        const r = Math.abs(L[i] - base[i]) / Math.max(base[i], 1);
+        if (r > worst) { worst = r; worstAt = { frame: frames, i, base: +base[i].toFixed(1), now: +L[i].toFixed(1), state: st, level: N.level, loaded: N.world.loadedLevels().join(',') }; }
+      }
+      if (frames % 20 === 1) lv0.push(N.world.loadedLevels().join(','));
+      if (N.world.loadedLevels().indexOf(4) < 0) await sleep(0);   // 行き先の読み込みを進める
+    }
+    const arrived = N.level === 4 && ev.car.level === 4;
+    const pass = arrived && !!base && frames > 200 && worst <= 0.15 && avg(base) > 20;
+    return { pass, arrived, frames, base: base && base.map((v) => +v.toFixed(1)), worstRatio: +worst.toFixed(3), worstAt, loadedDuringRide: [...new Set(lv0)] };
   });
 
   // 外階段の口に立って段の方を向き W(上り下りが終わるまで)
@@ -585,6 +632,79 @@ export async function run(N) {
       }
     }
     return { pass, windows: res, rule: 'ア glass op<0.3・奥 0.4m に壁なし / イ shown / ウ 窓の領域の 5% 超が変わる / エ 4F ≤ 16.7ms' };
+  });
+
+  await T('11_theater_double_door', async () => {
+    // P5b-3(DESIGN §2 ①〜③): 食堂の扉 = ガラス扉。シアター = 鉄枠のガラス扉 2 枚の前室(間隔 1.2〜1.6m)。
+    //  E で 2 枚とも開く・閉じた扉は通れない・段床を登れる(最上段でも目線が天井より下)・管理人が 2 枚を抜けて室内へ来る
+    const Dv = N.doorApi.get('THEATER_V'), Dt = N.doorApi.get('THEATER'), Dd = N.doorApi.get('DINING');
+    const gap = Dv && Dt ? +Math.abs(Dt.pos[1] - Dv.pos[1]).toFixed(2) : null;
+    await N.teleport(1, 9.0, 21.0, Math.PI); await settle('1,2');
+    N.pump(DT, 10, false);
+    // ガラス: 扉板の子の MX_CorrGlass(半透明)
+    const glassOf = (d) => { let m = null; if (d && d.node) d.node.traverse((o) => { if (o.isMesh && o.material && o.material.name === 'MX_CorrGlass') m = o.material; }); return m ? { opacity: +m.opacity.toFixed(2), transparent: m.transparent } : null; };
+    const glass = { DINING: glassOf(Dd), THEATER_V: glassOf(Dv), THEATER: glassOf(Dt) };
+    const glassOk = Object.values(glass).every((g) => g && g.transparent && g.opacity < 0.3);
+    for (const id of ['THEATER_V', 'THEATER']) N.doorApi.close(id);
+    N.pump(DT, 90, false);
+    // a) 閉じた外扉は通れない
+    const walk = (sec, codes = ['KeyW']) => { for (const c of codes) key(c, true); let t = 0; while (t < sec) { N.pump(DT, 1, false); t += DT; } for (const c of codes) key(c, false); N.pump(DT, 2, false); };
+    N.setView(9.0, 21.4, Math.PI, 0); N.pump(DT, 2, false);
+    walk(1.2);
+    const blockedZ = +N.player.pos.z.toFixed(2);
+    // b) E で外扉 → 前室へ → E で内扉 → 室内へ
+    N.setView(9.0, 21.4, Math.PI, 0); N.pump(DT, 2, false);
+    const hintV = N.hudState().hint;
+    tap('KeyE'); N.pump(DT, 90, false);
+    const openV = N.doorApi.isOpen('THEATER_V');
+    walk(1.0);
+    const inVest = +N.player.pos.z.toFixed(2);
+    N.setView(9.0, Math.min(N.player.pos.z, 22.85), Math.PI, 0); N.pump(DT, 2, false);
+    const hintT = N.hudState().hint;
+    tap('KeyE'); N.pump(DT, 90, false);
+    const openT = N.doorApi.isOpen('THEATER');
+    walk(1.2);
+    const inRoom = +N.player.pos.z.toFixed(2);
+    // c) 段床を登る(南へ歩く)。足元の高さ・目線と天井
+    N.setView(10.0, 24.7, Math.PI, 0); N.pump(DT, 2, false);   // 最前列のソファ(x 10.7〜)の西
+    let maxLift = 0, maxEye = 0;
+    key('KeyW', true);
+    for (let i = 0; i < 200; i++) { N.pump(DT, 1, false); maxLift = Math.max(maxLift, N.player.pos.y); maxEye = Math.max(maxEye, N.camera.position.y); }
+    key('KeyW', false); N.pump(DT, 2, false);
+    const topZ = +N.player.pos.z.toFixed(2);
+    N.setView(10.0, 27.6, 0, 0); N.pump(DT, 2, false);   // 北へ下りる
+    walk(3.0);
+    const downLift = +N.player.pos.y.toFixed(2);
+    // d) 管理人: 2 枚とも閉じた状態から、廊下 → 外扉 → 前室 → 内扉 → 室内(段床の脇の隠れ場所の近く)へ
+    for (const id of ['THEATER_V', 'THEATER']) N.doorApi.close(id);
+    N.pump(DT, 90, false);
+    N.setView(6.9, 8.0, 0, 0);    // プレイヤーは食堂(見えない・聞こえない所)
+    N.pump(DT, 2, false);
+    const ai = N.ai;
+    ai.reset(12.5, 21.2, -Math.PI / 2, 1);
+    const ev0 = ai.events.length;
+    ai.lastKnown = { x: 9.6, z: 25.4, lv: 1 };
+    ai.setState('ALERT', { force: true, log: true, react: false });
+    let t2 = 0, reached = false, passedV = false, passedT = false;
+    while (t2 < 60) {
+      N.pump(DT, 1, false); t2 += DT;
+      const e = N.enemyObj.pos;
+      if (ai.level === 1 && e.z > 22.3 && e.z < 23.4 && e.x < 10.2) passedV = true;
+      if (passedV && ai.level === 1 && e.z > 23.7 && e.x < 14.0) { passedT = true; }
+      if (passedT && e.z > 24.2) { reached = true; break; }
+    }
+    const doorEvs = ai.events.slice(ev0).filter((e) => /door/.test(e.ev)).map((e) => `${e.ev}:${e.door || e.room || ''}`).slice(0, 12);
+    const enemyAt = { x: +N.enemyObj.pos.x.toFixed(2), z: +N.enemyObj.pos.z.toFixed(2), state: ai.state };
+    ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4);
+    ai.setState('SCRIPTED', { force: true });
+    for (const id of ['THEATER_V', 'THEATER']) N.doorApi.close(id);
+    const y1 = 0;   // 1F の床
+    const pass = !!Dv && !!Dt && Dv.operable && Dt.operable && gap >= 1.2 && gap <= 1.6 && glassOk
+      && blockedZ < 22.0 && openV && inVest > 22.3 && inVest < 23.4 && openT && inRoom > 23.7
+      && Math.abs(maxLift - (y1 + 0.9)) < 0.02 && maxEye < y1 + 2.8 - 0.1 && topZ > 27.0 && downLift < y1 + 0.02
+      && reached;
+    return { pass, gap, glass, blockedZ, hintV, openV, inVest, hintT, openT, inRoom, maxLift: +maxLift.toFixed(2), maxEye: +maxEye.toFixed(2), topZ, downLift,
+      manager: { reached, passedV, passedT, sec: +t2.toFixed(1), enemyAt, doorEvs } };
   });
 
   await N.teleport(4, 6.9, 7.6, Math.PI);
