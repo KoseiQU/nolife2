@@ -17,8 +17,16 @@ import { extShade, corrGlass } from './exterior.js';
 
 export const FH = GEOM.FLOOR_H;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7];
-export const levelY = (k) => (k === 'RB' ? 7 : k === 'B1' ? -1 : k === 'G' ? 0 : k - 1) * FH;
-export const glbLevel = (k) => (k === 'RB' ? 7 : k === 'B1' || k === 'G' ? 1 : k);
+// P5b-1: 物語の別空間(異世界 4 空間の差し替え口。今は仮の小部屋 = src/spaces.js)。階キー 'X105'・'X312'・'X705'・'XB1'。
+//  床の高さは建物から遠く離した SPACE_Y(見た目も当たりも建物と重ならない)。読み込む階の GLB は入口の扉のある階(戻った時にすぐ見えるよう)
+export const SPACE_KEYS = ['X105', 'X312', 'X705', 'XB1'];
+export const SPACE_HOST = { X105: 1, X312: 3, X705: 7, XB1: 1 };
+export const SPACE_Y = -60;
+export const isSpace = (k) => typeof k === 'string' && k[0] === 'X';
+export const levelY = (k) => (isSpace(k) ? SPACE_Y : (k === 'RB' ? 7 : k === 'B1' ? -1 : k === 'G' ? 0 : k - 1) * FH);
+export const glbLevel = (k) => (isSpace(k) ? SPACE_HOST[k] : k === 'RB' ? 7 : k === 'B1' || k === 'G' ? 1 : k);
+// P5b-1: 鍵で開く物語の扉(血の扉 4 枚＋地下の鉄扉)。扉板は結合せず別ノードに残す(開く・血のデカールを扉板に付けて一緒に回す)
+export const STORY_DOOR_IDS = new Set(['105', '220', '312', '705', 'B1DOOR']);
 export const FACING_N = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
 
 const box = (minX, minZ, maxX, maxZ, kind, roomId = null, y0 = 0, y1 = GEOM.CEIL_H) => ({ minX, maxX, minZ, maxZ, y0, y1, kind, roomId, disabled: false });
@@ -121,6 +129,7 @@ export class World {
     this.maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.keys = [...LEVELS, 'RB', 'B1', 'G'];
     this.cols = new Map(this.keys.map((k) => [k, buildLevelCollisions(this.building, k)]));
+    for (const k of SPACE_KEYS) this.cols.set(k, []);   // P5b-1: 別空間の当たり(spaces.js が中身を入れる)
     this.floors = new Map();       // level → { state:'loading'|'ready', promise, group, lightMap, mats:Set, geoms:[] }
     this.texCache = new Map();
     this.doors = [];
@@ -462,6 +471,7 @@ export class World {
         if (u.n2_kind === 'winsash' && u.n2_operable) return true;
         if ((u.n2_kind === 'door' || u.n2_kind === 'autodoor') && u.n2_operable) return true;
         if (u.n2_kind === 'door' && this.lurkableIds.has(String(u.n2_room))) return true;   // P5a: 空室の扉板(揺れ・開閉・壊れ)
+        if (u.n2_kind === 'door' && STORY_DOOR_IDS.has(String(u.n2_room))) return true;     // P5b-1: 鍵で開く物語の扉
       }
       return false;
     };
@@ -498,7 +508,7 @@ export class World {
     rec.binds = [];   // P3b: 掃き出し窓の障子・クローゼットの折戸・ロッカーの扉(rooms.js が状態に結び付ける)
     rec.group.traverse((o) => {
       const u = o.userData;
-      if (u.n2_kind === 'door' && (u.n2_operable || this.lurkableIds.has(String(u.n2_room)))) {
+      if (u.n2_kind === 'door' && (u.n2_operable || this.lurkableIds.has(String(u.n2_room)) || STORY_DOOR_IDS.has(String(u.n2_room)))) {
         const d = this.doorById.get(String(u.n2_room));
         if (d) { d.node = o; o.rotation.order = 'YXZ'; d.nodeBase = o.position.clone(); this._poseLeaf(d); }
       } else if (u.n2_kind === 'autodoor' && u.n2_operable) {
