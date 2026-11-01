@@ -24,7 +24,9 @@ export async function run(N) {
   pre.style.cssText = 'position:fixed;left:8px;top:8px;z-index:10;color:#9fe39f;background:rgba(0,0,0,.78);font:11px/1.35 monospace;padding:8px;max-width:46vw;max-height:94vh;overflow:auto;white-space:pre-wrap;';
   document.body.appendChild(pre);
   const show = () => { pre.textContent = JSON.stringify(out, null, 1); };
+  const ONLY = new URLSearchParams(location.search).get('only');   // 開発用: ?only=1,14 で番号の一致するものだけ
   const T = async (name, fn) => {
+    if (ONLY && !ONLY.split(',').includes(name.split('_')[0])) return;
     try { const r = await fn(); out.cases[name] = r; if (!r.pass) out.ok = false; }
     catch (e) { out.cases[name] = { pass: false, error: String(e && e.stack || e) }; out.ok = false; }
     show();
@@ -540,6 +542,85 @@ export async function run(N) {
     const c = N.hudState();
     const pass = a.objective === '312号室へ' && a.objectiveEm && !b.objectiveEm && b.objective === '312号室へ' && a.item === '鍵　312' && c.objective === '105号室へ' && c.objectiveEm && c.item === '鍵　105';
     return { pass, start: a, after25s: b, next: c };
+  });
+
+  // ---------------------------------------------------------------- 14) 追跡中に外階段で階を変えてもフリーズしない(P5b-1b 差し戻し 1)
+  //  実機の再現手順: 2F の廊下を EV ホールへ走って逃げる → 外階段の鉄扉 MST2(6.5, 21.2 で E)→ 踊り場 → 下りの段 → 1F。管理人は追跡中。
+  //  直す前: 段の途中(折り返しで XZ が踊り場の真下)のプレイヤーを踊り場の管理人が襲い、段が進んで空振り → 襲撃ムービーが残り視点が
+  //  管理人の顔に固定されたまま(操作不能)。段の途中で殺されると復帰後も段へ引き戻された。
+  await T('14_chase_outer_stairs_no_freeze', async () => {
+    S.applyStage(3); quiet();
+    N.setFlashlight(true);
+    await tp(2, 12.0, 21.2, Math.PI / 2);
+    // 管理人を東 6m に出して追わせる(視点固定なし)
+    N.ai.appear({ level: 2, x: 18.0, z: 21.2, lock: 0, recover: 0.3, slow: 0 });
+    N.pump(DT, 30, false);
+    const chasing0 = N.ai.state === 'CHASE';
+    const frame0 = N.renderer.info.render.frame;
+    let attackOnStairs = false, maxGapAttack = 0, onStairs = false, dead = false;
+    const watch = () => {
+      if (N.stairs.active) onStairs = true;
+      if (N.ai.state === 'ATTACK') { const gap = Math.abs(N.player.pos.y - (N.ai.level - 1) * 2.9); maxGapAttack = Math.max(maxGapAttack, gap); if (N.stairs.active) attackOnStairs = true; }
+      if (N.deathState()) dead = true;
+    };
+    walkTo(7.2, 21.2, 600, 0.2, true); watch();
+    N.setView(6.5, 21.2, Math.PI / 2, 0); N.pump(DT, 2, false);
+    const doorHint = N.hudState().hint;
+    tap('KeyE'); N.pump(DT, 16, false); watch();
+    const st = N.building.stairs.find((q) => q.id === 'main'), g = st.geom;
+    const lane = (g.lanes.down[0] + g.lanes.down[1]) / 2;
+    walkTo(5.6, 21.2, 300, 0.2, true); watch();
+    // 段の口へ歩き、そのまま W で下りる(着くまで)
+    key('KeyW', true); key('ShiftLeft', true);
+    for (let i = 0; i < 60 * 14 && N.level === 2; i++) { if (!N.stairs.active) face(lane, g.s0 + 0.5, 0); N.pump(DT, 1, false); watch(); if (dead) break; }
+    key('KeyW', false); key('ShiftLeft', false);
+    N.pump(DT, 30, false); watch();
+    const arrived = N.level === 1;
+    const afterArrive = { frozen: N.player.frozen, movie: N.movie.active, viewLock: N.viewLock.active, stairs: !!N.stairs.active };
+    // 歩ける
+    // 4 方向に 0.5 秒ずつ歩いて、いちばん進んだ距離(壁に向いていても判定できるように。歩き 1.6 m/s × 0.5 秒 = 0.8m)
+    const walk1 = () => { let best = 0; for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) { const p0 = N.player.pos.clone(); N.setView(p0.x, p0.z, yaw, 0); key('KeyW', true); N.pump(DT, 30, false); key('KeyW', false); N.pump(DT, 2, false); best = Math.max(best, Math.hypot(N.player.pos.x - p0.x, N.player.pos.z - p0.z)); } return +best.toFixed(2); };
+    const moved = walk1();
+    // 視点がプレイヤーの目に戻っている(襲撃ムービーが残ると FOV 44°・カメラが管理人の顔の前に固定されたまま)
+    const camOK = () => Math.hypot(N.camera.position.x - N.player.pos.x, N.camera.position.z - N.player.pos.z) < 0.1 && Math.abs(N.camera.fov - 68) < 0.5;
+    const cam1 = camOK();
+    // 管理人を踊り場(2F)の段の口に置いても、1F に着いた・段の下の方のプレイヤーを襲わない
+    // 本物のループ(rAF)が止まっていない: 実時間 0.4 秒で描画の通し番号が進む
+    N.paused = false; await new Promise((r) => setTimeout(r, 400)); N.paused = true;
+    const frame1 = N.renderer.info.render.frame;
+    // 段の途中で死ぬ → 復帰後に段へ引き戻されず、歩ける
+    S.applyStage(3); quiet(); N.setFlashlight(false);
+    await tp(2, 5.2, 21.2, Math.PI);
+    key('KeyW', true);
+    for (let i = 0; i < 60 * 3 && !N.stairs.active; i++) { face(lane, g.s0 + 0.5, 0); N.pump(DT, 1, false); }
+    N.pump(DT, 60, false);
+    key('KeyW', false);
+    const midStairs = !!N.stairs.active, midY = +N.player.pos.y.toFixed(2);
+    N.ai.onKill();   // 段の途中で殴られた(ヒット)
+    let respawned = false;
+    for (let i = 0; i < 60 * 8; i++) { N.pump(DT, 1, false); if (N.deathState() && N.deathState().respawned) respawned = true; if (respawned && !N.deathState()) break; }
+    N.pump(DT, 120, false);
+    const sp = S.respawnPoint();
+    const atSpawn = N.level === sp.level && Math.hypot(N.player.pos.x - sp.x, N.player.pos.z - sp.z) < 0.05 && !N.stairs.active && !N.player.frozen && !N.movie.active;
+    const moved2 = walk1();
+    // 空振りの保険: 襲撃ムービーが始まってから届かない所へ離れる → 空振り → ムービーが畳まれ操作が戻る
+    S.applyStage(3); quiet();
+    await tp(2, 14.0, 21.2, -Math.PI / 2);
+    N.ai.dormant = false; N.ai.setLevel(2); N.enemy.place(15.2, 21.2, -Math.PI / 2); N.enemy.setState('ATTACK');
+    N.pump(DT, 10, false);
+    const movieOn = N.movie.active;
+    N.player.setPose(9.0, 21.2, Math.PI / 2, 0);   // 段で運ばれたのと同じ(入力でなく位置が動く)
+    let missed = false;
+    for (let i = 0; i < 60 * 3; i++) { N.pump(DT, 1, false); if (N.ai.events.some((e) => e.ev === 'miss' && e.t > N.ai.time - 3)) { missed = true; } if (missed && !N.movie.active) break; }
+    N.pump(DT, 5, false);
+    const afterMiss = { movie: N.movie.active, frozen: N.player.frozen, dead: !!N.deathState() };
+    const moved3 = walk1();
+    const cam3 = camOK();
+    const pass = chasing0 && doorHint.includes('開ける') && onStairs && arrived && !dead && !attackOnStairs && !afterArrive.frozen && !afterArrive.movie && !afterArrive.stairs && moved >= 0.6 && cam1 && frame1 > frame0
+      && midStairs && midY < 2.9 - 0.3 && respawned && atSpawn && moved2 >= 0.6 && movieOn && missed && !afterMiss.movie && !afterMiss.frozen && !afterMiss.dead && moved3 >= 0.6 && cam3;
+    quiet();
+    return { pass, chasing0, doorHint, onStairs, arrived, dead, attackOnStairs, maxGapAttack: +maxGapAttack.toFixed(2), afterArrive, moved, cam1, frames: [frame0, frame1],
+      midStairs, midY, respawned, atSpawn, respawnAt: pos(), moved2, movieOn, missed, afterMiss, moved3, cam3 };
   });
 
   quiet();

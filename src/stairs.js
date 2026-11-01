@@ -85,6 +85,14 @@ export class Stairs {
     this.start(m);
   }
 
+  // P5b-1b: 段の途中で死んだ・物語で移された時に上り下りを打ち切る(残ると復帰後も段の上へ引き戻され、着いた階へ移される)
+  cancel() {
+    if (!this.active) return false;
+    this.active = null;
+    this.armed = false;
+    return true;
+  }
+
   start(m) {
     const path = m.dir === 'up' ? upPath(m.st, m.i) : upPath(m.st, m.i - 1).reverse();
     path[0] = this.player.pos.clone();

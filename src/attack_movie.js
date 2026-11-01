@@ -106,11 +106,13 @@ export class AttackMovie {
     this.blood.update(dt);
   }
 
-  end() {
+  // restore: 空振り(P5b-1b)の時はカメラの向きも襲撃前へ戻す(復帰の時は setPose が置き直すので不要)
+  end({ restore = false } = {}) {
     if (!this.active) { this.blood.clear(); return; }
     const cam = this.camera, s = this.saved;
     cam.fov = s.fov;
     cam.updateProjectionMatrix();
+    if (restore) { cam.quaternion.copy(s.quat); cam.position.copy(s.pos); this.player.object.rotation.setFromQuaternion(s.quat, 'YXZ'); this.player.object.rotation.z = 0; cam.updateMatrixWorld(); }
     this.player.frozen = false;
     this.active = false;
     this.enemy.faceFill = 0;

@@ -51,6 +51,7 @@ export const AI = {
   },
   hear: { run: 12.0, walk: 6.0, crouch: 2.4, door: 9.0, occludedMul: 0.6 },
   proximity: 2.0,          // この距離で遮蔽なしなら視線問わず気づく
+  levelGap: 1.0,           // P5b-1b: プレイヤーの足元が管理人の階の床からこれ以上離れている(外階段・北階段の段の途中)なら見えない・届かない
   attackRange: 1.4,        // CHASE でこの距離 → ATTACK
   hitRange: 1.9,           // 振り下ろしの瞬間にこの距離以内なら命中
   hitTime: 0.85,           // attack_downward の振り下ろし(右手が最も前に出る ≈ f25)
@@ -605,6 +606,9 @@ export class EnemyAI {
   // 敵の目 → プレイヤーの胸 の線分が壁箱・閉扉に遮られるか(XZ)
   _blocked(p) {
     if (this._plv() !== this.level) return true;
+    // P5b-1b: 段の途中のプレイヤーは「階」はまだ元のまま(着いた時に変わる)だが、折り返しの階段では XZ が踊り場の真下に来る。
+    //  高さが levelGap 以上違えば見えない・殴れない(段の下の方のプレイヤーを踊り場から襲って空振り→襲撃ムービーが残る、の元)
+    if (p.y !== undefined && Math.abs(p.y - this.floorY) > AI.levelGap) return true;
     const e = this.enemy.pos;
     // P3b: 低い家具(furn)は視線を遮らない。背の高い家具(furnT)は遮るが、プレイヤーが中にいる物(隠れたクローゼット)は除く
     const inside = (c) => p.x >= c.minX && p.x <= c.maxX && p.z >= c.minZ && p.z <= c.maxZ;
@@ -1276,6 +1280,7 @@ export class EnemyAI {
           return;
         }
         this.log('miss', { dist: +dist.toFixed(2) });
+        if (this.onAttackMiss) this.onAttackMiss();   // P5b-1b: 空振り → 襲撃ムービーを畳んで操作を返す(残ると視点が管理人の顔に固定されたまま=フリーズ)
       }
       yield;
     }

@@ -9,9 +9,12 @@ import * as THREE from 'three';
 export const VIEWLOCK = { turn: 0.28, back: 0.32 };
 
 export class ViewLock {
-  constructor({ camera, player }) {
+  // holdFrozen(): 終わった時にまだ入力を止めておく理由(階段の途中・死亡演出など)があるか。P5b-1b: 始めた時の frozen を
+  //  そのまま戻すと、階段の途中で始まって階段が先に終わった場合に frozen が真のまま残り操作できなくなる
+  constructor({ camera, player, holdFrozen = null }) {
     this.camera = camera;
     this.player = player;
+    this.holdFrozen = holdFrozen;
     this.active = false;
     this.t = 0;
     this.log = [];
@@ -77,7 +80,7 @@ export class ViewLock {
     if (O.total > 0 && this.t >= O.total) {
       if (O.returnView) this.player.object.rotation.copy(this.saved.euler);
       else this.player.object.rotation.setFromQuaternion(cam.quaternion, 'YXZ');
-      this.player.frozen = this.saved.frozen;
+      this.player.frozen = this.saved.frozen && (this.holdFrozen ? this.holdFrozen() : true);
       this.active = false;
       this.log.push({ ev: 'end', label: O.label, t: +this.t.toFixed(2) });
     }

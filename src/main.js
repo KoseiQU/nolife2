@@ -366,6 +366,8 @@ const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getP
   onLevel: (lv) => enemy.setLevel(levelY(lv), world.collisions(lv), lampDefsFor(lv)),
   onKill: () => { movie.hit(); startDeath(); },
   onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; viewLock.handoff(); movie.start(); },
+  // P5b-1b: 空振り(段の途中など)→ 襲撃ムービーを畳む。入力は他に止める理由が無ければ返す
+  onAttackMiss: () => { if (death) return; movie.end({ restore: true }); player.frozen = inputHeld(); },
   // P5a: 管理人がプレイヤーの階に着いた(EV で降りた)時に一度だけ「同じ階で…」(DESIGN §3.8 C)。着くたびに新しい滞在
   onArrive: (lv) => { if (!TOUR && lv === playerLevel) hud.notice(HUD_TEXT.sameFloor, 3.0); },
   // P2d: スコープ演出の入出力(覗いているか／扉が開く瞬間に覗き穴視点を閉じる／レンズ位置)
@@ -377,7 +379,7 @@ const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getP
 const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
 composer.addPass(movie.pass);
 // P5a: 視点を管理人へ向ける短いムービー(潜伏室からの飛び出し・EV の賭け)
-const viewLock = new ViewLock({ camera, player });
+const viewLock = new ViewLock({ camera, player, holdFrozen: () => inputHeld() });
 ai.onViewLock = (o) => viewLock.start((out) => enemy.headWorld(out).add(new THREE.Vector3(0, 0.02, 0)), o);
 // P5a: 空室の扉まわり(扉の下の隙間・奥の闇の箱・壊れた扉の破片・ガタガタ扉)
 doorFx = new DoorFx({ scene, world, building, audio: enemyAudio });
@@ -496,6 +498,8 @@ caption.style.cssText = 'color:#b9b2a8;font:500 22px/1 "Hiragino Mincho ProN","Y
 overlay.appendChild(caption);
 document.body.append(flash, overlay);
 let death = null;   // { t, respawned }
+// P5b-1b: 入力を止めておく理由がまだ残っているか(視点固定・襲撃ムービーが終わった時に frozen を戻す判定)
+function inputHeld() { return !!(stairs && stairs.busy) || !!death || movie.active || viewLock.active || !!(story && (story.trans || story.ending)) || !!(rooms && rooms.hidden) || peephole.active; }
 // P2c: ヒット(t=0)の後は血飛沫を見せてから暗転。ATTACK 開始から暗転完了まで ≈0.85+1.75 = 2.6 秒
 const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0.8 };
 function startDeath() {
@@ -524,6 +528,7 @@ function updateDeath(dt) {
     viewLock.cancel();
     movie.end();
     rooms.forceUnhide();
+    stairs.cancel();   // P5b-1b: 段の途中で死んだ時、上り下りを打ち切る(残ると復帰後に段へ引き戻される)
     player.object.rotation.z = 0;
     player.crouch = false;
     // P5b-1: 物語の段の開始位置へ(段・持ち物・壊れた扉・解放はそのまま)。物語なし(他のテスト)は従来の 410
@@ -772,7 +777,7 @@ function step(dt) {
   simTime += dt;
   player.update(dt);
   updatePortal();
-  stairs.update(dt);
+  if (!movie.active && !death) stairs.update(dt);   // P5b-1b: 襲撃ムービー・死亡演出の間は段の上り下りを止める
   rooms.update(dt, playerLevel);
   rooms.updateWind(dt, outdoorKind());
   story.update(dt);   // P5b-1
