@@ -40,12 +40,6 @@ const CSS = `
 #hud-item { position: absolute; left: 22px; top: 44px; font-size: 12px; letter-spacing: .12em; color: #d9c48c; background: rgba(6,7,9,.45); border: 1px solid rgba(217,196,140,.35);
   border-radius: 2px; padding: 2px 9px; opacity: 0; transition: opacity .3s linear; }
 #hud-item.on { opacity: .9; }
-#hud-breath { position: absolute; left: 50%; bottom: 9vh; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; opacity: 0; transition: opacity .25s linear;
-  font-size: 12px; letter-spacing: .2em; color: #cfe6ea; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
-#hud-breath.on { opacity: .9; }
-#hud-breath .bar { width: 190px; height: 5px; background: rgba(6,7,9,.55); border: 1px solid rgba(207,230,234,.35); border-radius: 3px; overflow: hidden; }
-#hud-breath .fill { height: 100%; width: 100%; background: #bfe3ea; transform-origin: left center; }
-#hud-breath.low .fill { background: #e08a7a; }
 #hud-dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: rgba(234,230,223,.45); }
 `;
 
@@ -60,17 +54,14 @@ export class Hud {
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
       + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>'
-      + '<div id="hud-obj" class="off"></div><div id="hud-item"></div>'
-      + `<div id="hud-breath"><span>${TX.breath}</span><div class="bar"><div class="fill"></div></div></div>`;   // P5b-2a: 息ゲージ(潜っている間だけ)
+      + '<div id="hud-obj" class="off"></div><div id="hud-item"></div>';
     document.body.appendChild(this.root);
     this.el = {
       dot: this.root.querySelector('#hud-dot'), hint: this.root.querySelector('#hud-hint'), toast: this.root.querySelector('#hud-toast'),
       release: this.root.querySelector('#hud-release'), controls: this.root.querySelector('#hud-controls'), center: this.root.querySelector('#hud-center'),
       notice: this.root.querySelector('#hud-notice'),
       obj: this.root.querySelector('#hud-obj'), item: this.root.querySelector('#hud-item'),
-      breath: this.root.querySelector('#hud-breath'), breathFill: this.root.querySelector('#hud-breath .fill'),
     };
-    this.breath = null;   // P5b-2a: 0..1(null = 隠す)
     this.objective = ''; this.objEmT = 0; this.objLog = []; this.itemText = '';   // P5b-1
     this.noticeT = 0;
     this.noticeLog = [];
@@ -112,8 +103,6 @@ export class Hud {
     this.itemText = text;
     if (text) this.el.item.textContent = text;
   }
-  // P5b-2a: 息ゲージ(X312 で潜っている間だけ。null で隠す)
-  setBreath(v) { this.breath = v == null ? null : Math.max(0, Math.min(1, v)); }
   showControls(sec = HUD.controlsKeySec) { this.controlsT = Math.max(this.controlsT, sec); }
   setPointer(locked) {
     if (locked && !this.started) { this.started = true; this.showControls(HUD.controlsSec); }
@@ -154,9 +143,6 @@ export class Hud {
     this.el.obj.classList.toggle('off', !showObj);
     this.el.obj.classList.toggle('em', showObj && this.objEmT > 0);
     this.el.item.classList.toggle('on', !!this.itemText && showObj && !hidden);
-    const br = this.breath != null && !this.isDead();
-    this.el.breath.classList.toggle('on', br);
-    if (br) { this.el.breathFill.style.transform = `scaleX(${this.breath.toFixed(3)})`; this.el.breath.classList.toggle('low', this.breath < 0.3); }
     this.controlsT = Math.max(0, this.controlsT - dt);
     this.el.controls.classList.toggle('on', this.controlsT > 0 && !hidden && !peeping);
 
@@ -223,7 +209,6 @@ export class Hud {
       objective: this.el.obj.classList.contains('off') ? '' : this.objective,
       objectiveEm: this.el.obj.classList.contains('em'),
       item: this.el.item.classList.contains('on') ? this.itemText : '',
-      breath: this.el.breath.classList.contains('on') ? +this.breath.toFixed(3) : null,   // P5b-2a
     };
   }
 }

@@ -519,7 +519,7 @@ const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0
 function startDeath(why = null) {
   if (death) return;
   death = { t: 0, respawned: false, why };
-  caption.firstChild.textContent = why === 'drown' ? HUD_TEXT.death.drown : HUD_TEXT.death.title;   // P5b-2a: 溺れた時の文言
+  caption.firstChild.textContent = HUD_TEXT.death.title;
   if (peephole.active) { peephole.forced = false; peephole.set(false); }
   pendingE = null;
   player.frozen = true;
@@ -545,7 +545,7 @@ function updateDeath(dt) {
     rooms.forceUnhide();
     stairs.cancel();   // P5b-1b: 段の途中で死んだ時、上り下りを打ち切る(残ると復帰後に段へ引き戻される)
     player.object.rotation.z = 0;
-    player.invert = false; player.move = null; player.controls.pointerSpeed = 1;   // P5b-2a: 反転・泳ぎの上書きを戻す
+    player.invert = false; player.controls.pointerSpeed = 1;   // P5b-2a: 反転の上書きを戻す
     // P5b-1: 物語の段の開始位置へ(段・持ち物・壊れた扉・解放はそのまま)。物語なし(他のテスト)は従来の 410
     const sp = story && story.active ? story.respawnPoint() : { level: 4, ...CHECKPOINT };
     if (playerLevel !== sp.level) setPlayerLevel(sp.level);

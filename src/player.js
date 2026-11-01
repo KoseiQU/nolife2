@@ -46,10 +46,9 @@ export class Player {
     this.onUse = null;      // E キー(扉)のコールバック。main.js が設定
     this.onKey = null;      // 押された瞬間のキー(e.code)ごとに呼ぶ。main.js が設定(L 施錠・P 覗き穴など)
     this.frozen = false;    // 死亡演出・覗き穴の間は移動とカメラ更新を止める(キー状態の追跡は続ける)
-    // P5b-2a: 別空間からの上書き。invert = 画面が上下反転している間(X105 の反転。A/D を入れ替えて画面どおりに動く)、
-    //  move = { speed(m/s), eyeY(目の高さ・世界の y。null なら立ち), noRun, noBob }(X312 の泳ぎ・潜水)
+    // P5b-2a: 別空間からの上書き。invert = 画面が上下反転している間(X105 の反転。A/D を入れ替えて画面どおりに動く)。
+    //  P5b-4: X312 の泳ぎ・潜水の上書き(move)は 312 の作り直しで廃止
     this.invert = false;
-    this.move = null;
     this._buildFlashlight();
     this._bindKeys();
   }
@@ -120,8 +119,7 @@ export class Player {
     const sway = Math.sin(this._walkPhase * 0.5) * PLAYER.bobSway * this._moveRatio;
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(o.quaternion);
     right.y = 0;
-    const ey = this.move && this.move.eyeY != null ? this.move.eyeY : this.pos.y + eye;   // P5b-2a: 泳ぎ・潜水の目の高さ
-    o.position.set(this.pos.x + right.x * sway, ey + bob, this.pos.z + right.z * sway);
+    o.position.set(this.pos.x + right.x * sway, this.pos.y + eye + bob, this.pos.z + right.z * sway);
   }
 
   update(dt) {
@@ -134,9 +132,8 @@ export class Player {
     }
     const fwd = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0);
     const str = ((this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0)) * (this.invert ? -1 : 1);
-    const M = this.move;
-    const run = (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight')) && !(M && M.noRun);
-    const speed = M && M.speed != null ? M.speed : run ? PLAYER.runSpeed : PLAYER.walkSpeed;
+    const run = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    const speed = run ? PLAYER.runSpeed : PLAYER.walkSpeed;
 
     const dir = new THREE.Vector3();
     this.camera.getWorldDirection(dir);
@@ -160,7 +157,7 @@ export class Player {
     const target = Math.min(1, moved / PLAYER.walkSpeed);
     this._moveRatio += (target - this._moveRatio) * Math.min(1, dt * 8);
     this._walkPhase += dt * Math.PI * 2 * PLAYER.bobFreq * Math.max(0.0, moved / PLAYER.walkSpeed) ** 0.6;
-    const bob = M && M.noBob ? 0 : Math.abs(Math.sin(this._walkPhase * 0.5)) * PLAYER.bobAmp * this._moveRatio * 2 - PLAYER.bobAmp * this._moveRatio;
+    const bob = Math.abs(Math.sin(this._walkPhase * 0.5)) * PLAYER.bobAmp * this._moveRatio * 2 - PLAYER.bobAmp * this._moveRatio;
     this._applyCamera(bob);
 
     if (this.onKey) for (const c of this._justPressed) this.onKey(c);

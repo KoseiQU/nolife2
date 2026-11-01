@@ -4,7 +4,7 @@
 //  - 221 と 6F の罠 3 室の奥の窓際のロッカーからの飛び出し(ai.lockerBurst = ワープ。P5b-1b: 扉がゆっくり開いて中が見えてから)。
 //    P5b-1b: 221 は初回、奥へ進むと出る → 逃げ切ると机に小さな鍵。冒頭の見せ場(初めて 410 から廊下へ出ると 4F の EV の管理人 → 2F へ)、705 の別空間からの最終追跡(階段で追う)、
 //    最後だけ敷地まで追う管理人(ai.portals に正面玄関)、黒い車でのエンディング
-//  - 別空間(異世界 4 空間の差し替え口): enterSpace(id)/leaveSpace()。中身は src/spaces/<key>.js(P5b-2a: 105 の長い廊下・312 のプール。705・B1 は仮の小部屋)。
+//  - 別空間(異世界 4 空間の差し替え口): enterSpace(id)/leaveSpace()。中身は src/spaces/<key>.js(P5b-2a: 105 の長い廊下、P5b-4: 312 の無限の自室、P5b-2b: 705 の柱の広間・B1 のトンネル)。
 //    戻る口・空間の中の扉・この空間で死んだ時の戻り先・物の置き場所の移動は spaces.exits/target/respawn/slotPos に聞く
 //  - デバッグ: ?stage=N でその段の開始状態から。window.__N2.story で状態(state())と操作(applyStage・give・unlockDoor・enterSpace…)
 //  モード: 'play'(通常・?test=story)/ 'tour'(?tour: 全部解放・別空間にも入れる・目標なし)/ 'off'(他のテスト: 物語の扉は施錠のまま、他は何もしない)
@@ -113,7 +113,7 @@ export class Story {
     { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2,
       need: () => this.stage === 1 && this.sub === 'return', showIf: () => this.stage > 1 || this.sub === 'return' }); }
     // 3: X312 の床の 105 の鍵 / 4: X105 のメモ
-    // P5b-2a: 105 の鍵は X312 のプールの底(潜っている時だけ拾える = spaces.canPick)。メモは X105 の出口の扉の手前
+    // P5b-4: 105 の鍵は X312 の 5 部屋目(R5)の机(R5 にいる時だけ拾える = spaces.canPick)。メモは X105 の出口の扉の手前
     add({ id: 'k105', item: '105', level: 'X312', space: 'X312', slot: 'key', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4,
       need: () => this.spaces.canPick('X312', 'key', this.camera.position) });
     add({ id: 'memo6F', memo: 'memo6F', level: 'X105', space: 'X105', slot: 'memo', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
@@ -405,7 +405,7 @@ export class Story {
 
   // 死亡 → 復帰: 段・持ち物・壊れた扉・解放はそのまま。その段の開始位置へ
   respawnPoint() {
-    // P5b-2a: 別空間の中で死んだ時はモジュールが決める(X105 = 105 の扉の前。無ければ段の開始位置 = X312 の溺れは第3段の開始位置)
+    // P5b-2a: 別空間の中で死んだ時はモジュールが決める(X105 = 105 の扉の前。無ければ段の開始位置。P5b-4: X312 は死なない空間)
     const lv = this.getLevel();
     if (isSpace(lv)) { const r = this.spaces.respawn(lv); if (r) return r; }
     return this.stage === 9 && this.sub === 'chase' ? SPAWN['9c'] : SPAWN[this.stage];
