@@ -125,6 +125,16 @@ export class World {
     this.texCache = new Map();
     this.doors = [];
     this.doorById = new Map();
+    this.roomById = new Map();     // P5a: roomId → { room, level }(壊れた扉の奥の当たり・扉の前の帯の計算用)
+    // P5a: 管理人が潜む「空の施錠された部屋」(内装なし・物語の部屋を除く居室 73 室)。扉板を結合せず別ノードに残す(揺れ・開閉・壊れ)
+    this.lurkableIds = new Set();
+    for (const f of this.building.floors) {
+      if (f.level > 7) continue;
+      for (const r of f.rooms) {
+        this.roomById.set(r.id, { room: r, level: f.level });
+        if (r.kind === 'unit' && r.door && !r.door.enterable && !r.story) this.lurkableIds.add(r.id);
+      }
+    }
     // P3a-2: 地下の踊り場の施錠扉も扉として持つ(開かない＝operable なし。E で「鍵がかかっている」＋ガチャ音)
     const levelsWithDoors = this.building.floors.filter((f) => f.level <= 7)
       .map((f) => ({ key: f.level, rooms: f.rooms, ops: new Set(f.shell.operable) }));
@@ -140,6 +150,8 @@ export class World {
           operable, sign: doorSign(r), openAngle: operable ? 1.75 : 0, angle: 0, target: 0, open01: 0,
           locked: false, speedMul: 1, rattle: 0, node: null, leaves: [], sealed: !!r.door.sealed, tryable: !!r.door.sealed,
           pos: r.door.pos, facing: r.door.facing, width: doorWidth(r),
+          // P5a: lurkable = 管理人が潜む空室の扉(開かない扉だが、管理人は開けて出入りする・壊して飛び出す・中で何かが暴れて揺れる)
+          lurkable: this.lurkableIds.has(r.id), broken: null, shake: 0, shakeT: 0, shakePhase: 0, nodeBase: null, blockers: [],
           collision: this.cols.get(key).find((c) => c.kind === 'door' && c.roomId === r.id) || null,
         };
         this.doors.push(d);
@@ -449,6 +461,7 @@ export class World {
         if (u.n2_kind === 'evdoor' || u.n2_kind === 'closetdoor' || u.n2_kind === 'lockerdoor') return true;
         if (u.n2_kind === 'winsash' && u.n2_operable) return true;
         if ((u.n2_kind === 'door' || u.n2_kind === 'autodoor') && u.n2_operable) return true;
+        if (u.n2_kind === 'door' && this.lurkableIds.has(String(u.n2_room))) return true;   // P5a: 空室の扉板(揺れ・開閉・壊れ)
       }
       return false;
     };
@@ -485,9 +498,9 @@ export class World {
     rec.binds = [];   // P3b: 掃き出し窓の障子・クローゼットの折戸・ロッカーの扉(rooms.js が状態に結び付ける)
     rec.group.traverse((o) => {
       const u = o.userData;
-      if (u.n2_kind === 'door' && u.n2_operable) {
+      if (u.n2_kind === 'door' && (u.n2_operable || this.lurkableIds.has(String(u.n2_room)))) {
         const d = this.doorById.get(String(u.n2_room));
-        if (d) { d.node = o; o.rotation.y = d.sign * d.angle; }
+        if (d) { d.node = o; o.rotation.order = 'YXZ'; d.nodeBase = o.position.clone(); this._poseLeaf(d); }
       } else if (u.n2_kind === 'autodoor' && u.n2_operable) {
         const d = this.doorById.get(String(u.n2_room));
         if (d) d.leaves.push({ node: o, base: o.position.clone(), dir: new THREE.Vector3().fromArray(u.n2_slide), dist: u.n2_slide_dist });
@@ -533,11 +546,110 @@ export class World {
         }
         if (d.node) d.node.rotation.y = d.sign * d.angle;
         if (d.collision) d.collision.disabled = d.angle > 0.25;
-      } else if (d.rattle > 0) {
-        d.rattle -= dt;
+      } else {
+        // P5a: 開かない扉。管理人が出入りする空室の扉は target へ動かす(プレイヤーは開けられない)。壊れた扉は大きく開いて傾いたまま
+        if (d.broken) {
+          const b = d.broken;
+          b.t += dt;
+          const delta = b.angle - d.angle;
+          d.angle += Math.sign(delta) * Math.min(Math.abs(delta), DOOR_FX_SPEED.broken * dt);
+          if (d.collision) d.collision.disabled = true;
+        } else if (d.lurkable) {
+          const delta = d.target - d.angle;
+          if (Math.abs(delta) > 1e-4) {
+            const k = 0.35 + 0.65 * Math.min(1, Math.abs(d.angle) / 0.4);
+            d.angle += Math.sign(delta) * Math.min(Math.abs(delta), SPEED * k * (d.speedMul || 1) * dt);
+          }
+          if (d.collision) d.collision.disabled = d.angle > 0.25;
+        }
+        if (d.rattle > 0) d.rattle -= dt;
+        if (d.shake > 0) { d.shake -= dt; d.shakeT += dt; }
       }
+      if (d.node && !d.operable) this._poseLeaf(d);
     }
   }
+
+  // P5a: 開かない扉の扉板の姿勢(開き角・壊れた傾き・ガタガタの揺れ・ノブを試した時のごく小さな揺れ)
+  _poseLeaf(d) {
+    const n = d.node;
+    if (!n) return;
+    let ry = d.sign * d.angle, rx = 0, rz = 0;
+    if (n.rotation.order !== 'YXZ') n.rotation.order = 'YXZ';
+    if (d.nodeBase) n.position.copy(d.nodeBase);
+    const ns = d.facing === 'N' || d.facing === 'S';
+    if (d.broken) {
+      // 蝶番が外れて扉板が垂れる: 板の面の法線まわりに傾け(戸先が下がる)、少し沈める
+      const b = d.broken, k = Math.min(1, b.t / 0.25);
+      if (ns) rz = -b.tilt * k; else rx = b.tilt * k;
+      n.position.y -= b.drop * k;
+    } else if (d.shake > 0) {
+      // ガタガタ: 中から激しく引かれて掛け金の遊びの分だけ部屋側へ跳ねる(ラッチで止まる)。2 Hz の波の中に 11〜15 Hz の震え
+      const t = d.shakeT, env = Math.min(1, t / 0.15) * Math.min(1, d.shake / 0.3);
+      const surge = Math.max(0, Math.sin(t * 2 * Math.PI * 1.9 + d.shakePhase)) ** 2;
+      const buzz = Math.abs(Math.sin(t * 2 * Math.PI * 13.0) + 0.6 * Math.sin(t * 2 * Math.PI * 11.3 + 1.7));
+      ry = d.sign * (0.004 + 0.022 * surge * (0.5 + 0.5 * buzz)) * env;
+      const [fx, fz] = FACING_N[d.facing];
+      const push = -0.004 * surge * env;   // 部屋側へ(扉板ごと数 mm)
+      n.position.x += fx * push; n.position.z += fz * push;
+    } else if (d.angle === 0 && d.rattle > 0) ry = d.sign * 0.004;
+    n.rotation.set(rx, ry, rz);
+  }
+
+  // P5a: 扉を壊す(管理人の飛び出し)。大きく開いて傾いたまま残る。当たりは開いた扱い(通れる)。
+  //  奥は内装のない部屋なので、戸口から 1.2m より奥と、戸口の左右には入れない当たりを置く(奥の闇の箱は door_fx.js)
+  breakDoor(id, { angle = 1.18, tilt = 0.075, drop = 0.025 } = {}) {
+    const d = this.doorById.get(String(id));
+    if (!d || d.broken) return false;
+    d.broken = { angle, tilt, drop, t: 0 };
+    d.target = 0; d.shake = 0;
+    if (d.collision) d.collision.disabled = true;
+    const rr = this.roomById.get(d.roomId);
+    if (rr) {
+      const cols = this.cols.get(d.level);
+      const y0 = levelY(d.level), y1 = y0 + GEOM.CEIL_H;
+      d.blockers = brokenDoorBlockers(rr.room, d).map(([x0, z0, x1, z1]) => Object.assign(box(x0, z0, x1, z1, 'solid', d.roomId), { y0, y1, brokenDoor: true }));
+      cols.push(...d.blockers);
+    }
+    if (this.onDoorBroken) this.onDoorBroken(d);
+    return true;
+  }
+  // デバッグ・テスト用: 壊れた扉を元に戻す
+  repairDoor(id) {
+    const d = this.doorById.get(String(id));
+    if (!d || !d.broken) return false;
+    const cols = this.cols.get(d.level);
+    for (const b of d.blockers) { const i = cols.indexOf(b); if (i >= 0) cols.splice(i, 1); }
+    d.blockers = []; d.broken = null; d.angle = 0; d.target = 0;
+    if (d.collision) d.collision.disabled = false;
+    this._poseLeaf(d);
+    if (this.onDoorRepaired) this.onDoorRepaired(d);
+    return true;
+  }
+}
+
+const DOOR_FX_SPEED = { broken: 14.0 };   // 壊れた扉板が開き切る速さ(rad/s)
+
+// 壊れた扉の奥の当たり(AABB [x0,z0,x1,z1] の配列)。戸口の奥行 entry と幅 ±(扉幅/2+side) の箱だけ入れる
+export function brokenDoorBlockers(room, d, entry = 1.2, side = 0.12) {
+  const [rx, rz, rw, rd] = room.rect;
+  const [nx, nz] = FACING_N[d.facing];          // 廊下側
+  const [px, pz] = d.pos;
+  const half = d.width / 2 + side;
+  const out = [];
+  if (nx !== 0) {   // W/E 向き: 奥は x 方向
+    const inX = -nx;                                  // 部屋の奥へ
+    const a = px, b = px + inX * entry, far = inX > 0 ? rx + rw : rx;
+    out.push([Math.min(b, far), rz, Math.max(b, far), rz + rd]);
+    if (pz - half > rz) out.push([Math.min(a, b), rz, Math.max(a, b), pz - half]);
+    if (pz + half < rz + rd) out.push([Math.min(a, b), pz + half, Math.max(a, b), rz + rd]);
+  } else {          // N/S 向き: 奥は z 方向
+    const inZ = -nz;
+    const a = pz, b = pz + inZ * entry, far = inZ > 0 ? rz + rd : rz;
+    out.push([rx, Math.min(b, far), rx + rw, Math.max(b, far)]);
+    if (px - half > rx) out.push([rx, Math.min(a, b), px - half, Math.max(a, b)]);
+    if (px + half < rx + rw) out.push([px + half, Math.min(a, b), rx + rw, Math.max(a, b)]);
+  }
+  return out.filter(([x0, z0, x1, z1]) => x1 - x0 > 0.01 && z1 - z0 > 0.01);
 }
 
 // 環境マップを鏡面反射だけに使う(拡散の IBL を足さない。拡散はベイク済みライトマップ)
