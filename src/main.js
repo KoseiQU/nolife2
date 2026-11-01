@@ -72,6 +72,8 @@ export const LOOK = {
   // P3b: 仮の夜空(外観 build/exterior.glb が読めるまでの間だけ。読めたら ext_sky に差し替え)。露出 4.5 で見るので、ごく暗い色
   skyTop: '#010103', skyHorizon: '#06080e', skyGround: '#020203',
   mirrorEnv: 0.012,
+  // P3c-2: 廊下端の窓のガラス(外が見える 1 枚の面)。夜の暗いガラス: ほぼ透明・わずかな青緑・映り込みは弱く(glass_smudge の粗さ)
+  corrGlass: { color: [0.10, 0.125, 0.125], opacity: 0.12, roughness: 0.06, env: 0.16 },
   // P3c: 外観・外環境(src/exterior.js)。値は線形(露出 4.5 の前)。月明かりと空の明るさは外観・外環境の材質だけに効く
   ext: {
     far: 3000,                         // カメラの遠クリップ(遠景の山並みは 2400m)
@@ -86,7 +88,10 @@ export const LOOK = {
     cityGlow: [0.0014, 0.0009, 0.0004],
     cityGain: 2.8, cityBody: [0.0010, 0.0011, 0.0014],
     winGlow: [1.0, 0.72, 0.45], winGlowGain: 0.9,   // カーテン越しの灯り
-    corrGlow: 0.035, lobbyGlow: 1.1, lampGlow: 3.0,
+    lobbyGlow: 1.1, lampGlow: 3.0,
+    // P3c-2: 階の GLB が出ていない時の廊下端の窓の奥(外観の帯の、開口の奥 1.8m の廊下の箱)。壁・床 / 天井・突き当たり
+    corrDepth: [0.008, 0.009, 0.010], corrDepthLit: [0.024, 0.026, 0.029], corrLamp: 0.3,   // corrLamp = 奥の常夜灯のカバーの明るさ(本物の M_LampCover 比)
+    corrWinDist: 10.0,                 // 廊下端の窓からこの距離まで(同じ階・窓の室内側で窓が視野にある時)は外を描く
     poolPole: [0.05, 0.038, 0.024], poolPorch: [0.05, 0.04, 0.028], poolPilotis: [0.03, 0.024, 0.016],
     windowCull: 4.0,                   // 入れる部屋の扉からこの距離までは、開いた扉越しに窓が見えるかもしれないので外を描く
     gtaoDivOutdoor: 3,                 // 屋外の GTAO の解像度(1/3。屋内は 1/2)
@@ -658,6 +663,18 @@ for (const f of building.floors) {
   }
   ROOM_WINDOWS.set(f.level, list);
 }
+// P3c-2: 廊下端の窓(shell.windows)。窓の箱が視野にあり、同じ階で窓の室内側 corrWinDist 以内なら外を描く
+const CORR_WINDOWS = new Map();   // level → [{ pos, nin, box }]
+for (const f of building.floors) {
+  if (f.level > 7) continue;
+  CORR_WINDOWS.set(f.level, f.shell.windows.map((w) => {
+    const [x, z] = w.pos, nin = FACING_N[w.facing];   // 窓の facing = 室内側への向き
+    const y0 = levelY(f.level) + w.sill, hw = w.w / 2;
+    const box = nin[1] !== 0 ? new THREE.Box3(new THREE.Vector3(x - hw, y0, z - 0.3), new THREE.Vector3(x + hw, y0 + w.h, z + 0.3))
+      : new THREE.Box3(new THREE.Vector3(x - 0.3, y0, z - hw), new THREE.Vector3(x + 0.3, y0 + w.h, z + hw));
+    return { pos: [x, z], nin, box };
+  }));
+}
 const ENTRANCE_VIEW = { rect: [14.0, 20.3, 8.0, 7.8], box: new THREE.Box3(new THREE.Vector3(15.6, 0, 28.0), new THREE.Vector3(19.6, 2.4, 28.3)) };
 const inRect = (x, z, r, m = 0) => x > r[0] - m && x < r[0] + r[2] + m && z > r[1] - m && z < r[1] + r[3] + m;
 function wantExterior() {
@@ -669,6 +686,10 @@ function wantExterior() {
   _frustum.setFromProjectionMatrix(_pm);
   const p = player.pos;
   if (playerLevel === 1 && inRect(p.x, p.z, ENTRANCE_VIEW.rect) && _frustum.intersectsBox(ENTRANCE_VIEW.box)) return true;
+  for (const w of CORR_WINDOWS.get(playerLevel) || []) {
+    const dx = p.x - w.pos[0], dz = p.z - w.pos[1];
+    if (dx * w.nin[0] + dz * w.nin[1] > 0 && Math.hypot(dx, dz) < LOOK.ext.corrWinDist && _frustum.intersectsBox(w.box)) return true;
+  }
   for (const w of ROOM_WINDOWS.get(playerLevel) || []) {
     const inside = inRect(p.x, p.z, w.rect) || (w.bal && inRect(p.x, p.z, w.bal));
     const nearDoor = Math.hypot(p.x - w.door[0], p.z - w.door[1]) < LOOK.ext.windowCull && world.doorById.get(w.id)?.angle > 0.2;

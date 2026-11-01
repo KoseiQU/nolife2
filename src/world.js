@@ -13,7 +13,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { floorWallBoxes, GEOM, evOpeningCenter, doorWidth } from './walls.js';
 import { decorateStoryDoors, updateStoryDoors } from './story_doors.js';
-import { extShade } from './exterior.js';
+import { extShade, corrGlass } from './exterior.js';
 
 export const FH = GEOM.FLOOR_H;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7];
@@ -280,9 +280,9 @@ export class World {
   // ------------------------------------------------------------ 材質・結合
   _prepare(root, man, rec) {
     const L = this.look;
-    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_EVCarDisplay', 'M_GlassClear', 'MX_WinGlass', 'MR_Mirror']);
+    const GLASS = new Set(['M_WireGlass', 'M_WireGlassOut', 'M_Window', 'M_EVDisplay', 'M_EVCarDisplay', 'M_GlassClear', 'MX_WinGlass', 'MX_CorrGlass', 'MR_Mirror']);
     const NO_SHADOW = new Set(['lampcover', 'exitsign_face', 'windowglass', 'void', 'evbutton', 'glass', 'glassedge', 'decal', 'rail', 'backdrop',
-      'massing', 'bars', 'winout', 'secmon', 'roof', 'balcony']);
+      'massing', 'bars', 'winout', 'secmon', 'roof', 'balcony', 'corrglass']);
     // P3a-2: 風除室の透明ガラスは物理材質(透過・屈折・薄い青緑の吸収・低い粗さ＋指紋/汚れの粗さマップ)に置き換える
     const phys = new Map();
     root.traverse((o) => {
@@ -340,7 +340,8 @@ export class World {
         if (m.name === 'MR_Mirror') m.envMapIntensity = L.mirrorEnv ?? 0.012;   // 夜の暗い部屋の鏡(共通の環境は明るすぎる)
         if (m.name === 'MX_WinGlass') { m.color.setRGB(0.1, 0.115, 0.125); m.opacity = 0.12; m.envMapIntensity = L.glassEnv * 0.5; m.roughness = 0.08; }   // 掃き出し窓のガラス(夜は暗く、映り込みだけ)
         if (m.name === 'MX_Bars') { m.alphaTest = 0.5; m.side = THREE.DoubleSide; m.transparent = false; }   // P3b: バルコニーの格子(透過テクスチャ)
-        if (m.name === 'MX_Mass') extShade(m, { fog: false });   // P3c: 外の塊は外観と同じ月明かり(霧は scene のまま)
+        if (m.name === 'MX_CorrGlass') corrGlass(m, L, this.envTex);   // P3c-2: 廊下端の窓のガラス(外が見える)
+        if (m.name === 'MX_Mass' || m.name === 'MX_CorrAlu') extShade(m, { fog: false });   // P3c: 外の塊は外観と同じ月明かり(霧は scene のまま)。P3c-2: 廊下端の窓の外の枠も
         m.userData.n2Emissive = m.emissiveIntensity;   // 倍率を掛ける前(EV のカゴの照明を点ける時に使う)
         if (L.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= L.emissiveScale[m.name];
         m.needsUpdate = true;
@@ -539,6 +540,7 @@ function specularOnlyEnv(m) {
   m.customProgramCacheKey = () => 'n2SpecOnlyEnv';
 }
 const PHYS_GLASS = new Set(['M_GlassClear']);
+
 const PROBE_HIDE = new Set(['M_GlassEdge']);
 const NO_LIGHTMAP = new Set(['M_EVFrame', 'M_CarBeige', 'M_CarStone', 'M_CarFloor', 'M_CarPanel', 'M_EVCarDisplay', 'M_Mirror', 'M_GlassEdge', 'M_Decal']);
 

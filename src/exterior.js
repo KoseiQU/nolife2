@@ -51,6 +51,19 @@ export function extShade(m, { fog = true } = {}) {
   m.needsUpdate = true;
 }
 
+// P3c-2: 廊下端の窓のガラス(1枚の面・両面)。夜の暗いガラス＝ほぼ透明で、わずかな青緑の色・映り込み・指紋/汚れの粗さ(glass_smudge)。
+//  風除室の物理ガラス(transmission)は背景をもう一度描くので使わない(階の GLB と外観の帯で同じ材質)
+export function corrGlass(m, L, envTex) {
+  const G = L.corrGlass;
+  m.color.setRGB(...G.color);
+  m.opacity = G.opacity; m.transparent = true; m.depthWrite = false;
+  m.side = THREE.DoubleSide;
+  m.metalness = 0;
+  if (!m.roughnessMap) m.roughness = G.roughness;
+  m.envMap = envTex; m.envMapIntensity = G.env;
+  m.lightMap = null;
+}
+
 const FOG_GLSL = `
 uniform vec3 uExtFogCol; uniform float uExtFogDen;
 vec3 extFog(vec3 c, float d) { float ff = 1.0 - exp(-uExtFogDen * uExtFogDen * d * d); return mix(c, uExtFogCol, ff); }`;
@@ -103,7 +116,11 @@ export class Exterior {
           m.color.setRGB(0, 0, 0); m.emissive.setRGB(...L.winGlow); m.emissiveIntensity = L.winGlowGain;
           m.userData.winGlow = true;
         }
-        if (m.name === 'XE_CorrGlow') m.emissiveIntensity = L.corrGlow;
+        if (m.name === 'MX_CorrGlass') corrGlass(m, this.look, this.envTex);   // P3c-2: 廊下端の窓のガラス(階の GLB と同じ)
+        // P3c-2: 階の GLB が出ていない時の廊下端の窓の奥(開口の奥 1.8m の廊下の箱。常夜灯に照らされた壁・床・天井の暗い色)
+        if (m.name === 'XE_CorrDepth') { m.color.setRGB(0, 0, 0); m.emissive.setRGB(...L.corrDepth); m.emissiveIntensity = 1; }
+        if (m.name === 'XE_CorrDepthLit') { m.color.setRGB(0, 0, 0); m.emissive.setRGB(...L.corrDepthLit); m.emissiveIntensity = 1; }
+        if (m.name === 'XE_CorrLamp') m.emissiveIntensity *= L.corrLamp;
         if (m.name === 'XE_LobbyGlow') m.emissiveIntensity = L.lobbyGlow;
         if (m.name === 'XE_Lamp') m.emissiveIntensity = L.lampGlow;
         if (this.look.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= this.look.emissiveScale[m.name];
