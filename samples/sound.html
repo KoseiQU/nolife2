@@ -23,6 +23,8 @@
   .save { margin-left: auto; font-size: 12px; color: var(--dim); white-space: nowrap; }
   .save.ok { color: var(--ok); } .save.err { color: var(--err); font-weight: 600; } .save.busy { color: var(--sub); }
   .help { max-width: 1320px; margin: 0 auto; padding: 10px 16px 0; color: var(--sub); font-size: 12px; }
+  .round2 { max-width: 1320px; margin: 10px auto 0; padding: 0 16px; }
+  .round2 span { display: inline-block; background: var(--redo-bg); border: 1px solid var(--redo); color: var(--redo); font-weight: 600; font-size: 13px; border-radius: 6px; padding: 5px 12px; }
   main { max-width: 1320px; margin: 0 auto; padding: 4px 16px 80px; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   col.c-name { width: 19%; } col.c-cand { width: 13.5%; } col.c-pick { width: 222px; } col.c-memo { width: auto; }
@@ -81,6 +83,7 @@
   <button id="stop" type="button" style="padding:4px 10px;font-size:12px">■ 停止</button>
   <span class="save" id="save">読み込み中…</span>
 </div></div>
+<p class="round2" id="round2"><span>2 周目：作り直し 20 場面を再選択してください(左に橙の線と「2 周目・再選択してください」の札がある行。「未選択だけ表示」で絞れます)</span></p>
 <p class="help">▶ で試聴(もう一度押すと止まる)。候補名にマウスを乗せると説明が出ます。右の 5 つから 1 つ押すと選択になり、<b>自動で保存</b>されます(A・B・C=その候補を採用／なし=その場面は無音でよい／作り直し=メモ欄の方向で作り直す)。メモ欄も自動保存です。</p>
 <main><table id="tbl">
   <colgroup><col class="c-name"><col class="c-cand"><col class="c-cand"><col class="c-cand"><col class="c-pick"><col class="c-memo"></colgroup>
@@ -132,8 +135,9 @@ for (const g of GROUPS) {
     const tip = `${s.when}\n呼び出し元: ${s.callers}\n今の仮音: ${s.temp}`;
     let html = `<td><div class="nm" title="${esc(tip)}">${esc(s.title)}<code>${s.id}</code></div><div class="tags"></div></td>`;
     for (const c of s.cands) {
-      const kind = c.kind === 'amb' ? '・環境(ループ)' : c.kind === 'quiet' ? '・静けさ' : '';
-      html += `<td><div class="cand" data-c="${c.id.toUpperCase()}"><button class="pl" type="button" title="試聴">▶</button><span class="lb" title="${esc(`${c.id.toUpperCase()}. ${c.name}(${c.dur} 秒${kind})\n${c.desc}`)}"><b>${c.id.toUpperCase()}</b>${esc(c.name)}</span></div></td>`;
+      const kind = c.kind === 'amb' ? '・環境(ループ)' : c.kind === 'quiet' ? '・静けさ' : c.kind === 'loud' ? '・大きめ(+3dB)' : '';
+      const voice = c.tts ? '\n声の素材: ' + c.tts.join('・') + '(macOS say の仮声。docs/lines.md)' : '';
+      html += `<td><div class="cand" data-c="${c.id.toUpperCase()}"><button class="pl" type="button" title="試聴">▶</button><span class="lb" title="${esc(`${c.id.toUpperCase()}. ${c.name}(${c.dur} 秒${kind})\n${c.desc}${voice}`)}"><b>${c.id.toUpperCase()}</b>${esc(c.name)}</span></div></td>`;
     }
     html += `<td><div class="picks">${PICKS.map(([v, l]) => `<button type="button" class="${v.length === 1 ? 'k ' : ''}v-${v}" data-v="${v}">${l}</button>`).join('')}</div></td>`;
     html += `<td><input class="memo" type="text" placeholder="メモ(作り直しの方向・感想)" maxlength="200"></td>`;
@@ -167,7 +171,7 @@ function paint(id) {
   for (const b of tr.querySelectorAll('.picks button')) b.classList.toggle('on', b.dataset.v === e.pick);
   for (const c of tr.querySelectorAll('.cand')) c.classList.toggle('sel', c.dataset.c === e.pick);
   const m = $('.memo', tr); if (document.activeElement !== m) m.value = e.note || '';
-  $('.tags', tr).innerHTML = needsAgain(s) ? '<span class="again-tag">作り直し済み・再選択してください</span>'
+  $('.tags', tr).innerHTML = needsAgain(s) ? `<span class="again-tag">${s.round === 2 ? '2 周目・再選択してください' : '作り直し済み・再選択してください'}</span>`
     : s.redone ? `<span class="redone-tag">${esc(s.redone)}</span>` : '';
 }
 function progress() {
