@@ -1,7 +1,7 @@
 // test_story.js — P5b-1 動線の骨組み(DESIGN §3.8 H の 11 段)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=story で自動実行。
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。キーは keydown/keyup をペアで送る。結果: window.__N2.testResult
 //  0) ?stage=N の開始状態(段・持ち物・解放・フラグ・開始位置・管理人がいるか)を 1〜11 すべて
-//  1) 第1段: 館内に管理人がいない・410 の扉の下のメモ→「221号室へ」・221 は鍵なしで入れる・机の小さな鍵を拾った瞬間に奥のクローゼットから管理人(ワープ)→
+//  1) 第1段: 館内に管理人がいない・1F 食堂の卓のメモ→「221号室へ」・221 は鍵なしで入れる・机の小さな鍵を拾った瞬間に奥のクローゼットから管理人(ワープ)→
 //     1.5 秒の間→追跡→走って廊下へ逃げ切れる(追跡中 2.5m より近づかれない・OUT なし)
 //  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
 //  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→105 の鍵→戻る)
@@ -134,6 +134,7 @@ export async function run(N) {
     N.setFlashlight(true);
     const noEnemy = N.ai.dormant && !N.enemyObj.root.visible;
     const obj0 = N.hudState().objective;
+    await tp(1, 4.15, 9.4, 0);   // 1F 食堂(メモの卓の南。北を向く)
     const memoHint = pickAt(pk('memo221'));
     N.pump(DT, 2, false);
     const obj1 = N.hudState().objective, em1 = N.hudState().objectiveEm, toast = N.hudState().toast;
@@ -178,7 +179,7 @@ export async function run(N) {
     key('ShiftLeft', false); key('KeyW', false);
     const lost = N.ai.state !== 'CHASE';
     const endDist = Math.hypot(N.enemyObj.pos.x - N.player.pos.x, N.enemyObj.pos.z - N.player.pos.z);
-    const pass = noEnemy && obj0 === '扉の下の紙を拾う' && memoHint.includes('拾う') && obj1 === '221号室へ' && em1 && toast.includes('221') && evOK
+    const pass = noEnemy && obj0 === '食堂へ' && memoHint.includes('拾う') && obj1 === '221号室へ' && em1 && toast.includes('221') && evOK
       && doorHint.includes('開ける') && opened && walked && stillDormant && keyHint.includes('拾う') && st.stage === 2 && st.item === 'small'
       && !!appearEv && appearEv.lv === 2 && Math.hypot(appearEv.x - r.interior.hide.feet[0], appearEv.z - r.interior.hide.feet[1]) < 0.05 && closetOpen
       && chaseAt !== null && chaseAt >= 1.4 && chaseAt <= 1.8 && minD > 2.5 && !dead && wi >= exit.length - 1 && (lost || endDist > 6);

@@ -95,8 +95,8 @@ export class Story {
     const T = HUD_TEXT.story.tags;
     const add = (o) => { o.mesh.position.copy(o.pos); if (o.rotY) o.mesh.rotation.y = o.rotY; this.group.add(o.mesh); this.pickups.push(o); return o; };
     const desk = (rid) => { const { r, level } = this._room(rid); const [x, z] = r.interior.points.desk; return { level, pos: new THREE.Vector3(x, levelY(level) + 0.722, z) }; };
-    // 1: 410 の扉の下のメモ・221 の机の小さな鍵
-    add({ id: 'memo221', memo: 'memo221', level: 4, pos: new THREE.Vector3(8.13, levelY(4) + 0.006, 7.02), rotY: 0.4, mesh: P.makeMemo(['221']), takenAt: 2, need: () => this.stage === 1 && this.sub === 'memo' });
+    // 1: 1F 食堂の卓の上のメモ(2026-11-01 ユーザー指示: スタート地点でなく食堂に)・221 の机の小さな鍵
+    add({ id: 'memo221', memo: 'memo221', level: 1, pos: new THREE.Vector3(4.15, levelY(1) + 0.705, 8.15), rotY: 0.3, mesh: P.makeMemo(['221']), takenAt: 2, need: () => this.stage === 1 && this.sub === 'memo' });
     { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2 }); }
     // 3: X312 の床の 105 の鍵 / 4: X105 のメモ
     add({ id: 'k105', item: '105', level: 'X312', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4 });
