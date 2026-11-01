@@ -307,6 +307,12 @@ export class World {
     root.traverse((o) => {
       if (!o.isMesh) return;
       const kind = o.userData.n2_kind || o.parent?.userData.n2_kind || '';
+      // P3c-2 差し戻し(2026-11-01 ユーザー「窓はステンレス感を強めて」): 廊下端の窓の額縁は専用材質にする。
+      // 共有の M_Stainless は 1F で風除室の静的環境(暖色)を受けて木枠のように見えるため、中立の環境・低い粗さ・やや冷たい色にする
+      if (kind === 'window' && !Array.isArray(o.material) && o.material.name === 'M_Stainless') {
+        if (!rec.winFrameMat) { rec.winFrameMat = o.material.clone(); rec.winFrameMat.name = 'M_WinFrameSS'; }
+        o.material = rec.winFrameMat;
+      }
       o.castShadow = !NO_SHADOW.has(kind);
       o.receiveShadow = true;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -337,6 +343,7 @@ export class World {
         m.lightMapIntensity = (m.lightMap === rec.lightMap2 && rec.lightMap2 ? man.lightmap2.intensity : man.lightmap.intensity) * L.lightmapGain;
         m.envMapIntensity = 0;
         if (m.metalness > 0.5 || GLASS.has(m.name)) { m.envMap = this.envTex; m.envMapIntensity = m.metalness > 0.5 ? L.metalEnv : L.glassEnv; }
+        if (m.name === 'M_WinFrameSS') { m.color.setRGB(0.70, 0.72, 0.74); m.roughness = 0.24; m.metalness = 1.0; m.envMap = this.envTex; m.envMapIntensity = L.metalEnv * (L.winFrameEnv ?? 1.8); }   // P3c-2: 廊下端の窓の額縁(ステンレス)
         if (m.name === 'MR_Mirror') m.envMapIntensity = L.mirrorEnv ?? 0.012;   // 夜の暗い部屋の鏡(共通の環境は明るすぎる)
         if (m.name === 'MX_WinGlass') { m.color.setRGB(0.1, 0.115, 0.125); m.opacity = 0.12; m.envMapIntensity = L.glassEnv * 0.5; m.roughness = 0.08; }   // 掃き出し窓のガラス(夜は暗く、映り込みだけ)
         if (m.name === 'MX_Bars') { m.alphaTest = 0.5; m.side = THREE.DoubleSide; m.transparent = false; }   // P3b: バルコニーの格子(透過テクスチャ)
