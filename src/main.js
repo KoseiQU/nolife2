@@ -32,6 +32,8 @@ import { storyDecor, setLiveDrip } from './story_doors.js';
 import { Exterior, EXT_U } from './exterior.js';
 import { DoorFx } from './door_fx.js';
 import { ViewLock } from './view_lock.js';
+import { Watcher } from './watcher.js';
+import { Tutorial } from './tutorial.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -369,6 +371,9 @@ const viewLock = new ViewLock({ camera, player });
 ai.onViewLock = (o) => viewLock.start((out) => enemy.headWorld(out).add(new THREE.Vector3(0, 0.02, 0)), o);
 // P5a: 空室の扉まわり(扉の下の隙間・奥の闇の箱・壊れた扉の破片・ガタガタ扉)
 doorFx = new DoorFx({ scene, world, building, audio: enemyAudio });
+// P5a: 窓越しの管理人(見えるだけの演出体。本体が別の階にいる時、静かな時間帯に)。テストでは自動では出さない(N.watcher.enabled / force)
+const watcher = new Watcher({ scene, camera, enemy, world, building, ai, getLevel: () => playerLevel,
+  isBusy: () => movie.active || viewLock.active || !!death, enabled: !TOUR && !PARAMS.has('test') && !PARAMS.has('noai') });
 world.onDoorBroken = (d) => doorFx.onBroken(d);
 world.onDoorRepaired = (d) => doorFx.onRepaired(d);
 if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
@@ -759,6 +764,7 @@ function step(dt) {
     busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : ai.lurkRoomId);
   updateVisibility();
   updateOutdoorLook(dt);
+  if (!TOUR) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
   updateDrips(dt);
   updateDeath(dt);
@@ -775,7 +781,7 @@ function render() {
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
   const t0 = performance.now();
-  if (!window.__n2 || !window.__n2.paused) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める
+  if ((!window.__n2 || !window.__n2.paused) && !tutorial.active) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める。P5a: チュートリアル表示中も止める
   render();
   const cpu = performance.now() - t0;
   frameTimes.push([now, dt * 1000, cpu]);
@@ -783,6 +789,9 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 // P2c: 襲撃ムービーの血(ShaderPass)と血煙(Points)のシェーダを先にコンパイルしておく(初回発動時の 50ms 級の引っかかり対策)
+// P5a: 行動パターンのチュートリアル(仮)。ゲーム開始直後に毎回(?notutorial・?tour・?test では出さない)
+const tutorial = new Tutorial();
+if (!TOUR && !PARAMS.has('notutorial') && !PARAMS.has('test')) tutorial.start();
 movie.pass.enabled = true; movie.mist.points.visible = true;
 render();
 movie.pass.enabled = false; movie.mist.points.visible = false;
@@ -819,7 +828,7 @@ window.__n2 = {
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
   enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
-  doorFx, viewLock,   // P5a
+  doorFx, viewLock, watcher, tutorial,   // P5a
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
   loadExterior: () => (exterior.ready ? Promise.resolve(exterior) : (window.__n2._extLoad ||= exterior.load())),
