@@ -78,7 +78,8 @@ export class EnemyAudio {
   // opts(P5a): cutoff = この音だけ固定のこもり(Hz。管理人の遮蔽に従わない＝扉・別の階の音)、ref = 距離減衰の基準距離(大きいほど遠くまで届く)、
   //  dur = この秒数で切る(長い音の一部だけ鳴らす)
   play(name, pos, volume = 1, opts = {}) {
-    this.log.push({ name, t: this.ctx.currentTime, vol: +volume.toFixed(3), pos: pos ? [pos.x, pos.y, pos.z].map((v) => +v.toFixed(2)) : null, ...(opts.cutoff ? { cutoff: opts.cutoff } : {}) });
+    this.logCount = (this.logCount || 0) + 1;   // P5a: 通し番号(log は 200 件で古い物から消えるので、テストは番号で区切る)
+    this.log.push({ n: this.logCount, name, t: this.ctx.currentTime, vol: +volume.toFixed(3), pos: pos ? [pos.x, pos.y, pos.z].map((v) => +v.toFixed(2)) : null, ...(opts.cutoff ? { cutoff: opts.cutoff } : {}) });
     if (this.log.length > 200) this.log.shift();
     if (this.ctx.state !== 'running') return;
     const buf = name === 'step' ? this.buffers.steps[(Math.random() * 4) | 0] : this.buffers[name];

@@ -49,7 +49,7 @@ export class Elevator {
     this._initAudio();
   }
 
-  log(ev, extra = {}) { this.events.push({ ev, level: this.car.level, ...extra }); if (this.events.length > 200) this.events.shift(); }
+  log(ev, extra = {}) { this.logCount = (this.logCount || 0) + 1; this.events.push({ n: this.logCount, ev, level: this.car.level, ...extra }); if (this.events.length > 200) this.events.shift(); }
 
   // ------------------------------------------------------------ 判定
   inCar(px, pz, key) {

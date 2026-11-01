@@ -12,14 +12,14 @@ export async function run(N) {
   pre.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9;color:#9fe39f;background:rgba(0,0,0,.75);font:11px/1.35 monospace;padding:8px;max-width:46vw;max-height:94vh;overflow:auto;white-space:pre-wrap;';
   document.body.appendChild(pre);
   const show = () => { pre.textContent = JSON.stringify(out, null, 1); };
-  const T = (name, fn) => {
-    try { const r = fn(); out.cases[name] = r; if (!r.pass) out.ok = false; }
+  const T = async (name, fn) => {
+    try { const r = await fn(); out.cases[name] = r; if (!r.pass) out.ok = false; }
     catch (e) { out.cases[name] = { pass: false, error: String(e && e.stack || e) }; out.ok = false; }
     show();
   };
   const W = harness(N);
 
-  T('1_patrol_no_wallclip', () => {
+  await T('1_patrol_no_wallclip', () => {
     W.reset();
     N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
     N.enemy.place(6.9, 15.6, Math.PI);
@@ -39,7 +39,7 @@ export async function run(N) {
     return { pass: inside === 0 && maxPen < 0.02 && path > 2.0 && states.has('PATROL'), framesInsideBox: inside, maxPenetrationAtRadius30cm_m: +maxPen.toFixed(4), pathLength_m: +path.toFixed(2), states: [...states], end: st.pos, action: st.action };
   });
 
-  T('2_run_noise_to_alert', () => {
+  await T('2_run_noise_to_alert', () => {
     W.reset();
     N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
     N.enemy.place(6.9, 15.6, 0);      // 背を向けている(視覚では気づけない)
@@ -57,7 +57,7 @@ export async function run(N) {
     return { pass: before === 'PATROL' && alertAt !== null, before, after: N.ai.state, alertAfter_s: alertAt && +alertAt.toFixed(3), distAtAlert_m: dist && +dist.toFixed(2), playerSpeed: +N.ai.playerSpeed.toFixed(2) };
   });
 
-  T('3_sight_to_chase', () => {
+  await T('3_sight_to_chase', () => {
     W.reset();
     N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(true);
     N.enemy.place(6.9, 15.6, Math.PI);   // こちらを向いている・8m
@@ -72,7 +72,7 @@ export async function run(N) {
     return { pass: chaseAt !== null && chaseAt < 0.5, chaseAfter_s: chaseAt && +chaseAt.toFixed(3), distAtStart_m: 8.0, grin1sAfterChase: grinAt1s && +grinAt1s.toFixed(2), action: N.enemyObj.current };
   });
 
-  T('4_attack_death_respawn', () => {
+  await T('4_attack_death_respawn', () => {
     W.reset();
     N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
     N.enemy.place(6.9, 8.8, Math.PI);    // 1.2m
@@ -102,7 +102,7 @@ export async function run(N) {
   });
 
   // P5a: 施錠要素の全廃(DESIGN §3.8 B)。L キーは何もしない。管理人は鍵を使わず、扉を普通に開けて(door_open_in)入ってくる
-  T('5_door_normal_entry_no_lock', () => {
+  await T('5_door_normal_entry_no_lock', () => {
     W.reset();
     N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false);
     N.pump(DT, 2, false);
@@ -132,7 +132,7 @@ export async function run(N) {
       keyL: lAfter, enteredAfter_s: enteredAt && +enteredAt.toFixed(2), enemyInRoomX: +e.x.toFixed(2), doorMaxAngle_rad: +maxAngle.toFixed(2), noKeysOrLock: noKeys, wallClipFrames: wallClip, events: evs };
   });
 
-  T('6_peephole_on_off', () => {
+  await T('6_peephole_on_off', () => {
     W.reset();
     N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(true);
     N.pump(DT, 2, false);
@@ -158,7 +158,7 @@ export async function run(N) {
     return { pass, before: { fov: before.fov }, on, offP: { ...offP, posErr: +offP.posErr.toExponential(1), rotErr: +offP.rotErr.toExponential(1) }, onE, offE: { ...offE, posErr: +offE.posErr.toExponential(1) }, shortE };
   });
 
-  T('7_lurk_ambush_attack', () => {
+  await T('7_lurk_ambush_attack', () => {
     W.reset();
     N.setView(6.9, 12.0, Math.PI, 0); N.setFlashlight(false);
     N.enemy.place(9.4, 7.05, -1.73);   // P3b: 410 の隠れ場所 r410_back は内装が入って玄関の先(トイレの扉の前)へ移った(P3b-2 の鏡像で北寄りへ)
@@ -188,7 +188,7 @@ export async function run(N) {
     };
   });
 
-  T('8_dark_visibility', () => {
+  await T('8_dark_visibility', () => {
     W.reset();
     N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 21.0, Math.PI);
     const res = {};
@@ -200,7 +200,7 @@ export async function run(N) {
     return { pass, meanLumaCenter50: res, threshold: DARK_MIN };
   });
 
-  T('9_witness_scope_return_out', () => {
+  await T('9_witness_scope_return_out', () => {
     W.reset(); N.ai.lurkEnabled = false;
     // 扉を開け、戸口(廊下側)に立つ。管理人は 2.8m 先からこちらを向いている(暗く静止=まだ見つかっていない)
     N.doorApi.open('410'); for (let i = 0; i < 60; i++) N.pump(DT, 1, false);
@@ -240,7 +240,7 @@ export async function run(N) {
     };
   });
 
-  T('10_unwitnessed_dark_safe', () => {
+  await T('10_unwitnessed_dark_safe', () => {
     W.reset(); N.ai.lurkEnabled = false;
     N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false);
     N.pump(DT, 2, false);
@@ -267,7 +267,7 @@ export async function run(N) {
     return { pass: skipAt !== null && !safe.opened && safe.known === null && !safe.dead && safe.doorAngle === 0 && leftDoor > 1.5 && lightWhy === 'light', ...safe, lightLeakKnownWhy: lightWhy };
   });
 
-  T('11_hud_hints', () => {
+  await T('11_hud_hints', () => {
     W.reset();
     N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 21.0, Math.PI);
     const H = () => N.hudState();
@@ -293,6 +293,403 @@ export async function run(N) {
       // P3a: EV が動くようになったので、呼ぶと「エレベーターを呼んだ」(カゴがこの階なら「扉が開く」)。P2e の期待値は「反応がない」だった
       && r.ev.includes('呼ぶ') && ['エレベーターを呼んだ', '扉が開く'].includes(r.evToast) && r.flashToast.includes('懐中電灯') && r.controls;
     return { pass, ...r, peep: { hint: r.peep.hint, release: r.peep.release } };
+  });
+
+  // ================================================================ P5a(DESIGN §3.8 A・B・C・E・F)
+  // ai.events / enemyAudio.log は上限で古い物から消えるので、区切りは時刻・通し番号で取る
+  const evMark = () => N.ai.time + 1e-4;
+  const evSince = (t0) => N.ai.events.filter((e) => e.t >= t0 - 2e-3);
+  const has = (t0, name) => evSince(t0).some((e) => e.ev === name);
+  const aud0 = () => N.enemyAudio.logCount || 0;
+  const sounds = (a0) => N.enemyAudio.log.filter((l) => l.n > a0).map((l) => l.name);
+  const audSince = (a0) => N.enemyAudio.log.filter((l) => l.n > a0);
+  // 管理人を空室に潜ませる(その場で。扉は閉じている)
+  const lurkIn = (room) => { N.ai.setState('LURK', { force: true, log: true, room, standNow: true }); N.pump(DT, 3, false); };
+  // 経由点へ向けて歩く/走る(毎フレーム向きを合わせる。凍結中は触らない)
+  const steer = (wps, st) => {
+    if (N.player.frozen) return;
+    const p = N.player.pos;
+    let [wx, wz] = wps[st.i];
+    if (Math.hypot(wx - p.x, wz - p.z) < 0.4 && st.i < wps.length - 1) { st.i++; [wx, wz] = wps[st.i]; }
+    N.player.object.rotation.set(0, Math.atan2(-(wx - p.x), -(wz - p.z)), 0, 'YXZ');
+  };
+
+  // 12) 点灯で潜伏室(407)の前を通る → 通り過ぎた瞬間に扉を壊して飛び出し、視点が管理人へ向き、襲撃ムービー → OUT。しゃがんでいても救済なし
+  await T('12_room_lurk_lit_pass_attack', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(6.9, 12.0, Math.PI, 0); N.setFlashlight(true);
+    lurkIn('407');
+    const hidden = { concealed: N.ai.concealed, visible: N.enemyObj.root.visible, doorAngle: N.doorApi.get('407').angle };
+    const ev0 = evMark(), a0 = aud0(), vl0 = N.viewLock.log.length;
+    W.key('ControlLeft', true); W.key('KeyW', true);
+    let t = 0, burstAt = null, zAtBurst = null, aimAfter = null, attackAt = null, deadAt = null;
+    for (let i = 0; i < Math.round(14 / DT) && deadAt === null; i++) {
+      N.pump(DT, 1, false); t += DT;
+      if (burstAt === null && has(ev0, 'lurk_burst')) { burstAt = t; zAtBurst = N.player.pos.z; W.key('KeyW', false); }
+      if (burstAt !== null && aimAfter === null && t - burstAt >= 0.32) {   // 視点が管理人の頭の方を向いている(振り向かされた → 襲撃ムービー)
+        const f = N.camera.getWorldDirection(new N.THREE.Vector3()), h = N.enemyObj.headWorld(new N.THREE.Vector3()).sub(N.camera.position).normalize();
+        aimAfter = f.angleTo(h);
+      }
+      if (attackAt === null && N.ai.state === 'ATTACK') attackAt = t;
+      if (N.deathState()) deadAt = t;
+    }
+    W.key('ControlLeft', false); W.key('KeyW', false);
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    const pass0 = evSince(ev0).find((e) => e.ev === 'lurk_pass');
+    const d = N.doorApi.get('407');
+    const vl = N.viewLock.log.slice(vl0).map((l) => l.ev + ':' + l.label);
+    const brokenNow = !!d.broken;
+    N.doorApi.repairDoor('407');
+    N.ai.lurkEnabled = true;
+    return {
+      pass: hidden.concealed && !hidden.visible && hidden.doorAngle === 0 && pass0 && pass0.lit === true && burstAt !== null && zAtBurst > 15.95 + 1.2
+        && sounds(a0).includes('crash') && brokenNow && vl.includes('start:burst_lit') && vl.includes('handoff:burst_lit') && aimAfter !== null && aimAfter < 0.25
+        && attackAt !== null && attackAt - burstAt < 1.5 && deadAt !== null,
+      hiddenWhileLurking: hidden, passedLit: pass0 && pass0.lit, zAtBurst: zAtBurst && +zAtBurst.toFixed(2), crouched: true, aimErrorAfter0_32s_rad: aimAfter && +aimAfter.toFixed(3),
+      burstToAttack_s: attackAt && +(attackAt - burstAt).toFixed(2), out: deadAt !== null, doorBroken: brokenNow, viewLock: vl,
+    };
+  });
+
+  // 13) 消灯で潜伏室(409)の前を通る → 4〜6m 離れた所で飛び出し、視点を固定する短いムービー(1.2〜1.8 秒・操作不能)→ 元の視点 → 追跡。走って逃げ切れる
+  await T('13_room_lurk_dark_pass_chase_escape', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
+    lurkIn('409');
+    const ev0 = evMark(), vl0 = N.viewLock.log.length;
+    W.key('KeyW', true);
+    let t = 0, burstAt = null, distAtBurst = null, lockStart = null, lockEnd = null, frozenDuring = true, rot0 = null, rotErr = null, chaseAt = null, distAtChase = null;
+    let minDChase = Infinity, lostAt = null, dead = false;
+    const st = { i: 0 }, wps = [[6.9, 21.2], [25.0, 21.2]];
+    for (let i = 0; i < Math.round(40 / DT); i++) {
+      if (chaseAt !== null) steer(wps, st);
+      N.pump(DT, 1, false); t += DT;
+      if (burstAt === null && has(ev0, 'lurk_burst')) {
+        burstAt = t; distAtBurst = Math.hypot(N.player.pos.x - 7.8, N.player.pos.z - 10.15); W.key('KeyW', false);
+        rot0 = N.player.object.rotation.clone();
+      }
+      if (burstAt !== null && lockStart === null && N.viewLock.active) { lockStart = t; rot0 = N.viewLock.saved.euler.clone(); }
+      if (lockStart !== null && lockEnd === null) { if (N.viewLock.active) { if (!N.player.frozen) frozenDuring = false; } else { lockEnd = t; const wr = (a) => Math.abs(Math.atan2(Math.sin(a), Math.cos(a))); rotErr = wr(N.player.object.rotation.y - rot0.y) + wr(N.player.object.rotation.x - rot0.x); } }
+      if (chaseAt === null && N.ai.state === 'CHASE') { chaseAt = t; distAtChase = W.dist(); W.key('ShiftLeft', true); W.key('KeyW', true); }
+      if (chaseAt !== null && lostAt === null) { if (N.ai.state === 'CHASE') minDChase = Math.min(minDChase, W.dist()); else lostAt = t; }
+      if (N.deathState()) dead = true;
+      if (lostAt !== null) break;
+    }
+    W.key('KeyW', false); W.key('ShiftLeft', false);
+    const passEv = evSince(ev0).find((e) => e.ev === 'lurk_pass');
+    const lockLen = lockEnd !== null && lockStart !== null ? lockEnd - lockStart : null;
+    const brokenNow = !!N.doorApi.get('409').broken;
+    N.doorApi.repairDoor('409');
+    const r = {
+      pass: passEv && passEv.lit === false && burstAt !== null && distAtBurst >= 4.0 && distAtBurst <= 6.3 && lockLen !== null && lockLen >= 1.2 && lockLen <= 1.85 && frozenDuring
+        && rotErr !== null && rotErr < 1e-3 && chaseAt !== null && distAtChase >= 3.5 && minDChase > 1.4 && lostAt !== null && lostAt - chaseAt < 12 && !dead && brokenNow,
+      burstAtDist_m: distAtBurst && +distAtBurst.toFixed(2), plannedBurstAt_m: passEv && passEv.burstAt, viewLock_s: lockLen && +lockLen.toFixed(2), inputFrozenDuringLock: frozenDuring,
+      viewRestoredErr_rad: rotErr && +rotErr.toExponential(1), distAtChaseStart_m: distAtChase && +distAtChase.toFixed(2), minDistDuringChase_m: +minDChase.toFixed(2),
+      chaseLostAfter_s: lostAt && +(lostAt - chaseAt).toFixed(1), stateAfter: N.ai.state, out: dead, viewLockLog: N.viewLock.log.slice(vl0).map((l) => l.ev + ':' + l.label),
+    };
+    N.ai.lurkEnabled = true;
+    return r;
+  });
+
+  // 14) 壊れた扉は開いた扱い(通れる)のまま残り、死亡 → チェックポイント復帰の後も壊れたまま。戸口の奥(1.2m 先)には入れない
+  await T('14_broken_door_persists', () => {
+    W.reset();
+    const broke = N.doorApi.breakDoor('408') || !!N.doorApi.get('408').broken;
+    N.pump(DT, 30, false);
+    // 死亡 → 復帰(4 番と同じ)
+    N.setView(6.9, 7.6, Math.PI, 0); N.enemy.place(6.9, 8.8, Math.PI);
+    N.ai.lastKnown = { x: 6.9, z: 7.6 }; N.ai.setState('CHASE', { force: true, log: true });
+    const deaths0 = N.deaths();
+    for (let i = 0; i < Math.round(12 / DT) && N.deaths() === deaths0; i++) N.pump(DT, 1, false);
+    for (let i = 0; i < Math.round(2 / DT); i++) N.pump(DT, 1, false);
+    const d = N.doorApi.get('408');
+    const after = { died: N.deaths() === deaths0 + 1, broken: !!d.broken, angle: +d.angle.toFixed(2), open: N.doorApi.isOpen('408'), debris: N.doorFx.stats().broken.includes('408'), blockers: d.blockers.length };
+    // 廊下から戸口へ歩いて入る(408 は W 向き・扉面 x=7.8)
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 20.6, Math.PI);
+    N.setView(7.0, 13.05, -Math.PI / 2, 0);
+    W.key('KeyW', true); for (let i = 0; i < Math.round(3 / DT); i++) N.pump(DT, 1, false); W.key('KeyW', false); N.pump(DT, 2, false);
+    const depth = N.player.pos.x - 7.8;
+    N.doorApi.repairDoor('408'); N.setView(6.9, 12.0, Math.PI, 0); N.pump(DT, 2, false);
+    return { pass: broke && after.died && after.broken && after.angle > 1.0 && after.open && after.debris && after.blockers > 0 && depth > 0.3 && depth < 1.3, afterRespawn: after, walkedIntoDoorway_m: +depth.toFixed(2) };
+  });
+
+  // 15) 前を通らないまま、プレイヤーが別の階へ移ると 20〜60 秒で静かに出てくる(扉は壊れない・破壊音なし・扉は閉じる)
+  await T('15_silent_release_after_floor_change', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(6.9, 12.0, Math.PI, 0);
+    lurkIn('407');
+    const ev0 = evMark(), a0 = aud0();
+    N.ai.playerLevelAt = () => 6;   // プレイヤーは 6F へ移った(AI から見て)
+    let t = 0, relAt = null, outAt = null, maxAngle = 0;
+    const planned = (N.ai.events.filter((e) => e.ev === 'lurk_room_in').pop() || {}).releaseAt;
+    for (let i = 0; i < Math.round(75 / DT); i++) {
+      N.pump(DT, 1, false); t += DT;
+      maxAngle = Math.max(maxAngle, N.doorApi.get('407').angle);
+      if (relAt === null && has(ev0, 'lurk_release')) relAt = t;
+      if (outAt === null && has(ev0, 'lurk_released')) outAt = t;
+      if (outAt !== null && t - outAt > 1.5) break;
+    }
+    const d = N.doorApi.get('407');
+    const snd = sounds(a0);
+    const r = { pass: relAt !== null && relAt >= 20 - 0.1 && relAt <= 60 + 0.5 && maxAngle > 1.0 && d.angle < 0.01 && !d.broken && !snd.includes('crash') && snd.includes('latch') && N.ai.state === 'PATROL' && !N.ai.concealed,
+      releaseAfter_s: relAt && +relAt.toFixed(1), plannedReleaseAt_s: planned, outAfter_s: outAt && +outAt.toFixed(1), doorMaxAngle: +maxAngle.toFixed(2), doorClosedAfter: d.angle < 0.01, broken: !!d.broken,
+      sounds: [...new Set(snd)], why: (evSince(ev0).find((e) => e.ev === 'lurk_release') || {}).why, stateAfter: N.ai.state };
+    N.ai.lurkEnabled = true;
+    return r;
+  });
+
+  // 16) 管理人の階の移動は常に EV(全ての階の組の経路に階段の辺が無い・実際の移動も EV のカゴが動く)
+  await T('16_ev_only_moves', () => {
+    W.reset();
+    const bad = [];
+    let pairs = 0;
+    for (let a = 1; a <= 7; a++) for (let b = 1; b <= 7; b++) {
+      if (a === b) continue;
+      for (const [fx, fz, tx, tz] of [[6.9, 19.0, 6.9, 19.0], [6.9, 21.2, 20.0, 21.2]]) {
+        const r = N.ai._route(fx, fz, tx, tz, a, b);
+        pairs++;
+        if (r.some((w) => w.via === 'stair') || !r.some((w) => w.via === 'ev') || r[r.length - 1].lv !== b) bad.push(`${a}->${b}`);
+      }
+    }
+    // 実際に 4F → 2F へ(ALERT)。カゴの表示が動き、移動は EV だけ
+    N.ai.reset(6.9, 20.6, Math.PI, 4);
+    const ev0 = evMark(), sh0 = N.elevator.shownLog.length;
+    N.ai.playerLevelAt = () => 2;
+    N.ai.lastKnown = { x: 12.0, z: 21.2, lv: 2 };
+    N.ai.setState('ALERT', { force: true, log: true, react: false });
+    let t = 0;
+    while (t < 90 && !(N.ai.level === 2 && has(ev0, 'transfer_end'))) { N.pump(DT, 1, false); t += DT; }
+    const vias = evSince(ev0).filter((e) => e.ev === 'transfer_start' || e.ev === 'transfer_end').map((e) => e.via);
+    const floors = [...new Set(N.elevator.shownLog.slice(sh0).map((x) => x.floor))];
+    return { pass: bad.length === 0 && N.ai.level === 2 && vias.length >= 2 && vias.every((v) => v === 'ev') && floors.includes(3) && floors.includes(2),
+      routesChecked: pairs, routesWithStairsOrNoEV: bad, ride4to2: { arrived: N.ai.level === 2, vias, displayFloors: floors, sec: +t.toFixed(1) } };
+  });
+
+  // 17) 行き先の階の重み付き乱数＋監督役: 1000 回の抽選でプレイヤーの階が最頻。静か(遭遇の直後)は減り、緊張(長く遭遇なし)は増える。同じ階に居続けない
+  await T('17_director_floor_weights', () => {
+    W.reset();
+    N.ai.reset(6.9, 20.6, Math.PI, 2);
+    const rng = ((a) => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let x = Math.imul(a ^ (a >>> 15), 1 | a); x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x; return ((x ^ (x >>> 14)) >>> 0) / 4294967296; })(99);
+    const draw = (phase) => { const c = {}; for (let i = 0; i < 1000; i++) { const lv = N.ai._chooseFloor(phase, rng); c[lv] = (c[lv] || 0) + 1; } return c; };
+    const normal = draw('normal'), calm = draw('calm'), tense = draw('tense');
+    const top = (c) => +Object.entries(c).sort((a, b) => b[1] - a[1])[0][0];
+    // 音の履歴: 6F で何度も音がすると 6F が増える
+    N.ai.noiseHist = { 6: 3 };
+    const noisy = draw('normal');
+    N.ai.noiseHist = {};
+    // 同じ階の上限: 4F(プレイヤーの階)で 2 回続けて潜んだ管理人(4F にいる)は、次に 4F を選ばない
+    N.ai.reset(6.9, 20.6, Math.PI, 4); N.ai.floorStreak = AI_STAY(); N.ai._lastLurkLevel = 4;
+    const capped = draw('normal');
+    N.ai.floorStreak = 0; N.ai._lastLurkLevel = null;
+    // 監督役の段階: 遭遇の直後は calm、240 秒以上なければ tense
+    N.ai.lastEncounter = N.ai.time; const p1 = N.ai.phase();
+    N.ai.lastEncounter = N.ai.time - 150; const p2 = N.ai.phase();
+    N.ai.lastEncounter = N.ai.time - 300; const p3 = N.ai.phase();
+    N.ai.lastEncounter = N.ai.time - 120;
+    return { pass: top(normal) === 4 && tense[4] > normal[4] && calm[4] < normal[4] && noisy[6] > normal[6] && !capped[4] && p1 === 'calm' && p2 === 'normal' && p3 === 'tense',
+      playerFloor: 4, draws1000: { normal, calm, tense, noisy6F: noisy, stayCapped4F: capped }, phases: [p1, p2, p3], weightsNormal: N.ai.floorWeights('normal') };
+  });
+  function AI_STAY() { return 2; }
+
+  // 18) EV の賭け: 管理人を乗せたカゴが止まってから T 秒以内に別の階で呼ぶ → チャイム → 扉が開くと中に管理人(近ければ襲撃、3m 以上離れれば追跡)。T を過ぎれば空のカゴ
+  await T('18_ev_gamble', () => {
+    const ev = N.elevator, panel = N.hud.evPanel;
+    const callHere = () => {   // 4F の EV ホールで呼びボタンを E(本物の操作の経路: main → elevator.call → ai.evGambleCheck)
+      const ex = panel.x - 0.9 * 0.2, ez = panel.z - 0.9;
+      N.setView(ex, ez, Math.atan2(-(panel.x - ex), -(panel.z - ez)), 0); N.pump(DT, 2, false);
+      W.key('KeyE', true); N.pump(DT, 3, false); W.key('KeyE', false); N.pump(DT, 2, false);
+    };
+    const setup = (age) => {
+      W.reset(); N.ai.lurkEnabled = false;
+      N.ai.reset(6.9, 19.5, Math.PI, 6); N.ai.setState('PATROL', { force: true });
+      Object.assign(ev.car, { level: 6, state: 'idle', open: 0, pending: [], riding: false, to: null });
+      ev.npc = null; ev.npcStop = { level: 6, t: ev.time - age };
+      N.pump(DT, 2, false);
+    };
+    const runCase = (age, walkAway) => {
+      setup(age);
+      const ev0 = evMark(), e0 = ev.logCount || 0;
+      callHere();
+      let t = 0, chimeAt = null, openStartAt = null, openFullAt = null, attack = false, chase = false, dead = false, inCarAtOpen = null;
+      for (let i = 0; i < Math.round(30 / DT); i++) {
+        N.pump(DT, 1, false); t += DT;
+        const evs = ev.events.filter((x) => x.n > e0);
+        if (chimeAt === null && evs.some((x) => x.ev === 'sfx' && x.name === 'chime') && ev.car.level === 4) { chimeAt = t; if (walkAway) { N.setView(6.9, 16.5, 0, 0); } }
+        if (chimeAt !== null && openStartAt === null && ev.car.state === 'opening') openStartAt = t;
+        if (chimeAt !== null && openFullAt === null && ev.car.open >= 1) { openFullAt = t; inCarAtOpen = N.ai.level === 4 && !N.ai.transit && N.enemyObj.root.visible; }
+        if (N.ai.state === 'ATTACK') attack = true;
+        if (N.ai.state === 'CHASE') chase = true;
+        if (N.deathState()) { dead = true; break; }
+        if (openFullAt !== null && t - openFullAt > 3) break;
+      }
+      for (let i = 0; i < Math.round(6 / DT) && N.deathState(); i++) N.pump(DT, 1, false);
+      return { ambush: has(ev0, 'ev_ambush'), decided: (evSince(ev0).find((e) => /^ev_ambush_/.test(e.ev)) || {}).ev || null, chimeToOpenStart_s: chimeAt !== null && openStartAt !== null ? +(openStartAt - chimeAt).toFixed(2) : null, chimeToFullOpen_s: chimeAt !== null && openFullAt !== null ? +(openFullAt - chimeAt).toFixed(2) : null,
+        managerInCarAtOpen: inCarAtOpen, attack, chase, out: dead, managerLevel: N.ai.level };
+    };
+    const near = runCase(5, false);
+    const away = runCase(5, true);
+    const late = runCase(40, false);
+    N.ai.lurkEnabled = true;
+    return { pass: near.ambush && near.managerInCarAtOpen && near.attack && near.out && near.chimeToFullOpen_s >= 1.5 && near.chimeToFullOpen_s <= 2.0
+      && away.ambush && away.decided === 'ev_ambush_chase' && away.chase && near.decided === 'ev_ambush_attack' && !late.ambush && !late.managerInCarAtOpen && late.managerLevel === 6 && !late.out,
+      T_s: N.ai.constructor === Object ? null : 25, calledWithin5s: near, walkedAway: away, calledAfter40s: late };
+  });
+
+  // 19) 管理人がプレイヤーの階に着くたびに一度だけ「管理人が同じ階で…」(3 秒)。同じ滞在中に二度は出ない。出て行って戻ると、また出る
+  await T('19_same_floor_notice', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(6.9, 10.0, Math.PI, 0);
+    const n0 = N.hud.noticeLog.length;
+    N.ai.reset(6.9, 20.6, Math.PI, 2);
+    const go = (lv, x = 12.0) => { N.ai.lastKnown = { x, z: 21.2, lv }; N.ai.setState('ALERT', { force: true, log: true, react: false }); let t = 0; while (t < 90 && !(N.ai.level === lv && !N.ai.transit)) { N.pump(DT, 1, false); t += DT; } return t; };
+    const t1 = go(4);
+    N.pump(DT, 20, false);
+    const shown1 = N.hudState().notice;
+    const c1 = N.hud.noticeLog.length - n0;
+    for (let i = 0; i < Math.round(12 / DT); i++) N.pump(DT, 1, false);   // 同じ滞在(4F で探し回る)
+    const c1b = N.hud.noticeLog.length - n0;
+    const hidAfter = N.hudState().notice === '';
+    go(5); const c2 = N.hud.noticeLog.length - n0;     // 5F へ(プレイヤーは 4F): 出ない
+    go(4); const c3 = N.hud.noticeLog.length - n0;     // 戻ってきた: また出る
+    N.ai.lurkEnabled = true;
+    return { pass: c1 === 1 && shown1.includes('管理人が同じ階で「プレイヤー」をさがしている') && c1b === 1 && hidAfter && c2 === 1 && c3 === 2,
+      text: shown1, arrive4F_s: +t1.toFixed(1), countAfterArrival: c1, countSameStay12s: c1b, hiddenAfter3s: hidAfter, countAfter5F: c2, countAfterReturn: c3 };
+  });
+
+  // 20) ガタガタ扉: 激しく揺れて鳴るが絶対に出てこない(扉は開かない・当たりは閉じたまま・管理人はそのまま)。潜伏中の部屋では起こさない。発生は 4〜15m の扉
+  await T('20_rattle_door_never_opens', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 20.6, Math.PI);
+    N.setView(6.9, 8.0, Math.PI, 0);
+    const a0 = aud0(), e0 = evMark();
+    const ok = N.doorFx.rattle('403', 4.0);
+    const d = N.doorApi.get('403');
+    let maxRot = 0, maxAngle = 0, opened = false;
+    for (let i = 0; i < Math.round(5 / DT); i++) {
+      N.pump(DT, 1, false);
+      maxRot = Math.max(maxRot, Math.abs(d.node ? d.node.rotation.y : 0)); maxAngle = Math.max(maxAngle, d.angle);
+      if (d.collision.disabled) opened = true;
+    }
+    const enemyPos = N.ai.stats().pos;
+    const restRot = d.node ? Math.abs(d.node.rotation.y) : 0;
+    // 潜伏中の部屋では起こさない
+    N.ai.lurkEnabled = false; lurkIn('402'); N.pump(DT, 2, false);
+    const okLurk = N.doorFx.rattle('402', 3.0);
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 20.6, Math.PI);
+    // 自然発生: プレイヤーから 4〜15m の空室の扉を選ぶ
+    N.doorFx.rattleT = 0; const r0 = N.doorFx.time;
+    N.pump(DT, 3, false);
+    const pick = N.doorFx.events.filter((x) => x.t >= r0 - 0.01).find((x) => x.ev === 'rattle');
+    const pd = pick ? N.doorApi.get(pick.room) : null;
+    const pdist = pd ? Math.hypot(pd.pos[0] - N.player.pos.x, pd.pos[1] - N.player.pos.z) : null;
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    N.ai.lurkEnabled = true;
+    return { pass: ok && maxRot > 0.01 && maxAngle === 0 && !opened && restRot < 1e-6 && sounds(a0).includes('slam') && !evSince(e0).some((x) => x.ev === 'lurk_burst') && enemyPos[1] === 20.6 && !okLurk
+      && pick && pdist >= 4 && pdist <= 15,
+      shakeMaxRad: +maxRot.toFixed(3), doorOpenAngleMax: maxAngle, collisionOpened: opened, restAfter: restRot, sound: sounds(a0).includes('slam'), notInLurkRoom: !okLurk, scheduled: pick && { room: pick.room, dist_m: +pdist.toFixed(1), dur: pick.dur } };
+  });
+
+  // 21) 窓越しの管理人: 本体が別の階にいる時、廊下端の窓の外(敷地)に現れ、3 秒見続けると消える/見た後に視線を外すと消える。本体が同じ階なら出ない
+  await T('21_window_watcher', async () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    await N.loadExterior();
+    const Wt = N.watcher;
+    const wasEnabled = Wt.enabled; Wt.enabled = true;
+    N.ai.reset(6.9, 20.6, Math.PI, 2); N.ai.setState('SCRIPTED', { force: true });
+    const lookAt = () => { const s = Wt.active.spot, p = N.camera.position; const dx = s.x - p.x, dz = s.z - p.z, dy = s.y + 1.2 - p.y; N.player.object.rotation.set(Math.atan2(dy, Math.hypot(dx, dz)), Math.atan2(-dx, -dz), 0, 'YXZ'); };
+    // a) 窓に背を向けて置く → 窓へ向き直って見続ける → 3 秒で消える
+    N.setView(25.65, 21.2, Math.PI / 2, 0); N.pump(DT, 2, false);
+    const placedA = Wt.force();
+    const spotA = Wt.active && Wt.active.spot.id, visA = Wt.root && Wt.root.visible;
+    if (Wt.active) lookAt();
+    let t = 0, goneA = null;
+    for (let i = 0; i < Math.round(5 / DT) && goneA === null; i++) { N.pump(DT, 1, false); t += DT; if (!Wt.active) goneA = t; }
+    const whyA = (Wt.events.filter((e) => e.ev === 'hide').pop() || {}).why;
+    // b) 見て(0.5 秒)から視線を外す → 戻すともういない
+    N.setView(25.65, 21.2, Math.PI / 2, 0); N.pump(DT, 2, false);
+    const placedB = Wt.force();
+    if (Wt.active) lookAt();
+    N.pump(DT, 30, false);
+    const seenB = Wt.active && Wt.active.seenOnce;
+    N.player.object.rotation.set(0, Math.PI / 2, 0, 'YXZ'); N.pump(DT, 20, false);
+    const goneB = !Wt.active, whyB = (Wt.events.filter((e) => e.ev === 'hide').pop() || {}).why;
+    // c) 本体が同じ階(4F)なら、間隔が来ても出ない
+    N.ai.reset(6.9, 20.6, Math.PI, 4); N.ai.setState('SCRIPTED', { force: true });
+    Wt.nextAt = Wt.time; N.player.object.rotation.set(0, Math.PI / 2, 0, 'YXZ');
+    for (let i = 0; i < 60; i++) N.pump(DT, 1, false);
+    const sameFloorShown = !!Wt.active;
+    Wt.enabled = wasEnabled; Wt.hide('test');
+    N.ai.lurkEnabled = true;
+    return { pass: placedA && visA && goneA !== null && goneA >= 2.9 && goneA <= 3.6 && whyA === 'stared' && placedB && seenB && goneB && whyB === 'looked_away' && !sameFloorShown,
+      a: { spot: spotA, visible: visA, goneAfter_s: goneA && +goneA.toFixed(2), why: whyA }, b: { seen: seenB, gone: goneB, why: whyB }, sameFloorShown };
+  });
+
+  // 22) 別の階の大きな音: プレイヤーが上の階(5F)で走ると、4F の管理人が EV で 5F へ来る。2 階離れた落下音は届かない(履歴にだけ残る)
+  await T('22_cross_floor_noise', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.ai.reset(6.9, 19.0, Math.PI, 4); N.ai.setState('PATROL', { force: true });
+    N.ai._lastFloorGo = -1e9;
+    const ev0 = evMark();
+    // 2 階離れた(6F)落下音
+    N.ai.noiseRoom('607', 15.0, 25.0, 6);
+    const fall6 = { went: has(ev0, 'heard_floor'), hist6: +(N.ai.noiseHist[6] || 0).toFixed(2) };
+    // 5F で走る(AI から見てプレイヤーは 5F)
+    N.ai.playerLevelAt = () => 5;
+    N.setView(6.9, 8.0, Math.PI, 0);
+    W.key('ShiftLeft', true); W.key('KeyW', true);
+    let t = 0, heardAt = null;
+    for (let i = 0; i < Math.round(3 / DT); i++) { N.pump(DT, 1, false); t += DT; if (heardAt === null && has(ev0, 'heard_floor')) heardAt = t; }
+    W.key('KeyW', false); W.key('ShiftLeft', false);
+    while (t < 80 && !(N.ai.level === 5 && has(ev0, 'transfer_end'))) { N.pump(DT, 1, false); t += DT; }
+    const vias = evSince(ev0).filter((e) => e.ev === 'transfer_end').map((e) => e.via);
+    const hf = evSince(ev0).find((e) => e.ev === 'heard_floor');
+    N.ai.lurkEnabled = true;
+    return { pass: !fall6.went && fall6.hist6 > 0 && heardAt !== null && hf && hf.lv === 5 && hf.kind === 'run' && N.ai.level === 5 && vias.length > 0 && vias.every((v) => v === 'ev'),
+      fall2FloorsAway: fall6, heardRunAfter_s: heardAt && +heardAt.toFixed(2), heard: hf && { lv: hf.lv, kind: hf.kind, heard: hf.heard }, arrived5F_s: +t.toFixed(1), vias };
+  });
+
+  // 23) 静かな予兆: 潜伏中の部屋だけ扉の下の帯が揺らぐ。扉から 1.5m 以内で 1 秒以上静止すると、ごく小さな呼吸音
+  await T('23_omen_strip_and_breath', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.setView(6.9, 8.5, Math.PI, 0);
+    lurkIn('408');
+    for (let i = 0; i < Math.round(3 / DT); i++) N.pump(DT, 1, false);
+    const fx = N.doorFx.stats();
+    const st4 = N.doorFx.strips.get(4);
+    const idx = st4.ids.indexOf('408');
+    const uni = { lurk: st4.u.uLurk.value, amt: +st4.u.uAmt.value.toFixed(2) };
+    // 扉の正面 1.0m(帯の中)で静止 → 1 秒後に呼吸
+    const a0 = aud0(), ev0 = N.ai.events.length;
+    N.setView(6.8, 13.05, -Math.PI / 2, 0);
+    let t = 0, breathAt = null;
+    for (let i = 0; i < Math.round(3 / DT); i++) { N.pump(DT, 1, false); t += DT; if (breathAt === null && sounds(a0).includes('breathDoor')) breathAt = t; }
+    const passWhileStill = has(ev0, 'lurk_pass');
+    const vol = (audSince(a0).find((l) => l.name === 'breathDoor') || {}).vol;
+    // 歩いている(静止していない)間は鳴らない
+    N.ai.reset(6.9, 20.6, Math.PI, 4); lurkIn('408');
+    const a1 = aud0();
+    N.setView(6.9, 12.2, Math.PI, 0); W.key('KeyW', true);
+    for (let i = 0; i < Math.round(0.9 / DT); i++) N.pump(DT, 1, false);
+    W.key('KeyW', false);
+    const breathWalking = sounds(a1).includes('breathDoor');
+    N.ai.reset(6.9, 20.6, Math.PI, 4);
+    N.ai.lurkEnabled = true;
+    return { pass: fx.lurkId === '408' && fx.lurkAmt > 0.9 && uni.lurk === idx && uni.amt > 0.9 && breathAt !== null && breathAt >= 0.95 && breathAt < 1.6 && vol < 0.3 && !passWhileStill && !breathWalking,
+      strip: { ...uni, index408: idx }, breathAfterStill_s: breathAt && +breathAt.toFixed(2), breathVolume: vol, passWhileStanding: passWhileStill, breathWhileWalking: breathWalking };
+  });
+
+  // 24) チュートリアル(仮): カードが 4〜5 枚、クリック/Esc で送り、最後で閉じる(?test では自動で出さない)
+  await T('24_tutorial_cards', () => {
+    const tu = N.tutorial;
+    const autoShown = tu.active || tu.log.length > 0;
+    tu.start();
+    const first = tu.state();
+    const press = (code) => window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+    press('Escape'); const second = tu.state();
+    tu.root.dispatchEvent(new MouseEvent('click', { bubbles: true })); const third = tu.state();
+    for (let i = 0; i < 5; i++) press('Escape');
+    const end = tu.state();
+    return { pass: !autoShown && first.active && first.index === 0 && first.count >= 4 && first.count <= 5 && second.index === 1 && third.index === 2 && !end.active,
+      autoShownUnderTest: autoShown, cards: first.count, titles: N.tutorial.cards.map((c) => c.title), afterEsc: second.index, afterClick: third.index, closed: !end.active };
   });
 
   W.reset();
@@ -329,8 +726,10 @@ function harness(N) {
       return +(s / (w * h)).toFixed(4);
     },
     reset() {
-      for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'KeyE', 'KeyP', 'KeyL']) this.key(k, false);
+      for (const k of ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ShiftLeft', 'KeyE', 'KeyP', 'KeyL', 'ControlLeft']) this.key(k, false);
       N.peephole(false);
+      N.viewLock.cancel();
+      delete N.ai.playerLevelAt; N.ai.playerLevelAt = () => N.level;   // P5a のテストは「プレイヤーの階」を差し替えることがある
       const d = door410();
       d.angle = 0; d.target = 0; d.locked = false; d.speedMul = 1; if (d.collision) d.collision.disabled = false;
       d.node.rotation.y = 0;

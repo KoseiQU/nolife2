@@ -1558,10 +1558,15 @@ export class EnemyAI {
     this.log(near ? 'ev_ambush_attack' : 'ev_ambush_chase', { dist: +dist.toFixed(2) });
     if (near) {
       if (this.onViewLock) this.onViewLock({ total: 0, label: 'ev', returnView: false });
-      for (let k = 0; k < 1.6; k += this.dt) {
+      // カゴの戸口を抜けてから(袖の壁に引っ掛からない)プレイヤーへ詰める
+      const exit = { x: door.x, z: door.z - 0.35 };
+      let out = false;
+      for (let k = 0; k < 2.0; k += this.dt) {
         const q = this.player.pos;
         if (Math.hypot(q.x - e.pos.x, q.z - e.pos.z) <= AI.roomLurk.litReach) break;
-        this._stepToward(q.x, q.z, G.lunge, 'walk_brutal', 12.0, 0.05);
+        if (!out && (e.pos.z <= exit.z + 0.1 || Math.hypot(q.x - e.pos.x, q.z - e.pos.z) < 1.6)) out = true;
+        const tx = out ? q.x : exit.x, tz = out ? q.z : exit.z;
+        this._stepToward(tx, tz, G.lunge, 'walk_brutal', 12.0, 0.05);
         yield;
       }
       this.uninterruptible = false;
