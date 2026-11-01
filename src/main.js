@@ -589,13 +589,14 @@ elevator.attach(scene);
 const stairs = new Stairs({ building, player, camera, getLevel: () => playerLevel,
   onStart: (from, to) => { world.focus(to); updateVisibility(); },
   onArrive: (to) => { setPlayerLevel(to); } });
-// P5b-1: 物語の別空間(仮の小部屋)と物語の状態機械
-spaces = new Spaces({ scene, world, building });
+// P5b-1: 物語の別空間と物語の状態機械。P5b-2a: 空間ごとのモジュール(src/spaces/<key>.js)。共有物は ctx に渡す(story は後から share)
+spaces = new Spaces({ scene, world, building, camera, player, ai, enemy, audio: enemyAudio, hud, getLevel: () => playerLevel });
 story = new Story({ mode: STORY_MODE, world, building, scene, camera, player, ai, hud, rooms, elevator, doorFx, flags: FLAGS, spaces, audio: enemyAudio, viewLock,
   envTex, aiControl: !TOUR && !PARAMS.has('noai'), getLevel: () => playerLevel,
   teleport: (key, x, z, yaw) => { setPlayerLevel(key); player.setPose(x, z, yaw, 0); updateVisibility(); } });
 story.watcher = watcher; story.watcherBase = watcher.enabled;
 story.onAIReset = () => ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+spaces.share({ story });
 // 見せる階: ふだんは今の階だけ。外階段・北階段の区画にいる時と上り下りの最中は上下の階も(吹き抜けで見えるので)
 function updateVisibility() {
   if (isSpace(playerLevel)) { world.setVisible([]); if (rooms) rooms.syncVisible(world.visible); return; }   // P5b-1: 別空間では建物を描かない
@@ -798,6 +799,7 @@ function step(dt) {
     busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : ai.lurkRoomId);
   updateVisibility();
   updateOutdoorLook(dt);
+  spaces.update(dt);   // P5b-2a: 今いる別空間の演出(霧などの見た目の上書きもあるので外の見た目の後)
   if (!TOUR) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
   updateDrips(dt);
