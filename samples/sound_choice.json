@@ -1,0 +1,16 @@
+{
+  "_note": "試聴盤の選択。値は A/B/C（採用する候補）、none（採用なし＝その場面は無音でよい）、redo（作り直し。note に欲しい方向）。2026-11-01 ユーザー回答（チャット）を転記。",
+  "choices": {
+    "amb_room": { "pick": "none" },
+    "pl_step_room": { "pick": "A" },
+    "pl_flashlight": { "pick": "none" },
+    "pl_crouch": { "pick": "none", "note": "そもそもしゃがむ要素がいらない（しゃがみ廃止。Ctrl は 312 の潜水専用に）" },
+    "door_wood": { "pick": "none" },
+    "amb_corridor": { "pick": "A" },
+    "pl_step_corridor": { "pick": "redo", "note": "こつこつと硬い地面を歩いている感じ" },
+    "door_locked": { "pick": "none" },
+    "pl_peephole": { "pick": "B" },
+    "pl_closet": { "pick": "A" },
+    "room_fall": { "pick": "redo", "note": "パリーン！と割れる感じ" }
+  }
+}
