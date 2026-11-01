@@ -77,3 +77,5 @@
 - 検証用の `window.__SB` はサンプル盤だけにある(ゲーム本体には入れていない)。
 
 - 配信は tools/serve.py(P4a-2 から。`python3 tools/serve.py 8001`、全応答 no-store・試聴盤の選択は POST /api/sound_choice で samples/sound_choice.json に自動保存。§2 の http.server は使わない)
+
+- P4a-3(2 周目):作り直し 20 場面の候補を新しくし、管理人の声は macOS say の仮声(`assets/audio/tts/`・台詞表 `docs/lines.md`)を素材に `Kit.vox` で加工。詳細は `docs/p4a3/NOTES.md`。
