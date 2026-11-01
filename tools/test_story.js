@@ -3,8 +3,10 @@
 //  0) ?stage=N の開始状態(段・持ち物・解放・フラグ・開始位置・管理人がいるか)を 1〜11 すべて
 // 1a) P5b-1b 冒頭の見せ場: 410 から廊下へ出ると 4F の EV ホールに管理人(戸口から見える)→ EV で 2F へ(表示 2)→ 2F を歩いても遭遇しない・EV は空で来る
 //  1) 第1段(P5b-1b 組み替え): 館内に管理人がいない・1F 食堂の卓のメモ→「221号室へ」・221 は鍵なしで入れる・洋室の入口までは何も起きず鍵も無い・
-//     奥(u 3.5 = 洋室の入口)へ進むと奥の窓際のロッカーから管理人(ゆっくり開く → 追跡 2.8〜3.6 秒)・「逃げろ」→ 走って逃げ切れる(2.5m より近づかれない・OUT なし)→
+//     奥(u 3.5 = 洋室の入口)へ進むと奥の窓際のロッカーから管理人(ゆっくり開く → ゆっくり出る → 視点が出口へ → 操作が戻って grace の後に追跡 = 8.0〜8.7 秒)・
+//     「逃げろ」→ 走って逃げ切れる(2.5m より近づかれない・OUT なし)→
 //     「221号室へ戻れ」・机に小さな鍵 → 戻って拾うと第2段「管理室へ」(2 回目は出ない)
+// 1c) P5b-1c 人の速さ: 操作が戻ってから 0.8 秒待って、歩き(Shift なし)で廊下へ出ても追いつかれない → 廊下を走って外階段で 1F へ逃げ切れる
 // 1b) 221 から逃げる途中で死ぬ → 410 から・飛び出しの前(「221号室へ」・管理人は眠る・ロッカーは閉じる)、見せ場は繰り返さない、奥へ進むとまた出る
 //  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
 //  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→潜って底の 105 の鍵→浮上→南の新しい入口から戻る。P5b-2a: プールの中身は test_spaces.js)
@@ -18,8 +20,10 @@
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
 // 13) 目標の文言が段ごとに変わり、章が変わる時だけ 2 秒強調される・持ち物の札
-// 15) P5b-1b 登場演出: 予兆(扉が揺れる・閉じている間は中が見えない)→ 扉が 1.0〜1.6 秒かけて開く間は管理人が動かず中に見える(視点は管理人へ)→
-//     目が合う 0.4 秒 → 飛び出して追跡。ライト消灯なら中で自分の懐中電灯(顔の下の光)。221(点灯)と 606(消灯)
+// 15) P5b-1b → P5b-1c 登場演出: 予兆(扉が揺れる・閉じている間は中が見えない)→ 扉が 1.0〜1.6 秒かけて開く間は管理人が動かず中に見える(視点は管理人へ)→
+//     目が合う → ゆっくり 2 歩で出てくる(見える・遅い)→ 視点が出口へ旋回して操作が戻る(扉の方 ±25°・向きの跳びなし・マウスが続く)→
+//     grace(≥2.5 秒、221 が最長)の後に歩いて追い始める。ライト消灯なら中で自分の懐中電灯。221(点灯)と 606(消灯)。
+//     611: 視点固定中〜grace に管理人の目の前に置いても・ATTACK を直接要求しても死なない。609: 同じロッカーがあるが開かない
 // 14) P5b-1b フリーズの再現: 追跡中に外階段で 1F へ逃げても描画・視点・操作が戻る、段の途中で死んでも復帰後に歩ける、空振りでムービーが畳まれる
 
 const DT = 1 / 60;
@@ -226,7 +230,7 @@ export async function run(N) {
   const flee221 = (r, pts, t0) => {
     // 視点固定が解けたら玄関 → 廊下 → EV ホール → 北の端へ走る
     let t = 0, chaseAt = null, minD = 1e9, dead = false;
-    // 視点固定が始まるまで → 解けるまで(解けた瞬間から走る。管理人は体勢を立て直す間 0.6 秒の後に追ってくる)
+    // 視点固定が始まるまで → 解けるまで(解けた瞬間から走る。P5b-1c: 管理人は操作が戻ってから grace 秒立ち止まり、歩きから追ってくる)
     while (!N.viewLock.active && N.ai.state === 'APPEAR' && t < 3) { N.pump(DT, 1, false); t += DT; }
     while (N.viewLock.active && t < 8) { N.pump(DT, 1, false); t += DT; }
     const exit = [[pts.room[0], pts.room[1]], [pts.entry[0], pts.entry[1]], [r.door.pos[0], r.door.pos[1] + 0.9], [8.5, 21.2], [6.9, 21.2], [6.9, 12.0], [6.9, 2.0]];
@@ -275,7 +279,7 @@ export async function run(N) {
     const pass = noEnemy && obj0 === '食堂へ' && memoHint.includes('拾う') && obj1 === '221号室へ' && em1 && toast.includes('221') && evOK
       && A.doorHint.includes('開ける') && A.opened && A.walkedRoom && !A.before.burst && !A.before.keyVisible && !A.before.keyPickable && A.before.dormant
       && A.uAt >= 3.5 && A.uAt < 3.8 && !!A.ev && A.ev.lv === 2 && A.ev.room === '221' && Math.hypot(A.ev.x - A.BL.feet[0], A.ev.z - A.BL.feet[1]) < 0.05 && A.objFlee === '逃げろ'
-      && B.chaseAt !== null && B.chaseAt >= 3.3 && B.chaseAt <= 3.9 && B.minD > 2.5 && !B.dead && B.reached >= 6 && B.escapedAt !== null && objReturn === '221号室へ戻れ'
+      && B.chaseAt !== null && B.chaseAt >= 8.0 && B.chaseAt <= 8.7 && B.minD > 2.5 && !B.dead && B.reached >= 6 && B.escapedAt !== null && objReturn === '221号室へ戻れ'
       && keyShown.visible && keyShown.pickable && walkedBack && noSecond && keyHint.includes('拾う') && st.stage === 2 && st.item === 'small' && objStage2 === '管理室へ';
     quiet();
     return { pass, noEnemy, obj0, memoHint, obj1, objEmphasized: em1, toast, doorHint: A.doorHint, opened: A.opened, beforeBack: A.before, burstAtU: A.uAt, burst: A.ev || null,
@@ -310,6 +314,66 @@ export async function run(N) {
       && !S._visible(pk('small'), 2);
     quiet();
     return { pass, firstBurst: !!A.ev, fleeing, respawned, respawn: sp, stage: st.stage, sub: st.sub, objective: st.objective, lockerClosed, noIntro, burstAgain: again };
+  });
+
+  // ---------------------------------------------------------------- 1c) P5b-1c 人の速さ: 操作が戻ってから 0.8 秒待って W、Shift なし(歩き)で玄関 → 廊下へ。廊下に出て 3m 歩いてから走る → 外階段で 1F へ逃げ切れる
+  await T('1c_221_escape_slow_human', async () => {
+    S.applyStage(1); await settle(4);
+    S.sub = null; S.introDone = true; N.ai.setDormant(true);
+    const A = await run221({ light: true });
+    const r = A.r, pts = A.pts, t0 = A.t0;
+    let t = 0, minD = 1e9, dead = false, attacked = false, ctrlAt = null, firstStepAt = null, walkMinD = 1e9, fr = 0, stairMinD = 1e9;
+    const trace = [];
+    const watch = () => {
+      const p = N.player.pos, e = N.enemyObj.pos;
+      if (++fr % 15 === 0) trace.push([+(N.ai.time - t0).toFixed(2), +p.x.toFixed(2), +p.z.toFixed(2), +e.x.toFixed(2), +e.z.toFixed(2), N.ai.state, +Math.hypot(e.x - p.x, e.z - p.z).toFixed(2)]);
+      // 襲える間合い(同じ階の床の上)での最短距離。外階段の段の上では高さの差で襲えない(P5b-1b の levelGap)ので別に記録
+      if (N.ai.level === N.level && N.enemyObj.root.visible) { const d = Math.hypot(e.x - p.x, e.z - p.z); if (N.stairs.active) stairMinD = Math.min(stairMinD, d); else minD = Math.min(minD, d); }
+      if (firstStepAt === null && ctrlAt !== null && (N.ai.state !== 'APPEAR' || !N.ai.revealPhase)) firstStepAt = +(N.ai.time - t0).toFixed(2);
+      if (N.ai.state === 'ATTACK') attacked = true;
+      if (N.deathState()) dead = true;
+    };
+    while (!N.viewLock.active && N.ai.state === 'APPEAR' && t < 3) { N.pump(DT, 1, false); t += DT; }
+    while (N.viewLock.active && t < 10) { N.pump(DT, 1, false); t += DT; watch(); }
+    ctrlAt = +(N.ai.time - t0).toFixed(2);
+    // 操作が戻った向きのまま 0.8 秒(人が状況を飲み込む間)
+    for (let i = 0; i < 48; i++) { N.pump(DT, 1, false); watch(); }
+    // 歩き(Shift なし)で玄関 → 戸口 → 廊下へ出て西へ 3m
+    const d = r.door.pos, n = FN[r.door.facing];
+    const walkPts = [[pts.room[0], pts.room[1]], [pts.entry[0], pts.entry[1]], [d[0] - n[0] * 0.3, d[1] - n[1] * 0.3], [d[0] + n[0] * 0.9, d[1] + n[1] * 0.9], [d[0] - 3.0, d[1] + n[1] * 0.9]];
+    const go = (list, run, lim) => {
+      key('KeyW', true); if (run) key('ShiftLeft', true);
+      let wi = 0;
+      for (let i = 0; i < 60 * lim && wi < list.length && !dead && !attacked; i++) {
+        const p = N.player.pos, [x, z] = list[wi];
+        if (Math.hypot(x - p.x, z - p.z) < 0.3) { wi++; continue; }
+        face(x, z, 0);
+        N.pump(DT, 1, false); watch();
+        if (!run) walkMinD = Math.min(walkMinD, minD);
+      }
+      key('KeyW', false); if (run) key('ShiftLeft', false); N.pump(DT, 1, false);
+      return wi;
+    };
+    const walked = go(walkPts, false, 20);
+    const walkedAt = +(N.ai.time - t0).toFixed(2);
+    const inCorridor = roomU('221', N.player.pos.x, N.player.pos.z) < 0;
+    // 廊下を走って EV ホール → 外階段の鉄扉(MST2)→ 下りの段で 1F へ(実機でユーザーが逃げた道。階を変えたら逃げ切り)
+    const ran = go([[8.5, 21.2], [7.2, 21.2]], true, 20);
+    N.setView(6.5, 21.2, Math.PI / 2, 0); N.pump(DT, 2, false); watch();
+    tap('KeyE'); N.pump(DT, 16, false); watch();
+    const st = N.building.stairs.find((q) => q.id === 'main'), g = st.geom, lane = (g.lanes.down[0] + g.lanes.down[1]) / 2;
+    go([[5.6, 21.2]], true, 5);
+    key('KeyW', true); key('ShiftLeft', true);
+    for (let i = 0; i < 60 * 14 && N.level === 2 && !dead && !attacked; i++) { if (!N.stairs.active) face(lane, g.s0 + 0.5, 0); N.pump(DT, 1, false); watch(); }
+    key('KeyW', false); key('ShiftLeft', false);
+    for (let i = 0; i < 60 * 4 && S.sub === 'flee' && !dead && !attacked; i++) { N.pump(DT, 1, false); watch(); }
+    const escapedAt = S.sub === 'return' ? +(N.ai.time - t0).toFixed(2) : null;
+    N.openDoor('MST2', false); N.pump(DT, 60, false);   // 外階段の鉄扉を閉めておく(14 番は閉じた扉を開けるところから)
+    const pass = !!A.ev && walked === walkPts.length && inCorridor && ran === 2 && N.level === 1 && !dead && !attacked && walkMinD > 1.6 && minD > 1.4 && escapedAt !== null
+      && firstStepAt !== null && firstStepAt - ctrlAt >= 2.5 && N.hudState().objective === '221号室へ戻れ';
+    quiet();
+    return { pass, burst: !!A.ev, control_s: ctrlAt, enemyFirstStep_s: firstStepAt, walkedOut: `${walked}/${walkPts.length}`, inCorridorAt_s: walkedAt, inCorridor, ran: `${ran}/2`, level: N.level,
+      minDistWhileWalking: +walkMinD.toFixed(2), minDist: +minD.toFixed(2), minDistOnStairs: +stairMinD.toFixed(2), dead, attacked, escapedAt_s: escapedAt, objective: N.hudState().objective, trace: pass ? undefined : trace };
   });
 
   // ---------------------------------------------------------------- 2) キーボックス
@@ -782,6 +846,7 @@ export async function run(N) {
   await T('15_locker_reveal_timeline', async () => {
     const res = {};
     let pass = true;
+    const V = N.ai.cfg.reveal;
     // 管理人が見えるか: 顔(頭の骨の少し前)・胸・腰の 3 点のどれかが視野の中で、壁・家具・ロッカーの扉に遮られない
     const headVisible = (lv) => {
       N.scene.updateMatrixWorld();   // pump(…, false) は描かないので、動いた扉板の行列をここで更新する
@@ -797,50 +862,146 @@ export async function run(N) {
       }
       return { clear, inView, hit };
     };
-    for (const C of [{ id: '221', stage: 1, light: true }, { id: '606', stage: 5, light: false }]) {
+    const camYawPitch = () => { const d = N.camera.getWorldDirection(new N.THREE.Vector3()); return { yaw: Math.atan2(-d.x, -d.z), pitch: Math.asin(Math.max(-1, Math.min(1, d.y))) }; };
+    const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+    // 罠の引き金まで歩く(221 = 奥へ、6F = 机の上の「鍵に見える物」へ)
+    const toTrigger = async (C) => {
       S.applyStage(C.stage); quiet();
-      const r = room(C.id).r, pts = r.interior.points, BL = r.interior.burst, lv = room(C.id).level;
+      const r = room(C.id).r, pts = r.interior.points, lv = room(C.id).level;
       if (C.stage === 1) { S.sub = null; S.introDone = true; N.ai.setDormant(true); }
       else N.ai.dormant = false;
       N.setFlashlight(C.light);
       await tp(lv, ...front(C.id, 0.9), 0);
       N.openDoor(C.id, true); N.pump(DT, 60, false);
       walkPath([[r.door.pos[0] - FN[r.door.facing][0] * 0.6, r.door.pos[1] - FN[r.door.facing][1] * 0.6], pts.entry, pts.room]);
-      const L = N.rooms.bursts.get(C.id);
-      // 引き金まで歩く(221 = 奥へ、606 = 机の上の「鍵に見える物」へ)
       const goal = C.stage === 1 ? pts.living : pts.deskFront;
       key('KeyW', true);
       for (let i = 0; i < 400 && N.ai.state !== 'APPEAR'; i++) { face(goal[0], goal[1], 0); N.pump(DT, 1, false); }
       key('KeyW', false);
+      return { r, pts, lv, BL: r.interior.burst, L: N.rooms.bursts.get(C.id) };
+    };
+    for (const C of [{ id: '221', stage: 1, light: true }, { id: '606', stage: 5, light: false }]) {
+      const { r, lv, BL, L } = await toTrigger(C);
+      const K = V.room[C.id] ?? V.room.default;
       const t0 = N.ai.time;
       const tl = [];
-      let jig = 0, openStart = null, openEnd = null, chaseAt = null, moveDuringOpen = 0, visDuringOpen = 0, visSamples = 0, hiddenWhileClosed = 0, closedSamples = 0, underMax = 0, vlDuringOpen = true, stareT = 0;
+      let jig = 0, openStart = null, openEnd = null, moveDuringOpen = 0, visDuringOpen = 0, visSamples = 0, hiddenWhileClosed = 0, closedSamples = 0, underMax = 0, stareT = 0;
+      let vlAll = true, emergeT = 0, emergeMaxSpeed = 0, visEmerge = 0, emergeSamples = 0, ctrlAt = null, moveAt = null, ctrl = null, lockSeen = false, maxTurnStep = 0, lastQ = null, seamJump = null, attackDuringLock = false;
       const feet = new N.THREE.Vector2(BL.feet[0], BL.feet[1]);
-      for (let i = 0; i < 60 * 6 && chaseAt === null; i++) {
+      let prevE = N.enemyObj.pos.clone(), walkStart = null, walkDist = null;
+      for (let i = 0; i < 60 * 16; i++) {
+        const wasLocked = N.viewLock.active, qBefore = N.camera.quaternion.clone();
         N.pump(DT, 1, false);
         const t = N.ai.time - t0, ph = N.ai.revealPhase, o = L.open01, e = N.enemyObj.pos;
+        const sp = Math.hypot(e.x - prevE.x, e.z - prevE.z) / DT; prevE = e.clone();
         jig = Math.max(jig, Math.abs(L.jiggle));
         if (openStart === null && o > 0.02) openStart = t;
         if (openEnd === null && o >= 0.99) openEnd = t;
         if (ph === 'omen' || ph === 'open' || ph === 'stare') moveDuringOpen = Math.max(moveDuringOpen, Math.hypot(e.x - feet.x, e.z - feet.y));
         if (ph === 'stare') stareT += DT;
-        if (ph === 'open') { underMax = Math.max(underMax, N.enemyObj.underLight); if (!N.viewLock.active) vlDuringOpen = false; }
+        if (ph === 'open') underMax = Math.max(underMax, N.enemyObj.underLight);
+        if (['open', 'stare', 'emerge', 'settle'].includes(ph) && !N.viewLock.active) vlAll = false;
+        if (N.viewLock.active) { lockSeen = true; if (lastQ) maxTurnStep = Math.max(maxTurnStep, lastQ.angleTo(N.camera.quaternion)); lastQ = N.camera.quaternion.clone(); }
+        if (N.viewLock.active && (N.ai.state === 'ATTACK' || N.deathState())) attackDuringLock = true;
+        if (ph === 'emerge') { emergeT += DT; emergeMaxSpeed = Math.max(emergeMaxSpeed, sp); }
         if (i % 4 === 0) {
           if (ph === 'omen') { closedSamples++; if (!headVisible(lv).clear) hiddenWhileClosed++; }
           if ((ph === 'open' && o > 0.55) || ph === 'stare') { visSamples++; const v = headVisible(lv); if (v.clear && v.inView) visDuringOpen++; }
+          if (ph === 'emerge') { emergeSamples++; const v = headVisible(lv); if (v.clear && v.inView) visEmerge++; }
         }
+        // 操作が戻った瞬間: 視線が出口(部屋の扉)の方 ±25°・その前のフレームからの向きの跳びが無い・マウスがその向きから続く
+        if (ctrlAt === null && lockSeen && wasLocked && !N.viewLock.active) {
+          ctrlAt = t;
+          seamJump = qBefore.angleTo(N.camera.quaternion);
+          const p = N.player.pos, d = r.door.pos, yp = camYawPitch();
+          const want = Math.atan2(-(d[0] - p.x), -(d[1] - p.z));
+          const rot = N.player.object.rotation;
+          // マウスを 1 回だけ横へ(PointerLockControls の mousemove)。向きが今の向きから少しだけ動く = 返した後の操作が連続する
+          const C2 = N.player.controls, locked0 = C2.isLocked; C2.isLocked = true;
+          const y0 = rot.y, x0 = rot.x;
+          document.dispatchEvent(new MouseEvent('mousemove', { movementX: 20, movementY: 0 }));
+          const qa = new N.THREE.Euler().setFromQuaternion(N.camera.quaternion, 'YXZ');
+          const mouseDy = wrapA(qa.y - y0), mouseDx = qa.x - x0;
+          document.dispatchEvent(new MouseEvent('mousemove', { movementX: -20, movementY: 0 }));
+          C2.isLocked = locked0;
+          key('KeyW', true);   // 操作が戻ったら出口の方へ歩き出す(管理人の歩きの速さを測る間に追いつかれないように)
+          ctrl = { yawErrDeg: +(Math.abs(wrapA(yp.yaw - want)) * 180 / Math.PI).toFixed(1), pitch: +yp.pitch.toFixed(3), roll: +rot.z.toFixed(4), frozen: N.player.frozen,
+            enemyToPlayer: +Math.hypot(e.x - p.x, e.z - p.z).toFixed(2), mouseYawStep: +mouseDy.toFixed(4), mousePitchStep: +mouseDx.toFixed(4), state: N.ai.state };
+        }
+        if (ctrlAt !== null && moveAt === null && (N.ai.state !== 'APPEAR' || Math.hypot(e.x - BL.out[0], e.z - BL.out[1]) > 0.05)) { moveAt = t; walkStart = e.clone(); }
+        if (moveAt !== null && walkDist === null && t - moveAt >= 1.0) walkDist = Math.hypot(e.x - walkStart.x, e.z - walkStart.z);
         if (i % 6 === 0) tl.push([+t.toFixed(2), ph, +o.toFixed(2), N.viewLock.active ? 'L' : '-', +N.enemyObj.underLight.toFixed(2)]);
-        if (N.ai.state === 'CHASE') chaseAt = t;
+        if (walkDist !== null) break;
       }
-      const atOut = Math.hypot(N.enemyObj.pos.x - BL.out[0], N.enemyObj.pos.z - BL.out[1]);
+      key('KeyW', false); N.pump(DT, 1, false);
+      const atOutAtCtrl = ctrl !== null;
       const openDur = openStart !== null && openEnd !== null ? +(openEnd - openStart).toFixed(2) : null;
+      const graceGot = ctrlAt !== null && moveAt !== null ? +(moveAt - ctrlAt).toFixed(2) : null;
+      const RL = N.ai.revealLog || {};
       const ok = jig > 0.01 && openDur !== null && openDur >= 1.0 && openDur <= 1.6 && moveDuringOpen < 0.01 && closedSamples > 0 && hiddenWhileClosed === closedSamples
-        && visSamples > 0 && visDuringOpen / visSamples >= 0.6 && vlDuringOpen && Math.abs(stareT - 0.4) < 0.05 && chaseAt !== null && chaseAt > openEnd && atOut < 1.0
+        && visSamples > 0 && visDuringOpen / visSamples >= 0.6 && Math.abs(stareT - V.stare) < 0.05
+        && Math.abs(emergeT - V.emerge) < 0.05 && emergeMaxSpeed < 1.2 && emergeSamples > 0 && visEmerge / emergeSamples >= 0.6
+        && vlAll && !attackDuringLock && atOutAtCtrl && ctrl.yawErrDeg <= 25 && Math.abs(ctrl.roll) < 1e-3 && !ctrl.frozen && seamJump < 0.01
+        && Math.abs(ctrl.mouseYawStep + 0.04) < 0.005 && Math.abs(ctrl.mousePitchStep) < 1e-4 && maxTurnStep < 0.12
+        && graceGot !== null && graceGot >= 2.5 && Math.abs(graceGot - V.grace * K) < 0.1 && walkDist !== null && walkDist <= V.walk.speed * 1.0 + 0.1
         && (C.light ? underMax === 0 : underMax > 0.5);
       if (!ok) pass = false;
-      res[C.id] = { ok, light: C.light, jiggleMax: +jig.toFixed(3), openStart_s: openStart && +openStart.toFixed(2), openDur_s: openDur, enemyMovedWhileOpening_m: +moveDuringOpen.toFixed(3),
-        hiddenWhileClosed: `${hiddenWhileClosed}/${closedSamples}`, headVisibleWhileOpen: `${visDuringOpen}/${visSamples}`, viewLockDuringOpen: vlDuringOpen, stare_s: +stareT.toFixed(2),
-        underLightMax: +underMax.toFixed(2), chaseAt_s: chaseAt && +chaseAt.toFixed(2), distFromOutAtChase: +atOut.toFixed(2), timeline: tl.slice(0, 40) };
+      res[C.id] = { ok, light: C.light, k: K, jiggleMax: +jig.toFixed(3), openStart_s: openStart && +openStart.toFixed(2), openDur_s: openDur, enemyMovedWhileOpening_m: +moveDuringOpen.toFixed(3),
+        hiddenWhileClosed: `${hiddenWhileClosed}/${closedSamples}`, headVisibleWhileOpen: `${visDuringOpen}/${visSamples}`, stare_s: +stareT.toFixed(2),
+        emerge_s: +emergeT.toFixed(2), emergeMaxSpeed: +emergeMaxSpeed.toFixed(2), visibleWhileEmerging: `${visEmerge}/${emergeSamples}`, viewLockOpenToSettle: vlAll, attackDuringLock,
+        control_s: ctrlAt && +ctrlAt.toFixed(2), atControl: ctrl, seamJumpRad: seamJump && +seamJump.toFixed(4), maxTurnStepRad: +maxTurnStep.toFixed(3),
+        firstStep_s: moveAt && +moveAt.toFixed(2), graceAfterControl_s: graceGot, walkFirst1s_m: walkDist && +walkDist.toFixed(2),
+        underLightMax: +underMax.toFixed(2), revealLog: RL, timeline: tl.filter((q, k) => k % 2 === 0).slice(0, 40) };
+      quiet();
+    }
+    // 視点固定中に管理人を隣接させても死なない(611・点灯): 固定中〜grace の間、毎フレーム管理人の 0.9m 前に置く・ATTACK を直接要求しても拒まれる
+    {
+      const C = { id: '611', stage: 5, light: true };
+      const { BL } = await toTrigger(C);
+      const t0 = N.ai.time;
+      let lockSeen = false, ctrlAt = null, attacked = false, died = false, forced = null, adjFrames = 0, minD = 1e9, stateDuring = new Set();
+      for (let i = 0; i < 60 * 14; i++) {
+        N.pump(DT, 1, false);
+        const ph = N.ai.revealPhase;
+        if (N.viewLock.active) lockSeen = true;
+        if (['open', 'stare', 'emerge', 'settle', 'exit', 'grace'].includes(ph)) {
+          const e = N.enemyObj.pos, f = N.enemyObj.forward(new N.THREE.Vector3());
+          N.player.pos.x = e.x + f.x * 0.9; N.player.pos.z = e.z + f.z * 0.9;   // 管理人の目の前(攻撃の届く 1.4m より内)
+          adjFrames++; minD = Math.min(minD, Math.hypot(N.player.pos.x - e.x, N.player.pos.z - e.z));
+          stateDuring.add(N.ai.state);
+          if (forced === null && ph === 'settle') { const n0 = N.ai.events.length; N.ai.setState('ATTACK'); forced = { blocked: N.ai.state === 'APPEAR' && N.ai.events.slice(n0).some((q) => q.ev === 'attack_blocked') }; }
+        }
+        if (N.ai.state === 'ATTACK') attacked = true;
+        if (N.deathState()) died = true;
+        if (lockSeen && ctrlAt === null && !N.viewLock.active) ctrlAt = +(N.ai.time - t0).toFixed(2);
+        if (ctrlAt !== null && !ph) break;   // grace が終わった(以後は普通に追う)
+      }
+      const ok = lockSeen && ctrlAt !== null && adjFrames > 200 && minD < 1.0 && !attacked && !died && forced && forced.blocked && [...stateDuring].every((s) => s === 'APPEAR');
+      if (!ok) pass = false;
+      res.adjacent611 = { ok, adjacentFrames: adjFrames, minDist: +minD.toFixed(2), attacked, died, forcedAttack: forced, control_s: ctrlAt, states: [...stateDuring], out: BL.out };
+      quiet();
+    }
+    // 609(220 の鍵の部屋): 同じ見た目のロッカーがあるが開かない(管理人の出所でない・E の対象でない・扉は閉じたまま)
+    {
+      S.applyStage(5); quiet();
+      const r = room('609').r, p = r.interior.points, SL = r.interior.sealedLocker;
+      await tp(6, ...front('609', 0.9), 0);
+      N.openDoor('609', true); N.pump(DT, 60, false);
+      const t0 = N.ai.time, n0 = S.logCount;
+      const walked = walkPath([[r.door.pos[0] - FN[r.door.facing][0] * 0.6, r.door.pos[1] - FN[r.door.facing][1] * 0.6], p.entry, p.room, p.deskFront]);
+      N.pump(DT, 30, false);
+      // ロッカーの脇(管理人が出てくる罠の部屋の out と同じ点)で扉を向いて E。窓が視野に入れば「窓を開ける」は出てよい
+      const toFront = walkTo(SL.out[0], SL.out[1], 400, 0.15);
+      face(SL.front[0], SL.front[1], -0.2); N.pump(DT, 2, false);
+      const hint = N.hudState().hint || '';
+      tap('KeyE'); N.pump(DT, 30, false);
+      let node = null; N.world.floors.get(6).group.traverse((o) => { if (o.name === 'BurstLockerDoor_609') node = o; });
+      const item = r.interior.items.find((q) => q.k === 'burstlocker');
+      const noBurst = !N.ai.events.some((e) => e.t > t0 && e.ev === 'locker_burst') && !evs(n0).includes('trap') && N.ai.state !== 'APPEAR';
+      const ok = !!SL && !r.interior.burst && !!item && item.sealed && !N.rooms.bursts.has('609') && !!node && Math.abs(node.rotation.y) < 1e-6 && walked && toFront && noBurst
+        && !/隠れる|ロッカー/.test(hint) && !N.rooms.hidden;
+      if (!ok) pass = false;
+      res.sealed609 = { ok, sealedLocker: !!SL, item: !!item, inBursts: N.rooms.bursts.has('609'), doorNode: !!node, doorRot: node && +node.rotation.y.toFixed(4), walked, toFront, hint, noBurst, hidden: !!N.rooms.hidden };
       quiet();
     }
     return { pass, rooms: res };
