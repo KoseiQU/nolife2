@@ -2,6 +2,7 @@
 //  - 潜伏室から飛び出した時: 懐中電灯 ON → 振り向かされてそのまま襲撃ムービー(attack_movie.js)へ引き継ぐ(handoff)
 //                           懐中電灯 OFF → 1.2〜1.8 秒だけ管理人を見せ(操作不能)、元の視点へ戻して操作を返す
 //  - EV の賭け: 扉が開いた瞬間にカゴの中の管理人へ振り向く
+//  - P5b-1c 奥の窓際のロッカー: 管理人の頭へ向いて固定 → 出てくるのを見せる → 出口(部屋の玄関)の方へ滑らかに旋回(then)→ その向きで操作を返す
 // 入力は player.frozen で止め、カメラの向きだけを毎フレーム上書きする(位置はそのまま)。update(dt) 駆動(rAF 非依存)。
 
 import * as THREE from 'three';
@@ -24,7 +25,8 @@ export class ViewLock {
     this._tgt = new THREE.Vector3();
   }
 
-  // getTarget(out) → 見る点(世界座標)。opts: { total(秒。0 = 引き継ぐまで続ける), turn, back, returnView(元の向きへ戻すか), label }
+  // getTarget(out) → 見る点(世界座標)。opts: { total(秒。0 = 引き継ぐまで続ける), turn, back, returnView(元の向きへ戻すか), label,
+  //  then: { yaw, pitch, turn }(P5b-1c。終わりの turn 秒で、その時の向きから (yaw, pitch) へ旋回し、その向きで操作を返す。returnView より優先) }
   start(getTarget, opts = {}) {
     const cam = this.camera;
     if (!this.active) {
@@ -32,7 +34,8 @@ export class ViewLock {
       this._q0.copy(cam.quaternion);
     } else this._q0.copy(cam.quaternion);
     this.getTarget = getTarget;
-    this.opts = { total: 1.5, turn: VIEWLOCK.turn, back: VIEWLOCK.back, returnView: true, label: '', ...opts };
+    this.opts = { total: 1.5, turn: VIEWLOCK.turn, back: VIEWLOCK.back, returnView: true, label: '', then: null, ...opts };
+    this._thenStarted = false;
     this.player.frozen = true;
     this.active = true;
     this.t = 0;
@@ -65,10 +68,18 @@ export class ViewLock {
     const tgt = this.getTarget(this._tgt);
     this._m.lookAt(cam.position, tgt, cam.up);
     this._qT.setFromRotationMatrix(this._m);
-    const holdEnd = O.total > 0 ? O.total - O.back : Infinity;
+    const TH = O.then;
+    const holdEnd = O.total > 0 ? O.total - (TH ? TH.turn : O.back) : Infinity;
     if (this.t <= holdEnd) {
       const k = smooth(Math.min(1, this.t / O.turn));
       cam.quaternion.copy(this._q0).slerp(this._qT, k);
+      this._qHold = (this._qHold || new THREE.Quaternion()).copy(cam.quaternion);
+    } else if (TH) {
+      // P5b-1c: 固定していた向き(最後のフレーム)から出口の向きへ。終わりの向き = (yaw, pitch, roll 0)なので、返した後のマウスはそこから連続する
+      if (!this._thenStarted) { this._thenStarted = true; this.log.push({ ev: 'then', label: O.label, t: +this.t.toFixed(2), yaw: +TH.yaw.toFixed(3) }); }
+      const k = smooth(Math.min(1, (this.t - holdEnd) / TH.turn));
+      const qExit = new THREE.Quaternion().setFromEuler(new THREE.Euler(TH.pitch ?? 0, TH.yaw, 0, 'YXZ'));
+      cam.quaternion.copy(this._qHold || this._qT).slerp(qExit, k);
     } else if (O.returnView) {
       // 元の向きへ戻す
       const k = smooth(Math.min(1, (this.t - holdEnd) / O.back));
@@ -78,7 +89,8 @@ export class ViewLock {
     cam.updateMatrixWorld();
     if (this.t >= O.turn && this.t <= holdEnd) this.maxAimErr = Math.max(this.maxAimErr, this.aimError());
     if (O.total > 0 && this.t >= O.total) {
-      if (O.returnView) this.player.object.rotation.copy(this.saved.euler);
+      if (TH) this.player.object.rotation.set(TH.pitch ?? 0, TH.yaw, 0, 'YXZ');
+      else if (O.returnView) this.player.object.rotation.copy(this.saved.euler);
       else this.player.object.rotation.setFromQuaternion(cam.quaternion, 'YXZ');
       this.player.frozen = this.saved.frozen && (this.holdFrozen ? this.holdFrozen() : true);
       this.active = false;
