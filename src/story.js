@@ -103,7 +103,7 @@ export class Story {
     add({ id: 'memo6F', memo: 'memo6F', level: 'X105', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
     // 5: 609 の机の 220 の鍵・罠の 3 室の机の「鍵に見える物」(札だけの古い鍵)
     { const d = desk(STORY.keyRoom6F); add({ id: 'k220', item: '220', ...d, rotY: 1.1, mesh: P.makeKey('220'), takenAt: 6 }); }
-    for (const rid of STORY.trapRooms) { const d = desk(rid); add({ id: 'decoy' + rid, decoy: rid, ...d, rotY: 0.6 + rid.length, mesh: P.makeKey(rid.slice(0, 1) + '0' + rid.slice(2), { tagColor: '#d8cfb8' }), takenAt: 99 }); }
+    for (const rid of STORY.trapRooms) { const d = desk(rid); add({ id: 'decoy' + rid, decoy: rid, ...d, rotY: 0.6 + rid.length, mesh: P.makeKey(rid, { tagColor: '#d8cfb8' }), takenAt: 99 }); }
     // 6: 220 の机の正面玄関の鍵
     { const d = desk('220'); add({ id: 'kEntrance', item: 'entrance', ...d, rotY: 2.6, mesh: P.makeKey(T.entrance), takenAt: 7 }); }
     // 8: 屋上A の 705 の鍵
