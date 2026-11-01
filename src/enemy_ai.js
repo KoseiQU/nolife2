@@ -98,6 +98,11 @@ export const AI = {
   // P5a: 別の階の音(階差で減衰)。聞こえた大きさ = loud × att[階差]。threshold 以上ならその階へ EV で向かう
   floorHear: { att: [1, 0.5, 0.22, 0], threshold: 0.4, cooldown: 25, runEvery: 1.5,
     loud: { run: 1.0, fall: 1.0, crash: 2.0, door: 0.45, window: 0.3 } },
+  // P5b-1b: 奥の窓際のロッカーからの登場(DESIGN §3.8 D①)。ワープに見せない: 軋み・扉の小さな揺れ(omen)→ 扉がゆっくり開く(open。
+  //  開き始めから中の管理人が見える。視点はゆっくり管理人へ = turn)→ 目が合う静止(stare)→ 飛び出す(lunge。戸口の外の out へ)→
+  //  視点固定が戻るまで(hold + 戻し 0.32)→ 体勢を立て直す間(recover = P5a の消灯の飛び出しの chaseDelay と同じ 0.6)→ 追跡(最初の 3.0 秒は 2.5 m/s)。
+  //  プレイヤーのライトが消えている時は、中で自分の懐中電灯を胸の前で上へ向ける(顔を下から照らす = enemy.underLight)
+  reveal: { omen: 0.5, open: 1.3, stare: 0.4, lunge: 0.3, hold: 0.25, recover: 0.6, turn: 0.8, jiggle: 0.022, under: 0.8, underIn: 0.35, slamOpen: 1.04 },
   // P5b-1b: 冒頭の見せ場(DESIGN §3.8 H 第1段)。初めて 410 から廊下へ出ると 4F の EV ホールに管理人 → EV で 2F へ → 221 の飛び出しまで姿を見せない
   intro: { level: 4, to: 2, x: 6.9, z: 20.75, yaw: 0, stand: 2.0, inWalk: 1.0, callTimeout: 12, closeTimeout: 20, travelTimeout: 40 },
   // P5a: EV の賭け。管理人を乗せたカゴが止まってから T 秒以内にプレイヤーが別の階で呼ぶと、中に管理人
@@ -242,6 +247,7 @@ export class EnemyAI {
     this.state = s;
     this.stateTime = 0;
     this.enemy.aimPoint = null;
+    if (s !== 'APPEAR') { this.enemy.underLight = 0; this.revealPhase = null; }
     if (s !== 'CHASE' && s !== 'ATTACK' && s !== 'LURK') this.enemy.setFace('grin', 0);
     if (s !== 'ATTACK') this.enemy.setFace('attack', 0);
     // 懐中電灯: 探している時だけ点ける(§3.2.1)。潜伏中は消して闇に溶ける
@@ -311,6 +317,13 @@ export class EnemyAI {
   }
   // ロッカー(居室のクローゼット)から飛び出す(DESIGN §3.8 D①・H 第1段/第5段)。本体の現在地と無関係にその部屋のクローゼットの中に現れる(ワープ)
   lockerBurst(rid) {
+    // P5b-1b: 奥の窓際のロッカーがある部屋(221・6F の罠 3 室)はそこから、ゆっくり開いて見せてから(reveal)
+    const L = this.roomsSys && this.roomsSys.bursts && this.roomsSys.bursts.get(String(rid));
+    if (L) {
+      this.dormant = false;
+      this.setState('APPEAR', { force: true, log: true, reveal: L, level: L.level, x: L.b.feet[0], z: L.b.feet[1], out: L.b.out, label: 'locker_burst', room: String(rid) });
+      return true;
+    }
     const c = this.roomsSys && this.roomsSys.closets.get(String(rid));
     if (!c) return false;
     this.dormant = false;
@@ -381,6 +394,7 @@ export class EnemyAI {
     this.uninterruptible = true;
     this.transit = false; this.concealed = false; this.lurkRoomId = null;
     if (o.level !== this.level) this.setLevel(o.level);
+    if (o.reveal) { yield* this._reveal(o); return; }
     const p0 = this.player.pos;
     e.place(o.x, o.z, Math.atan2(p0.x - o.x, p0.z - o.z));
     e.setFace('grin', 1.0, true);
@@ -408,6 +422,81 @@ export class EnemyAI {
     this.setState('CHASE');
     yield;
   }
+  // P5b-1b: 奥の窓際のロッカーから(AI.reveal の時系列)。扉は rooms.setBurst で直接動かす(本物のループの dt で決定的)
+  *_reveal(o) {
+    const e = this.enemy, V = AI.reveal, L = o.reveal, rs = this.roomsSys, id = String(o.room);
+    const fv = { E: [1, 0], W: [-1, 0], S: [0, 1], N: [0, -1] }[L.b.f];
+    const yawOut = Math.atan2(fv[0], fv[1]);
+    // 正面(部屋側)からプレイヤーの方へ最大 0.6 rad 向ける(ロッカーの中で横を向かない・目が合う)
+    const toPlayer = () => yawOut + THREE.MathUtils.clamp(wrap(Math.atan2(this.player.pos.x - o.x, this.player.pos.z - o.z) - yawOut), -0.6, 0.6);
+    e.place(o.x, o.z, toPlayer());
+    e.speed = 0;
+    e.setFace('grin', 0, true); e.setFace('attack', 0, true);
+    e.setFlashlight(false);
+    e.underLight = 0;
+    e.play('look_idle', { fade: 0.05, timeScale: 0, restart: true });   // 見回さず、じっと立っている(最初の姿勢で止める)
+    this._encounter(o.label);
+    this.log(o.label, { room: id, lv: o.level, x: +o.x.toFixed(2), z: +o.z.toFixed(2), reveal: true });
+    rs.setBurst(id, 0, 0);
+    this.revealPhase = 'omen';
+    // 1) 予兆: 中で何かが当たる音・扉がわずかに揺れる(閉じたまま)
+    rs.burstSfx('lockerRattle', id, 0.7);
+    let t = 0;
+    for (; t < V.omen; t += this.dt) { rs.setBurst(id, 0, Math.sin(t * Math.PI * 2 * 6.5) * V.jiggle * (1 - t / V.omen)); yield; }
+    // 2) 扉がゆっくり開く。開き始めから中が見える。視点はゆっくり管理人へ(開く・目が合う・飛び出すまで固定)
+    this.revealPhase = 'open';
+    rs.burstSfx('lockerCreak', id, 0.75);
+    if (this.onViewLock) this.onViewLock({ total: V.open + V.stare + V.lunge + V.hold + 0.32, turn: V.turn, label: 'locker_reveal', returnView: true });
+    const sm = (x) => x * x * (3 - 2 * x);
+    for (t = 0; t < V.open; t += this.dt) {
+      const k = t / V.open;
+      rs.setBurst(id, sm(k) * 0.93 + 0.07 * k, 0);   // ゆっくり。最初の数 cm で中が見え始める
+      e.yaw += THREE.MathUtils.clamp(wrap(toPlayer() - e.yaw), -0.8 * this.dt, 0.8 * this.dt);
+      const dark = !this.player.flashlightOn;
+      e.underLight = dark ? V.under * Math.min(1, Math.max(0, (t - 0.15) / V.underIn)) : 0;   // 消灯時: 中で懐中電灯が点く(顔を下から)
+      yield;
+    }
+    rs.setBurst(id, 1, 0);
+    // 3) 目が合う(静止)
+    this.revealPhase = 'stare';
+    e.setFace('grin', 1.0);
+    for (t = 0; t < V.stare; t += this.dt) { if (!this.player.flashlightOn) e.underLight = V.under; yield; }
+    // 4) 飛び出す: 扉を叩き開け(破裂音)、戸口の外の out へ一気に。自分の懐中電灯をこちらへ
+    this.revealPhase = 'lunge';
+    e.underLight = 0;
+    e.setFlashlight(true);
+    if (this.audio) this.audio.play('slam', new THREE.Vector3(o.x, this.floorY + 1.1, o.z), 0.9, { dur: 0.6 });
+    e.play('walk_brutal', { fade: 0.08 });
+    const x0 = e.pos.x, z0 = e.pos.z, [ox, oz] = o.out;
+    for (t = 0; t < V.lunge; t += this.dt) {
+      const k = sm(Math.min(1, t / V.lunge));
+      e.pos.x = x0 + (ox - x0) * k; e.pos.z = z0 + (oz - z0) * k;
+      e.speed = Math.hypot(ox - x0, oz - z0) / V.lunge;
+      const p = this.player.pos;
+      e.yaw += THREE.MathUtils.clamp(wrap(Math.atan2(p.x - e.pos.x, p.z - e.pos.z) - e.yaw), -8 * this.dt, 8 * this.dt);
+      rs.setBurst(id, 1 + (V.slamOpen - 1) * Math.sin(Math.min(1, t / V.lunge) * Math.PI), 0);   // 叩き開けて少し跳ね返る
+      yield;
+    }
+    e.pos.x = ox; e.pos.z = oz; e.speed = 0;
+    rs.setBurst(id, 1, 0);
+    // 5) 視点固定が戻るまで + 体勢を立て直す間(こちらを向いて照らす)
+    this.revealPhase = 'recover';
+    e.play('look_idle', { fade: 0.25 });
+    for (t = 0; t < V.hold + 0.32 + V.recover; t += this.dt) {
+      const p = this.player.pos;
+      e.yaw += THREE.MathUtils.clamp(wrap(Math.atan2(p.x - e.pos.x, p.z - e.pos.z) - e.yaw), -5 * this.dt, 5 * this.dt);
+      e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.3, p.z);
+      yield;
+    }
+    this.revealPhase = null;
+    this.uninterruptible = false;
+    this.lastKnown = { x: this.player.pos.x, z: this.player.pos.z, lv: this._plv() };
+    this.lastSeenTime = this.time;
+    this._chaseSlowUntil = this.time + (o.slow ?? AI.roomLurk.darkChase.time);
+    this.setState('CHASE');
+    yield;
+  }
+
   // 階の間の出入り口(グラフの無い階)
   _portalBetween(a, b) {
     for (const p of this.portals) {

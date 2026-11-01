@@ -69,6 +69,7 @@ export class Enemy {
     this._prevPos = new THREE.Vector3();
     this.speed = 0;                // 実移動速度(足音・アニメの判定用。AI が設定)
     this.faceFill = 0;             // 襲撃ムービーの顔の補助光(0 = 消灯)
+    this.underLight = 0;           // P5b-1b: ロッカーの中で自分の懐中電灯を胸の前で上へ向けた光(顔を下から照らす。0 = 消灯)
     this.lean = 0;                 // 上体を前へ倒す角度(rad)。スコープを覗き込む時など(mixer の後に背骨へ足す)
     this.carLamp = null;           // P5a: EV のカゴの照明(敵だけに効く光の 1 枠。main がカゴの中・戸口にいる間だけ { p, c, r } を入れる)
     this.ready = false;
@@ -427,6 +428,16 @@ export class Enemy {
       u.n2LampPos.value[k].copy(p).applyMatrix4(view);
       u.n2LampColor.value[k].set(0xffe2c8).multiplyScalar(this.faceFill);
       u.n2LampRange.value[k] = 1.6;
+    }
+    // P5b-1b: ロッカーの中(プレイヤーのライトが消えている時)。胸の前・顎の下から上へ。顔の補助光と同じ枠を使う(同時には点けない)
+    else if (this.underLight > 0) {
+      const k = MAX_LAMPS - 1;
+      const head = this.bones.head.getWorldPosition(_v1);
+      const f = this.forward(_v2);
+      const p = _v3.copy(head).addScaledVector(f, 0.16).add(_v4.set(0, -0.42, 0));
+      u.n2LampPos.value[k].copy(p).applyMatrix4(view);
+      u.n2LampColor.value[k].set(0xfff0dc).multiplyScalar(this.underLight);
+      u.n2LampRange.value[k] = 1.1;
     }
     u.n2UpView.value.set(0, 1, 0).transformDirection(view);
     u.n2HemiSky.value.set(ENEMY.hemi.sky).multiplyScalar(ENEMY.hemi.intensity * 10);
