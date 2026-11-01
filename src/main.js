@@ -370,8 +370,8 @@ for (const f of building.floors) {
   }
 }
 const enemyAudio = new EnemyAudio(camera, enemy);
-// 見学モードでは管理人の声(ハミング)を鳴らさない(扉のガチャ音だけ使う)
-const resumeAudio = TOUR ? () => { if (enemyAudio.ctx.state !== 'running') enemyAudio.ctx.resume(); } : () => enemyAudio.resume();
+// AudioContext はユーザー操作で起こす(P4a: 常時ループの鼻歌を削除したので見学モードとの差は無くなった)
+const resumeAudio = () => enemyAudio.resume();
 window.addEventListener('pointerdown', resumeAudio);
 window.addEventListener('keydown', resumeAudio);
 const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
