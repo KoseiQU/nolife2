@@ -414,7 +414,7 @@ export async function run(N) {
     const trace = [];
     [[330.8, 4], [330.8, 12.6], [330.8, 16.4], [330.8, 23.0]].forEach(([x, z]) => { walkTo(x, z, 2000, 0.2); trace.push(pos()); });
     const k = pk('k105');
-    key('ControlLeft', true);
+    key('ControlLeft', true);   // Ctrl = 312 の水中で潜る(P4a-2 でしゃがみは廃止)
     let pickHint = '';
     for (let i = 0; i < 240; i++) { face(k.pos.x, k.pos.z, -0.9); N.pump(DT, 1, false); const h = N.hudState().hint; if (h.includes('拾う')) { pickHint = h; break; } }
     tap('KeyE');

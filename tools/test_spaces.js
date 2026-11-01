@@ -6,7 +6,7 @@
 //  105_4) 追跡: 管理人が背後に現れて CHASE・壁と天井が歪む・背後から灯りが消える(消えた灯りはすべてプレイヤーの後ろ)・走り続ければ出口 → 105 の扉の前(第5段)
 //  105_5) 止まると捕まる → 105 の扉の前(扉を向く)・次に入ると追跡の区間の前から
 //  312_1) 通路 → プール: 入口から青い通路を抜けてプールサイドへ・入水で泳ぎ(遅い・浮いている)
-//  312_2) 潜水: Ctrl 長押しで潜る・離すと浮上・息ゲージは潜っている間だけ出る・切れたら溺れて第3段の開始位置へ
+//  312_2) 潜水: Ctrl 長押しで潜る(P4a-2: しゃがみ廃止。Ctrl は水中の潜水専用、プールサイドでは何もしない=312_1 で確認)・離すと浮上・息ゲージは潜っている間だけ出る・切れたら溺れて第3段の開始位置へ
 //  312_3) 伸びる・底の鍵・反転・見ているだけの管理人: 泳ぐほど対岸が遠のく → 底の 105 の鍵で第4段・対岸が元に戻る・浮上すると入口が反対側の壁に・
 //         プールサイドの管理人は見ているだけ(ATTACK/CHASE にならない)・戻りの通路に入ると消える・戻ると 312 の扉の前
 //  705_1) 増える(P5b-2b): 奥へ進むほど柱が増える(見ていない・離れた所にだけ)・机の前では入口の扉が柱の列に隠れる(最初の柱だけなら見えていた)
@@ -237,6 +237,9 @@ export async function run(N) {
     const obj = N.hudState().objective;
     const walked = walkPath([W312(0.8, 4.0), W312(0.8, 12.6), W312(0.8, 14.2)]);
     const onDeck = { ...st312(), at: pos() };
+    // P4a-2: しゃがみ廃止。プールサイド(水の外)で Ctrl を押しても目の高さは変わらない
+    let deckCtrlEye = -1e9;
+    hold('ControlLeft', 0.6, () => { deckCtrlEye = Math.max(deckCtrlEye, Math.abs(eyeRel() - 1.62)); return false; });
     walkTo(...W312(0.8, 16.4));
     const shallow = { ...st312(), eye: +eyeRel().toFixed(2) };
     walkTo(...W312(0.8, 21.0), { max: 2000 });
@@ -246,8 +249,8 @@ export async function run(N) {
     const z0 = N.player.pos.z; face(...W312(0.8, 40)); key('KeyW', true); key('ShiftLeft', true); N.pump(DT, 60, false); key('KeyW', false); key('ShiftLeft', false); N.pump(DT, 2, false);
     const speed = (N.player.pos.z - z0) / 1.0;
     const pass = lv === 'X312' && obj === '312号室へ' && walked && !onDeck.inWater && onDeck.at.z > 12.5 && shallow.inWater && shallow.eye > 0.2 && deep.inWater && !deep.under
-      && Math.abs(deep.eye - (-0.1)) < 0.06 && speed > 0.8 && speed < 1.2 && deep.move && deep.move.noRun;
-    return { pass, level: lv, objective: obj, walked, deck: { inWater: onDeck.inWater, at: onDeck.at }, shallowEye: shallow.eye, deepEye: deep.eye, swimSpeed_mps: +speed.toFixed(2), move: deep.move };
+      && Math.abs(deep.eye - (-0.1)) < 0.06 && speed > 0.8 && speed < 1.2 && deep.move && deep.move.noRun && deckCtrlEye < 0.03;
+    return { pass, level: lv, objective: obj, walked, deck: { inWater: onDeck.inWater, at: onDeck.at, ctrlEyeDiff: +deckCtrlEye.toFixed(3) }, shallowEye: shallow.eye, deepEye: deep.eye, swimSpeed_mps: +speed.toFixed(2), move: deep.move };
   });
 
   await T('312_2_dive_breath_drown', async () => {

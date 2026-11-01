@@ -314,14 +314,14 @@ export async function run(N) {
     N.player.object.rotation.set(0, Math.atan2(-(wx - p.x), -(wz - p.z)), 0, 'YXZ');
   };
 
-  // 12) 点灯で潜伏室(407)の前を通る → 通り過ぎた瞬間に扉を壊して飛び出し、視点が管理人へ向き、襲撃ムービー → OUT。しゃがんでいても救済なし
+  // 12) 点灯で潜伏室(407)の前を通る → 通り過ぎた瞬間に扉を壊して飛び出し、視点が管理人へ向き、襲撃ムービー → OUT(救済なし。P4a-2 でしゃがみ廃止→普通に歩いて通る)
   await T('12_room_lurk_lit_pass_attack', () => {
     W.reset(); N.ai.lurkEnabled = false;
     N.setView(6.9, 12.0, Math.PI, 0); N.setFlashlight(true);
     lurkIn('407');
     const hidden = { concealed: N.ai.concealed, visible: N.enemyObj.root.visible, doorAngle: N.doorApi.get('407').angle };
     const ev0 = evMark(), a0 = aud0(), vl0 = N.viewLock.log.length;
-    W.key('ControlLeft', true); W.key('KeyW', true);
+    W.key('KeyW', true);
     let t = 0, burstAt = null, zAtBurst = null, aimAfter = null, attackAt = null, deadAt = null;
     for (let i = 0; i < Math.round(14 / DT) && deadAt === null; i++) {
       N.pump(DT, 1, false); t += DT;
@@ -333,7 +333,7 @@ export async function run(N) {
       if (attackAt === null && N.ai.state === 'ATTACK') attackAt = t;
       if (N.deathState()) deadAt = t;
     }
-    W.key('ControlLeft', false); W.key('KeyW', false);
+    W.key('KeyW', false);
     for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
     const pass0 = evSince(ev0).find((e) => e.ev === 'lurk_pass');
     const d = N.doorApi.get('407');
@@ -345,7 +345,7 @@ export async function run(N) {
       pass: hidden.concealed && !hidden.visible && hidden.doorAngle === 0 && pass0 && pass0.lit === true && burstAt !== null && zAtBurst > 15.95 + 1.2
         && sounds(a0).includes('crash') && brokenNow && vl.includes('start:burst_lit') && vl.includes('handoff:burst_lit') && aimAfter !== null && aimAfter < 0.25
         && attackAt !== null && attackAt - burstAt < 1.5 && deadAt !== null,
-      hiddenWhileLurking: hidden, passedLit: pass0 && pass0.lit, zAtBurst: zAtBurst && +zAtBurst.toFixed(2), crouched: true, aimErrorAfter0_32s_rad: aimAfter && +aimAfter.toFixed(3),
+      hiddenWhileLurking: hidden, passedLit: pass0 && pass0.lit, zAtBurst: zAtBurst && +zAtBurst.toFixed(2), aimErrorAfter0_32s_rad: aimAfter && +aimAfter.toFixed(3),
       burstToAttack_s: attackAt && +(attackAt - burstAt).toFixed(2), out: deadAt !== null, doorBroken: brokenNow, viewLock: vl,
     };
   });
