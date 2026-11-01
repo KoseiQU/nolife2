@@ -37,6 +37,7 @@ export class Rooms {
     Object.assign(this, ctx);
     this.windows = new Map();
     this.closets = new Map();
+    this.bursts = new Map();      // P5b-1b: 管理人が出てくる奥の窓際のロッカー(221・6F の罠 3 室)。扉は enemy_ai が setBurst で動かす
     this.fallables = [];
     this.gates = [];
     this.hidden = null;
@@ -55,6 +56,7 @@ export class Rooms {
         const it = r.interior;
         if (!it) continue;
         if (it.hide) this.closets.set(r.id, { id: r.id, level: lv, h: it.hide, nodes: [], open01: 0, target: 0, speed: 1, locker: !!it.hide.locker });
+        if (it.burst) this.bursts.set(r.id, { id: r.id, level: lv, b: it.burst, nodes: [], open01: 0, jiggle: 0 });
         for (const fl of it.fallables) this.fallables.push({ ...fl, level: lv, state: 'rest', mesh: null, t: 0, vel: new THREE.Vector3(), spin: new THREE.Vector3() });
       }
       for (const g of f.gates || []) this.gates.push({ ...g, level: lv });
@@ -73,6 +75,9 @@ export class Rooms {
         if (!w) continue;
         w.node = b.node; w.base = b.base; w.dir = b.dir; w.dist = b.dist;
         this._applyWindow(w);
+      } else if (b.kind === 'lockerdoor' && b.part === 'burst') {   // P5b-1b
+        const L = this.bursts.get(b.room);
+        if (L && !L.nodes.some((n) => n.node === b.node)) L.nodes.push({ node: b.node, sign: 0 });
       } else {
         const c = this.closets.get(b.room);
         if (!c) continue;
@@ -80,11 +85,44 @@ export class Rooms {
       }
     }
     for (const c of this.closets.values()) if (c.level === level) { this._closetSigns(c); this._applyCloset(c); }
+    for (const L of this.bursts.values()) if (L.level === level) { this._burstSigns(L); this._applyBurst(L); }
   }
   onUnbind(level) {
     for (const w of this.windows.values()) if (w.level === level) w.node = null;
     for (const c of this.closets.values()) if (c.level === level) c.nodes = [];
+    for (const L of this.bursts.values()) if (L.level === level) L.nodes = [];
   }
+
+  // ------------------------------------------------------------ P5b-1b: 奥の窓際のロッカー(管理人が出てくる)
+  // 扉の板の中心が正面(部屋側)へ出る回転の向きを数値で決める(クローゼットと同じ)
+  _burstSigns(L) {
+    const F = FACING_VEC[L.b.f];
+    for (const n of L.nodes) {
+      n.node.rotation.y = 0;   // 閉じた姿勢で測る(開いたまま読み直した時も同じ向きになるように)
+      n.node.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(n.node);
+      const ctr = bb.getCenter(new THREE.Vector3()), piv = n.node.getWorldPosition(new THREE.Vector3());
+      n.sign = ((ctr.z - piv.z) * F[0] - (ctr.x - piv.x) * F[1]) >= 0 ? 1 : -1;
+    }
+  }
+  _applyBurst(L) {
+    const a = L.b.maxOpen * L.open01 + L.jiggle;
+    for (const n of L.nodes) n.node.rotation.y = n.sign * a;
+  }
+  // open01: 0 = 閉 … 1 = 最大(maxOpen rad)。jiggle: 閉じたままの小さな揺れ(rad)
+  setBurst(id, open01, jiggle = 0) {
+    const L = this.bursts.get(String(id));
+    if (!L) return null;
+    L.open01 = Math.max(0, Math.min(1.08, open01)); L.jiggle = jiggle;
+    this._applyBurst(L);
+    return L;
+  }
+  burstFront(id, d = 0.1) {
+    const L = this.bursts.get(String(id)), F = FACING_VEC[L.b.f];
+    return new THREE.Vector3(L.b.front[0] + F[0] * d, levelY(L.level) + 1.2, L.b.front[1] + F[1] * d);
+  }
+  resetBursts() { for (const L of this.bursts.values()) { L.open01 = 0; L.jiggle = 0; this._applyBurst(L); } }
+  burstSfx(name, id, vol = 0.6) { return this._sfx(name, this.burstFront(String(id)), vol); }
 
   // 扉の板が開いた時に部屋側(正面の向き)へ出るよう、回転の向きを数値で決める
   _closetSigns(c) {
@@ -478,6 +516,9 @@ export class Rooms {
     this.bufs = {
       slide: mk(0.9, (t, r) => { lp += ((r() - 0.5) - lp) * 0.08; return lp * 0.5 * Math.min(1, t * 8) * Math.max(0, 1 - t / 0.9) + Math.sin(2 * Math.PI * 60 * t) * 0.02 * (t < 0.85 ? 1 : 0); }, 5),
       creak: mk(0.6, (t, r) => (Math.sin(2 * Math.PI * (380 + 120 * Math.sin(t * 9)) * t) * 0.12 + (r() - 0.5) * 0.05) * Math.exp(-t * 3), 7),
+      // P5b-1b(仮音。P4 で録音 room_locker_creak_slow_01 / room_locker_rattle_01): スチールロッカーの扉がゆっくり開く軋み・中で揺れる
+      lockerCreak: mk(1.5, (t, r) => (Math.sin(2 * Math.PI * (210 + 70 * Math.sin(t * 3.1) + 25 * Math.sin(t * 17)) * t) * 0.16 + Math.sin(2 * Math.PI * 640 * t) * 0.03 * Math.sin(t * 11) + (r() - 0.5) * 0.04) * Math.min(1, t * 6) * Math.max(0, 1 - t / 1.5), 31),
+      lockerRattle: mk(0.5, (t, r) => { let v = 0; for (const h of [0, 0.11, 0.2, 0.33]) if (t >= h) v += Math.sin(2 * Math.PI * 520 * (t - h)) * Math.exp(-(t - h) * 55) * 0.35; return v + (r() - 0.5) * 0.06 * Math.exp(-t * 6); }, 37),
       climb: mk(0.8, (t, r) => ((r() - 0.5) * 0.25 * Math.exp(-((t - 0.15) ** 2) / 0.002) + (r() - 0.5) * 0.2 * Math.exp(-((t - 0.55) ** 2) / 0.003)), 9),
       fall_vase: mk(1.2, (t, r) => (Math.sin(2 * Math.PI * 1320 * t) * 0.4 + Math.sin(2 * Math.PI * 2210 * t) * 0.25 + (r() - 0.5) * 0.6 * Math.exp(-t * 30)) * Math.exp(-t * 6) * 0.8, 11),
       fall_cans: mk(1.2, (t, r) => { const hits = [0, 0.18, 0.31, 0.42]; let v = 0; for (const h of hits) if (t >= h) v += Math.sin(2 * Math.PI * (2600 - h * 900) * (t - h)) * Math.exp(-(t - h) * 40) * 0.5; return v + (r() - 0.5) * 0.08 * Math.exp(-t * 2) * (t < 1.1 ? 1 : 0); }, 13),
@@ -509,14 +550,14 @@ export class Rooms {
     });
     this.poolIdx = 0;
   }
-  _sfx(name, pos) {
+  _sfx(name, pos, vol = null) {
     this.log('sfx', { name });
     if (!this.ac || this.ac.state !== 'running' || !this.bufs[name]) return;
     const a = this.pool[this.poolIdx++ % this.pool.length];
     if (a.isPlaying) a.stop();
     if (!a.parent) this.scene.add(a);
     a.position.copy(pos); a.updateMatrixWorld();
-    a.setBuffer(this.bufs[name]); a.setVolume(name.startsWith('fall') ? 1.0 : 0.6);
+    a.setBuffer(this.bufs[name]); a.setVolume(vol ?? (name.startsWith('fall') ? 1.0 : 0.6));
     try { a.play(); } catch (e) { /* suspended */ }
   }
 

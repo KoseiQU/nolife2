@@ -128,8 +128,29 @@ for (const f of building.floors) {
     if (!it.points.desk || !it.points.deskFront) fail(`${id}: 机の点が無い`);
   }
   for (const r of empty) if (r.interior || (r.door && !r.door.locked)) fail(`扉のみの居室 ${r.id} に内装/開く扉`);
+  // P5b-1b: 管理人が出てくる奥の窓際のロッカー(221・6F の罠 3 室だけ)。窓(開く側・はめ殺し)と窓の前の通り道を塞がない・中に立てる・出た所が空いている
+  const BURST = '221,601,606,611';
+  const withBurst = all.filter((q) => q.interior && q.interior.burst).map((q) => q.id).sort().join(',');
+  if (withBurst !== BURST) fail(`奥のロッカーの部屋: ${withBurst}(${BURST})`);
+  for (const id of BURST.split(',')) {
+    const r = all.find((q) => q.id === id), it = r && r.interior, bl = it && it.burst;
+    if (!bl) continue;
+    const lk = it.items.find((q) => q.k === 'burstlocker');
+    if (!lk || JSON.stringify(lk.b) !== JSON.stringify(bl.b)) { fail(`${id}: ロッカーの家具が無い`); continue; }
+    const w = r.window, hw = w.width / 2;
+    const winRect = w.axis === 'z' ? [w.line - 0.35, w.pos[1] - hw, w.line + 0.35, w.pos[1] + hw] : [w.pos[0] - hw, w.line - 0.35, w.pos[0] + hw, w.line + 0.35];
+    if (overlap(bl.b, winRect)) fail(`${id}: ロッカー ${JSON.stringify(bl.b)} が掃き出し窓の前(0.35m)に入っている`);
+    for (const p of it.passage) if (overlap(p.rect, bl.b)) fail(`${id}: ロッカーが通路に入っている`);
+    const [fx, fz] = bl.feet;
+    if (!(fx > bl.b[0] + 0.15 && fx < bl.b[2] - 0.15 && fz > bl.b[1] + 0.15 && fz < bl.b[3] - 0.15)) fail(`${id}: 中に立つ点がロッカーの中央に無い`);
+    const [ox, oz] = bl.out, rr = 0.3;
+    const hit = it.solids.find((q) => ox + rr > q[0] && ox - rr < q[2] && oz + rr > q[1] && oz - rr < q[3]);
+    if (hit) fail(`${id}: 飛び出して立つ点 ${JSON.stringify(bl.out)} が家具 ${JSON.stringify(hit)} に掛かる`);
+    if (!['L', 'R'].includes(bl.hinge)) fail(`${id}: 蝶番の向き ${bl.hinge}`);
+    // 扉の振り(開き 1.75rad・板 0.47m)が窓の前に入らない: 蝶番は柱の側なので、開いた扉は柱とロッカーの間から部屋側へ出る
+  }
 }
 if (units !== 104) fail(`居室数 ${units}`);
 if (balconies !== 104) fail(`バルコニー ${balconies}/104`);
 if (failures) { console.error(`\n内装アサート: ${failures} 件 NG`); process.exit(1); }
-console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 4(220 は内装つき)`);
+console.log(`内装アサート OK: テンプレート 104 室(4 方向・鏡像も)・扉の振り・入れる部屋 ${enterable} 室(内装・窓・隠れ場所・落ちる物・通路)・バルコニー ${balconies} 室・屋上A の隔て板 1(410)・401 の北端は固定・物語の部屋 4(220 は内装つき)・奥の窓際のロッカー 4 室(221・601・606・611)`);

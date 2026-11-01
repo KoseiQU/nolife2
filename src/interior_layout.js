@@ -18,6 +18,11 @@ export const WALL_T = 0.12;
 export const PASSAGE_W = 0.95;
 export const LIVING_U0 = 3.5;        // 洋室の入口(これより奥が洋室)
 const WIN = { v0: 1.02, v1: 2.62, split: 1.82, h: 2.0 };   // 掃き出し窓(v の範囲、開く側 = v0..split)
+// P5b-1b: 管理人が出てくる奥の窓際のロッカー(柱 v 0.06..0.48 と掃き出し窓 v 1.02.. の間。カーテン u 5.80 の手前、クローゼット u ..5.26 の奥)。
+//  扉は柱の側に蝶番(開くと窓の側=通路から中が見える)。feet = 中に立つ点、out = 飛び出して立つ点(通路の脇)
+//  奥行 0.40m で外壁に寄せる(u 5.52..5.92): クローゼットの奥の端 u 5.26 との間に 0.26m あけ、柱の側に蝶番の扉が 1.0rad まで開けるように(1.02rad を越えると扉の先がクローゼットの端に入る)。
+//  カーテンとレールはこの部屋だけロッカーの横(v 1.00)から始める
+export const BURST_LOCKER = { u0: 5.52, u1: 5.92, v0: 0.49, v1: 1.00, h: 1.95, feet: 5.76, out: [5.15, 1.2], maxOpen: 1.0 };
 
 // ---------------------------------------------------------------- 局所(u,v) → 世界(x,z)
 export function roomFrame(room, mirror = !!(UNIT_VARIANTS[room.id] && UNIT_VARIANTS[room.id].mirror)) {
@@ -84,15 +89,16 @@ export const UNIT_VARIANTS = {
   // P5b-1(DESIGN §3.8 H): 221(鍵なしで入れる普通の部屋・奥のクローゼットから管理人が飛び出す)・220(前作の痕跡の荒れた部屋)・6F の 7 室(全室を入れる部屋に)。
   //  swap = 机とクローゼットを入れ替える(机が手前 u 3.06〜4.08、クローゼットが奥 u 4.30〜5.26)。机の上の物に近づいた時、
   //  奥のクローゼットから出てくる管理人とプレイヤーの間に机が来る＝玄関へ逃げられる(221・6F の罠 3 室・220 の鍵の部屋 609)
-  221: { swap: true, type: 'lived', curtain: 'gray', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'rail', desk: ['monitor', 'cup', 'papers'], floor: ['bag'], poster: 'p4', fall: ['vase', 'books'] },
+  //  P5b-1b: burstLocker = 奥の窓際(柱と掃き出し窓の間)に縦長のスチールロッカー。管理人はここから出てくる(221・6F の罠 3 室。609 には置かない)
+  221: { swap: true, burstLocker: true, type: 'lived', curtain: 'gray', curtainState: 'half', bedding: 'sage', rug: 'gray', laundry: 'rail', desk: ['monitor', 'cup', 'papers'], floor: ['bag'], poster: 'p4', fall: ['vase', 'books'] },
   220: { type: 'wrecked', curtain: 'oldgray', curtainState: 'half', bedding: 'charcoal', rug: 'rust', laundry: null, desk: ['papers', 'cans'], floor: ['box', 'trash', 'clothes'], poster: null, fall: ['cans'] },
-  601: { swap: true, type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: 'p2', fall: ['vase', 'mug'] },
+  601: { swap: true, burstLocker: true, type: 'lived', curtain: 'olive', curtainState: 'half', bedding: 'blue', rug: 'beige', laundry: 'rail', desk: ['laptop', 'cup', 'papers'], floor: ['bag'], poster: 'p2', fall: ['vase', 'mug'] },
   604: { type: 'messy', curtain: 'wine', curtainState: 'closed', bedding: 'terracotta', rug: 'rust', laundry: 'balcony', desk: ['monitor', 'cans', 'snack'], floor: ['clothes', 'trash', 'box'], poster: 'p6', fall: ['cans', 'books'] },
   605: { type: 'tidy', curtain: 'lightblue', curtainState: 'open', bedding: 'white', rug: 'green', laundry: null, desk: ['laptop', 'lamp', 'plant'], floor: [], poster: 'p4', fall: ['vase', 'mug'] },
-  606: { swap: true, type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box'], poster: 'p5', fall: ['cans', 'books'] },
+  606: { swap: true, burstLocker: true, type: 'messy', curtain: 'brown', curtainState: 'closed', bedding: 'charcoal', rug: null, laundry: 'rail', desk: ['laptop', 'cans', 'snack', 'papers'], floor: ['clothes', 'trash', 'box'], poster: 'p5', fall: ['cans', 'books'] },
   608: { type: 'vacant', curtain: 'oldgray', curtainState: 'half', bedding: null, rug: null, laundry: null, desk: [], floor: ['box', 'box2'], poster: null, fall: ['bottle'] },
   609: { swap: true, type: 'lived', curtain: 'teal', curtainState: 'half', bedding: 'lavender', rug: 'gray', laundry: 'balcony', desk: ['monitor', 'lamp', 'cup'], floor: ['bag'], poster: 'p1', fall: ['mug', 'vase'] },
-  611: { swap: true, type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'sage', rug: 'beige', laundry: null, desk: ['laptop', 'plant'], floor: [], poster: 'p3', fall: ['books', 'vase'] },
+  611: { swap: true, burstLocker: true, type: 'tidy', curtain: 'beige', curtainState: 'open', bedding: 'sage', rug: 'beige', laundry: null, desk: ['laptop', 'plant'], floor: [], poster: 'p3', fall: ['books', 'vase'] },
 };
 // 色(build_rooms.py のパレットのキー。値はガンマ補正前の sRGB 16 進)
 export const PALETTE = {
@@ -134,6 +140,19 @@ export function unitInterior(room, opt = {}) {
   if (wreck) put('chairfallen', 4.30, 5.18, 0.64, 1.02, 0, 0.44, '+v', 1);   // 倒れた椅子(横倒し。背もたれが窓の方)
   else put('chair', 4.62 + du, 5.06 + du, 0.64, 1.00, 0, 0.88, '-v', 1);
   put('pillar', 5.40, 5.94, 0.06, 0.48, 0, CEIL_H, '+v', 2);
+  let burst = null;
+  if (V.burstLocker) {
+    const BL = BURST_LOCKER;
+    // 蝶番の側: 局所 v の小さい側(柱)。正面(-u)から見た左右(build_rooms.py の IL: a = 正面から見て左→右)を世界の点で決める
+    const fv = FACING_VEC[F.face('-u')], R = [fv[1], -fv[0]];
+    const pLo = F.pt((BL.u0 + BL.u1) / 2, BL.v0), pHi = F.pt((BL.u0 + BL.u1) / 2, BL.v1);
+    const hinge = ((pLo[0] - pHi[0]) * R[0] + (pLo[1] - pHi[1]) * R[1]) > 0 ? 'R' : 'L';
+    const lk = put('burstlocker', BL.u0, BL.u1, BL.v0, BL.v1, 0, BL.h, '-u', 2, { hinge });
+    const feet = F.pt(BL.feet, (BL.v0 + BL.v1) / 2).map(r4);   // 背板寄り(体の前が扉の面より奥に収まる)
+    burst = { room: room.id, b: lk.b, f: lk.f, hinge, h: BL.h, feet, out: F.pt(...BL.out).map(r4), maxOpen: BL.maxOpen,
+      front: F.pt(BL.u0, (BL.v0 + BL.v1) / 2).map(r4),                                        // 扉の面の中央
+      hingePt: F.pt(BL.u0, BL.v0 + 0.03).map(r4) };                                           // 蝶番(柱の側)
+  }
   put('ac', 5.70, 5.94, 0.62, 1.42, 2.0, 2.3, '-u', 0);
   // --- B 側 ---
   put('shoecase', 0.10, 0.86, 2.44, 2.84, 0, 0.95, '-v', 1);
@@ -154,10 +173,11 @@ export function unitInterior(room, opt = {}) {
     open: [r4(wa[along]), r4(ws[along])].sort((a, b) => a - b), fix: [r4(wf[along]), r4(wb[along])].sort((a, b) => a - b),
     line: r4(F.alongX ? F.wu(6.0) : F.wu(6.0)),
   };
+  const cv0 = V.burstLocker ? BURST_LOCKER.v1 + 0.01 : 0.62;   // P5b-1b: 奥のロッカーの部屋はロッカーの横から(寄せたひだは窓の開く側に掛けない = clearOpen)
   if (V.curtain) {
-    deco('curtain', 5.80, 5.86, 0.62, 2.80, 0.05, 2.22, '-u', { c: V.curtain, state: V.curtainState, open: [WIN.v0, WIN.split] });
+    deco('curtain', 5.80, 5.86, cv0, 2.80, 0.05, 2.22, '-u', { c: V.curtain, state: V.curtainState, open: [WIN.v0, WIN.split], ...(V.burstLocker ? { clearOpen: true } : {}) });
   }
-  deco('curtainrail', 5.84, 5.88, 0.6, 2.82, 2.22, 2.25, '-u');
+  deco('curtainrail', 5.84, 5.88, cv0 - 0.02, 2.82, 2.22, 2.25, '-u');
   if (V.laundry === 'rail') deco('hangers', 5.70, 5.80, 1.95, 2.55, 1.35, 2.2, '-u', { c: V.bedding || 'gray' });
   // --- 机の上・床・壁 ---
   const dy = 0.72;
@@ -249,7 +269,7 @@ export function unitInterior(room, opt = {}) {
     if (u > p.u0 && u < p.u1 && v > p.v0 && v < p.v1) throw new Error(`[unitInterior] ${room.id}: 落ちる物 ${fl.type} が通路の中`);
   }
   return {
-    kind: 'unit', variant: { ...V }, items, decor, solids, fallables, hide, window, points,
+    kind: 'unit', variant: { ...V }, items, decor, solids, fallables, hide, window, points, burst,
     passage: passage.map((p) => ({ ...p, rect: F.rect(p.u0, p.u1, p.v0, p.v1) })),
   };
 }

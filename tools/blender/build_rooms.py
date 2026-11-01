@@ -502,6 +502,30 @@ def _locker(col, it, base, room):
     d.finish(col, dict(ROOMS_PROPS, n2_kind='lockerdoor', n2_room=room, n2_sign=-1))
 
 
+def _burst_locker(col, it, base, room):
+    """P5b-1b: 管理人が出てくる奥の窓際の縦長スチールロッカー(221・6F の罠 3 室)。管理室のロッカーと同じ作り。
+    扉は柱の側(it['hinge'] = 'L'/'R' = 正面から見て左/右)に蝶番の片開きの別ノード(n2_kind 'lockerdoor'・n2_part 'burst')。
+    中は空(管理人が立つ。枕棚・作業着なし)。閉じた扉と枠の間に 1.2cm の隙間。"""
+    L = IL(it, base)
+    W, D, H = L.W, L.D, L.H
+    b = B(f'BurstLocker_{room}_body')
+    L.pbox(b, 0.0, W, 0.0, H, 0.03, D, 'locker', keep=lambda k, c, n, F=L.front: k != F)
+    L.pbox(b, 0.0, 0.03, 0.0, H, 0.0, 0.03, 'locker'); L.pbox(b, W - 0.03, W, 0.0, H, 0.0, 0.03, 'locker')
+    L.pbox(b, 0.0, W, H - 0.04, H, 0.0, 0.03, 'locker'); L.pbox(b, 0.0, W, 0.0, 0.05, 0.0, 0.03, 'locker')
+    L.ibox(b, 0.03, W - 0.03, 0.05, H - 0.04, 0.03, D - 0.002, 'MR_Partition', keep=lambda k, c, n, Bk=L.back_key(): k != Bk)   # 内側(側板・背板・天板・底板)
+    L.pbox(b, 0.0, W, H, H + 0.006, 0.0, D, 'darkgray', keep=lambda k, c, n: k == '+y')   # 天板の上の埃っぽい面
+    b.finish(col, {'n2_kind': 'locker', 'n2_room': room})
+    left = it.get('hinge', 'R') == 'L'
+    ha = 0.03 if left else W - 0.03
+    hx, hy, hz = L.w(ha, 0.0, 0.012)
+    d = C.MeshBuilder(f'BurstLockerDoor_{room}', origin=(hx, hy, hz))
+    db = B.__new__(B); db.mb = d; db.name = d.name
+    a0, a1 = (0.03, W - 0.042) if left else (0.042, W - 0.03)
+    mn, mx = L.mm(a0, a1, 0.05, H - 0.04, 0.0, 0.022)
+    db.pbox(mn, mx, 'locker', front=L.front, front_uv=APPUV['locker'], front_mat='MR_Appl')
+    d.finish(col, dict(ROOMS_PROPS, n2_kind='lockerdoor', n2_room=room, n2_part='burst', n2_sign=1 if left else -1))
+
+
 def _rot_about(pts, n, deg):
     """4 点を中心のまわりに法線 n の軸で deg 度回す(巻きの向きは変わらない)。"""
     c = [sum(p[i] for p in pts) / 4 for i in range(3)]
@@ -552,6 +576,8 @@ def build_unit_items(room, col):
             L.pbox(b, 0.03, W - 0.03, 1.1, 1.38, 0.05, D - 0.06, 'lightgray', gloss=True, atlas=APPUV['micro'], back=True)
         elif k == 'closet':
             _closet(col, it, base, rid)
+        elif k == 'burstlocker':
+            _burst_locker(col, it, base, rid)
         elif k == 'desk':
             W, D = L.W, L.D
             L.box(b, 0, W, 0.69, 0.72, 0, D, 'MR_DeskWood')
@@ -740,6 +766,13 @@ def _curtain(b, it, base, room):
             panels = [(0.0, 0.28), (aa[1] + 0.02, W)]
         else:
             panels = [(0.0, aa[0] - 0.02), (W - 0.28, W)]
+    if it.get('clearOpen'):
+        # P5b-1b: 奥のロッカーの部屋。寄せたひだが窓の開く側(バルコニーへの出入り)に掛からないよう、開く側に重なる板を除く(closed は従来どおり)
+        F2 = room['window']
+        lo2, hi2 = F2['open']
+        ab = sorted([a_of((L.o[0], lo2)), a_of((L.o[0], hi2))]) if F2['axis'] == 'z' else sorted([a_of((lo2, L.o[1])), a_of((hi2, L.o[1]))])
+        if st != 'closed':
+            panels = [(a0, a1) for (a0, a1) in panels if a1 <= ab[0] + 0.01 or a0 >= ab[1] - 0.01]
     for (a0, a1) in panels:
         if a1 - a0 < 0.05:
             continue
