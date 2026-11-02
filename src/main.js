@@ -1037,7 +1037,8 @@ window.__n2 = {
   levelLog,
   setLevel(key) { setPlayerLevel(key); return world.focus(key); },
   // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
-  teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
+  teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); stairs.quiet = 0;   // P6b #5: テレポートで到着直後の無ヒント時間を持ち越さない
+    updateVisibility(); return world.focus(key); },
   get hideOdds() { return { ...ai.hideOdds, open: +ai.hideOpenOdds().toFixed(3), start: { ...HIDE_ODDS_START } }; },   // P5b-6: 逃げ込みの確率の現在値(起動時の値)
   enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   get lens() { return peephole.active ? peephole.lens : (lensFor(peepRoomHere()) || lens); },   // P6b-A: 今いる部屋のレンズ(覗いている間はその部屋)
