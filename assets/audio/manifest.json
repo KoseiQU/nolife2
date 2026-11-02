@@ -1,0 +1,330 @@
+{
+ "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目(ゲームは仮音のまま)、unselected = 未選択(仮音のまま)",
+ "sr": 22050,
+ "totalBytes": 4017354,
+ "scenes": {
+  "pl_step_room": {
+   "file": "pl_step_room.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 1.6,
+   "sr": 22050,
+   "bytes": 70604,
+   "peakDb": -6,
+   "rmsDb": -27.5,
+   "sprite": {
+    "n": 4,
+    "slot": 0.4
+   }
+  },
+  "amb_corridor": {
+   "file": "amb_corridor.wav",
+   "cand": "a",
+   "kind": "amb",
+   "dur": 8,
+   "sr": 22050,
+   "bytes": 352844,
+   "peakDb": -13.1,
+   "rmsDb": -26,
+   "loop": true
+  },
+  "pl_closet": {
+   "file": "pl_closet.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 2.651,
+   "sr": 22050,
+   "bytes": 116950,
+   "peakDb": -6,
+   "rmsDb": -32.1,
+   "segs": {
+    "open": [
+     0,
+     0.75
+    ],
+    "close": [
+     1.7,
+     3
+    ]
+   }
+  },
+  "room_fall": {
+   "file": "room_fall.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 4.86,
+   "sr": 22050,
+   "bytes": 214378,
+   "peakDb": -6,
+   "rmsDb": -32.5,
+   "segs": {
+    "glass": [
+     0,
+     2.454
+    ],
+    "books": [
+     2.454,
+     3.296
+    ],
+    "cans": [
+     3.296,
+     4.8602
+    ]
+   },
+   "types": {
+    "vase": "glass",
+    "mug": "glass",
+    "cup": "glass",
+    "bottle": "glass",
+    "books": "books",
+    "binders": "books",
+    "cans": "cans"
+   },
+   "adjusted": "A を調整(パリーン！と割れる)",
+   "note": "パリーン！と割れる感じ"
+  },
+  "ev_chime": {
+   "file": "ev_chime.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 2.9,
+   "sr": 22050,
+   "bytes": 127934,
+   "peakDb": -6,
+   "rmsDb": -20.3
+  },
+  "ev_motor": {
+   "file": "ev_motor.wav",
+   "cand": "a",
+   "kind": "amb",
+   "dur": 6.5,
+   "sr": 22050,
+   "bytes": 286694,
+   "peakDb": -17.1,
+   "rmsDb": -26,
+   "loop": true
+  },
+  "enemy_step_run": {
+   "file": "enemy_step_run.wav",
+   "cand": "c",
+   "kind": "loud",
+   "dur": 2.2,
+   "sr": 22050,
+   "bytes": 97066,
+   "peakDb": -3,
+   "rmsDb": -24.3,
+   "sprite": {
+    "n": 4,
+    "slot": 0.55
+   },
+   "adjusted": "C を調整(もっと大きくドタバタ)",
+   "note": "もっと大きい音でドタバタ恐怖感を煽る"
+  },
+  "enemy_door_smash": {
+   "file": "enemy_door_smash.wav",
+   "cand": "c",
+   "kind": "loud",
+   "dur": 2.761,
+   "sr": 22050,
+   "bytes": 121806,
+   "peakDb": -3,
+   "rmsDb": -15.9,
+   "adjusted": "C を調整(爆発のように)",
+   "note": "もっと爆発音のような感じ"
+  },
+  "enemy_hit": {
+   "file": "enemy_hit.wav",
+   "cand": "a",
+   "kind": "loud",
+   "dur": 1.626,
+   "sr": 22050,
+   "bytes": 71752,
+   "peakDb": -3,
+   "rmsDb": -15.2,
+   "adjusted": "A を調整(もっと重く)",
+   "note": "もっと重量感のあるものに"
+  },
+  "death": {
+   "file": "death.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 3.379,
+   "sr": 22050,
+   "bytes": 149072,
+   "peakDb": -6,
+   "rmsDb": -27.2
+  },
+  "story_221_lure": {
+   "file": "story_221_lure.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 4.793,
+   "sr": 22050,
+   "bytes": 211436,
+   "peakDb": -6,
+   "rmsDb": -18.8
+  },
+  "pickup_key": {
+   "file": "pickup_key.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 0.396,
+   "sr": 22050,
+   "bytes": 17486,
+   "peakDb": -6,
+   "rmsDb": -25.6
+  },
+  "pickup_paper": {
+   "file": "pickup_paper.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 0.48,
+   "sr": 22050,
+   "bytes": 21218,
+   "peakDb": -6,
+   "rmsDb": -21.4
+  },
+  "amb_x105": {
+   "file": "amb_x105.wav",
+   "cand": "c",
+   "kind": "amb",
+   "dur": 8,
+   "sr": 22050,
+   "bytes": 352844,
+   "peakDb": -6,
+   "rmsDb": -30.1,
+   "loop": true
+  },
+  "amb_outdoor": {
+   "file": "amb_outdoor.wav",
+   "cand": "b",
+   "kind": "amb",
+   "dur": 8,
+   "sr": 22050,
+   "bytes": 352844,
+   "peakDb": -11.1,
+   "rmsDb": -26,
+   "loop": true
+  },
+  "amb_roof": {
+   "file": "amb_roof.wav",
+   "cand": "a",
+   "kind": "amb",
+   "dur": 8,
+   "sr": 22050,
+   "bytes": 352844,
+   "peakDb": -11.3,
+   "rmsDb": -26,
+   "loop": true
+  },
+  "x705_lights_off": {
+   "file": "x705_lights_off.wav",
+   "cand": "b",
+   "kind": "sfx",
+   "dur": 2.917,
+   "sr": 22050,
+   "bytes": 128670,
+   "peakDb": -6,
+   "rmsDb": -33.1
+  },
+  "amb_b1": {
+   "file": "amb_b1.wav",
+   "cand": "b",
+   "kind": "amb",
+   "dur": 8,
+   "sr": 22050,
+   "bytes": 352844,
+   "peakDb": -11.7,
+   "rmsDb": -26,
+   "loop": true
+  },
+  "car_engine": {
+   "file": "car_engine.wav",
+   "cand": "b",
+   "kind": "sfx",
+   "dur": 5.985,
+   "sr": 22050,
+   "bytes": 263966,
+   "peakDb": -6,
+   "rmsDb": -19.2
+  },
+  "ending_gate": {
+   "file": "ending_gate.wav",
+   "cand": "c",
+   "kind": "sfx",
+   "dur": 8.029,
+   "sr": 22050,
+   "bytes": 354102,
+   "peakDb": -6,
+   "rmsDb": -18.3,
+   "adjusted": "C を調整(ジャリジャリ感をなくす)",
+   "note": "ジャリジャリ感をなくして"
+  }
+ },
+ "voice": {
+  "enemy_breath_door": {
+   "cand": "b",
+   "note": "息遣いではなく、笑い声かセリフにして"
+  },
+  "x105_scream": {
+   "cand": "c",
+   "note": "もっと機械音感をなくしたい"
+  }
+ },
+ "none": [
+  "amb_room",
+  "pl_crouch",
+  "pl_step_corridor",
+  "door_locked",
+  "pl_peephole",
+  "opening_ev",
+  "ev_button",
+  "ev_door",
+  "ev_car_quiet",
+  "enemy_handle",
+  "enemy_door_latch",
+  "gameover",
+  "checkpoint",
+  "watcher_silence",
+  "amb_lobby",
+  "door_glass",
+  "door_steel",
+  "locker_tease",
+  "key_unlock",
+  "x105_lamp_off",
+  "space_warp",
+  "decoy_key",
+  "door_auto",
+  "pl_step_outdoor",
+  "pl_step_stairs",
+  "car_door",
+  "room_window",
+  "amb_x705",
+  "door_creak_slow",
+  "amb_maze",
+  "space_release"
+ ],
+ "round3": [
+  "pl_flashlight",
+  "door_wood",
+  "enemy_presence",
+  "enemy_step_walk",
+  "enemy_breath_close",
+  "room_door_rattle",
+  "enemy_scream",
+  "locker_open_slow",
+  "locker_burst",
+  "amb_x312_room_loop",
+  "x312_clock_tick",
+  "x312_door_open",
+  "x312_door_close",
+  "x312_door_locked",
+  "x312_key_slam",
+  "x312_watcher_lookup",
+  "x312_room_shift",
+  "x312_bed_creak"
+ ],
+ "unselected": [
+  "xb1_loop_notice"
+ ]
+}

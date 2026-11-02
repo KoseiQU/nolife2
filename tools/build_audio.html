@@ -1,0 +1,98 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>build_audio</title>
+<!-- build_audio.html — P4b: 試聴盤で選ばれた音をゲーム用の wav に描く頁。tools/build_audio.mjs がヘッドレス Chromium で開いて window.N2B を呼ぶ(人が開いても何も起きない) -->
+<script type="module">
+import { SCENES, GAME, NORM, encodeWav, prepare } from '../samples/sound_lib.js';
+import { Kit, hash } from '../src/audio_kit.js';
+
+const db = (d) => Math.pow(10, d / 20);
+const toB64 = (ab) => { const u = new Uint8Array(ab); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+
+// 採用・なし・3 周目・未選択の振り分け(sound_choice.json の pick は大文字 A/B/C。候補 ID は小文字)
+async function plan() {
+  const doc = await (await fetch('../samples/sound_choice.json', { cache: 'no-store' })).json();
+  const ch = doc.choices || doc;
+  const out = { adopted: [], voice: [], none: [], round3: [], unselected: [] };
+  for (const sc of SCENES) {
+    const e = ch[sc.id] || {}, pick = (e.pick || '').toLowerCase();
+    if (sc.round === 3 && !['a', 'b', 'c'].includes(pick)) { out.round3.push(sc.id); continue; }
+    if (['a', 'b', 'c'].includes(pick)) {
+      const g = GAME.scenes[sc.id] || {};
+      (g.voice ? out.voice : out.adopted).push({ id: sc.id, cand: pick, note: e.note || null });
+    } else if (pick === 'none') out.none.push(sc.id);
+    else out.unselected.push(sc.id);
+  }
+  return out;
+}
+
+// 1 場面を描く(GAME.sr・モノラル)。戻り値: { b64, meta }
+async function render(id, candId) {
+  const sc = SCENES.find((s) => s.id === id), cand = sc.cands.find((c) => c.id === candId);
+  let spec = GAME.scenes[id] || {};
+  const sr = GAME.sr;
+  await prepare(cand);
+  let kind = spec.kind || cand.kind, buf;
+  if (spec.parts) {
+    // 区間を並べた 1 本(null = 採用候補そのもの、それ以外は [名前, 秒, 描く関数])。区間ごとに尻の無音を落としてから詰める
+    const segs = {}, chunks = [];
+    let at = 0;
+    for (const [name, dur, fn] of spec.parts) {
+      const len = fn ? dur : cand.dur + 0.3;
+      const oc = new OfflineAudioContext(1, Math.ceil(len * sr), sr);
+      if (fn) fn(new Kit(oc, oc.destination, 0, hash(id + ':' + name))); else cand.render(oc, oc.destination, 0);
+      let c = (await oc.startRendering()).getChannelData(0);
+      let pk = 0; for (const v of c) pk = Math.max(pk, Math.abs(v));
+      let end = c.length; while (end > 1 && Math.abs(c[end - 1]) < pk * 5e-4) end--;
+      c = c.slice(0, Math.min(c.length, end + Math.round(0.08 * sr)));
+      segs[name] = [+(at / sr).toFixed(4), +((at + c.length) / sr).toFixed(4)];
+      chunks.push(c); at += c.length;
+    }
+    buf = new AudioBuffer({ length: at, numberOfChannels: 1, sampleRate: sr });
+    let o = 0; for (const c of chunks) { buf.copyToChannel(c, 0, o); o += c.length; }
+    spec = { ...spec, segs, trimmed: true };
+  } else if (spec.sprite) {
+    const { n, slot } = spec.sprite;
+    const oc = new OfflineAudioContext(1, Math.ceil(n * slot * sr), sr);
+    for (let i = 0; i < n; i++) spec.step(new Kit(oc, oc.destination, i * slot, hash(id + ':step:' + i)), 0.02, i);
+    buf = await oc.startRendering();
+  } else {
+    const oc = new OfflineAudioContext(1, Math.ceil((cand.dur + (spec.loop ? 0 : 0.3)) * sr), sr);
+    cand.render(oc, oc.destination, 0);
+    buf = await oc.startRendering();
+  }
+  let d = buf.getChannelData(0);
+  for (let i = 0; i < d.length; i++) if (!Number.isFinite(d[i])) throw new Error(id + ': NaN');
+  // ループ: 尻の xfade 秒を頭に等パワーで重ねて、長さ L − xfade の継ぎ目の無い 1 周にする
+  if (spec.loop) {
+    const X = Math.round((spec.xfade || 2) * sr), M = d.length - X, o = new Float32Array(M);
+    for (let i = 0; i < M; i++) o[i] = d[i];
+    for (let i = 0; i < X; i++) { const w = (i + 0.5) / X; o[i] = d[i] * Math.sin(w * Math.PI / 2) + d[M + i] * Math.cos(w * Math.PI / 2); }
+    d = o;
+  } else if (!spec.sprite && !spec.trimmed) {
+    // 尻の無音を落とす(−66dB 以下が続く所から 0.08 秒残す)
+    let pk = 0; for (const v of d) pk = Math.max(pk, Math.abs(v));
+    let end = d.length; while (end > 1 && Math.abs(d[end - 1]) < pk * 5e-4) end--;
+    d = d.slice(0, Math.min(d.length, end + Math.round(0.08 * sr)));
+  }
+  // 正規化(試聴盤と同じ基準: ピーク上限と RMS 上限の小さい方)
+  let peak = 0, sum = 0;
+  for (const v of d) { const a = Math.abs(v); if (a > peak) peak = a; sum += v * v; }
+  const rms = Math.sqrt(sum / d.length), N = NORM[kind] || NORM.sfx;
+  if (peak < 1e-6) throw new Error(id + ': silent');
+  const g = Math.min(db(N.peakDb) / peak, db(N.rmsDb) / Math.max(rms, 1e-9));
+  for (let i = 0; i < d.length; i++) d[i] *= g;
+  const ob = new AudioBuffer({ length: d.length, numberOfChannels: 1, sampleRate: sr }); ob.copyToChannel(d, 0);
+  const wav = encodeWav(ob);
+  const meta = { cand: candId, kind, dur: +(d.length / sr).toFixed(3), sr, bytes: wav.byteLength,
+    peakDb: +(20 * Math.log10(peak * g)).toFixed(1), rmsDb: +(20 * Math.log10(rms * g)).toFixed(1) };
+  if (spec.loop) meta.loop = true;
+  if (spec.sprite) meta.sprite = { n: spec.sprite.n, slot: spec.sprite.slot };
+  if (spec.segs) meta.segs = spec.segs;
+  if (spec.types) meta.types = spec.types;
+  if (sc.adjusted) meta.adjusted = sc.adjusted;
+  return { b64: toB64(wav), meta };
+}
+
+window.N2B = { plan, render, ready: true };
+</script>
