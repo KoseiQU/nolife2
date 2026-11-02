@@ -24,7 +24,7 @@ import { Enemy } from './enemy.js';
 import { EnemyAI, hideOddsFrom } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
 import { AudioBank } from './audio_bank.js';
-import { Peephole } from './peephole.js';
+import { Peephole, PEEP } from './peephole.js';
 import { AttackMovie } from './attack_movie.js';
 import { Hud } from './hud.js';
 import { Rooms } from './rooms.js';
@@ -397,7 +397,7 @@ const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getP
   // P2d: スコープ演出の入出力(覗いているか／扉が開く瞬間に覗き穴視点を閉じる／レンズ位置)
   isPeeking: () => peephole.active,
   onScopeOpen: () => { peephole.forced = false; peephole.set(false); pendingE = null; },
-  getLens: () => lens,
+  getLens: (rid) => lensFor(rid || '410'),   // P6b-A(§3.9 #1): 部屋ごとのレンズ(覗き返しで顔を寄せる先)
   lensEyeY: 1.48 });
 // P2c: 襲撃ムービー(固定カメラ・顔の補助光・血飛沫)。血の合成は最終段(粒子の後)
 const movie = new AttackMovie({ camera, player, enemy, scene, audio: enemyAudio });
@@ -416,36 +416,90 @@ if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
 else if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
 
-// ---------------------------------------------------------------- peephole (P2b)
+// ---------------------------------------------------------------- peephole (P2b → P6b-A §3.9 #1: 覗き穴のある居室すべて)
 const door410 = world.doorById.get('410');
-const lens = (() => {
-  const c = door410.collision;
-  const z = (c.minZ + c.maxZ) / 2;
-  const rc = new THREE.Raycaster(new THREE.Vector3(c.minX - 0.4, floorY + 1.48, z), new THREE.Vector3(1, 0, 0), 0, 1);
-  door410.node.updateMatrixWorld(true);
-  const hit = rc.intersectObject(door410.node, true)[0];
-  return { x: (hit ? hit.point.x : c.minX) - 0.015, z, yaw: Math.PI / 2 };
-})();
+// P6b-A: 覗き穴のある居室(内装のある 1K。食堂・シアター・管理室・別空間 105/312/705/B1 は除く)。レンズは扉の位置・向きから:
+//  扉板の廊下側の面(扉の中心・床から 1.48m)の 1.5cm 外、廊下を向く。扉板が読めていない(別の階)・開いている時は当たりの箱の廊下側の面
+const PEEP_ROOMS = new Map();
+for (const f of building.floors) {
+  if (f.level > 7) continue;
+  for (const r of f.rooms) {
+    if (!(r.kind === 'unit' && r.door && r.door.enterable && r.interior)) continue;
+    PEEP_ROOMS.set(r.id, { id: r.id, level: f.level, n: FACING_N[r.door.facing], pos: r.door.pos, door: world.doorById.get(r.id) });
+  }
+}
+const _lensCache = new Map();
+const _lensRc = new THREE.Raycaster();
+function lensFor(rid) {
+  const R = PEEP_ROOMS.get(String(rid));
+  if (!R || !R.door || !R.door.collision) return null;
+  if (_lensCache.has(R.id)) return _lensCache.get(R.id);
+  const d = R.door, c = d.collision, [nx, nz] = R.n;
+  const cx = (c.minX + c.maxX) / 2, cz = (c.minZ + c.maxZ) / 2, y = levelY(R.level) + PEEP.eyeY;
+  let hit = null;
+  if (d.node && d.angle < 0.005) {
+    d.node.updateMatrixWorld(true);
+    _lensRc.set(new THREE.Vector3(cx + nx * 0.4, y, cz + nz * 0.4), new THREE.Vector3(-nx, 0, -nz));
+    _lensRc.far = 1;
+    hit = _lensRc.intersectObject(d.node, true)[0] || null;
+  }
+  const fx = hit ? hit.point.x : nx > 0 ? c.maxX : nx < 0 ? c.minX : cx;
+  const fz = hit ? hit.point.z : nz > 0 ? c.maxZ : nz < 0 ? c.minZ : cz;
+  const L = { x: nx !== 0 ? fx + nx * 0.015 : cx, z: nz !== 0 ? fz + nz * 0.015 : cz, yaw: Math.atan2(-nx, -nz), room: R.id, level: R.level, floorY: levelY(R.level) };
+  if (hit) _lensCache.set(R.id, L);   // 扉板で測れた時だけ覚える(GLB を読み直しても扉の位置は同じ)
+  return L;
+}
+// プレイヤーが今いる覗き穴のある部屋(バルコニーは除く = 部屋の矩形の内)
+function peepRoomHere() {
+  if (typeof playerLevel !== 'number') return null;
+  const p = player.pos;
+  for (const R of PEEP_ROOMS.values()) {
+    if (R.level !== playerLevel) continue;
+    const r = world.roomById.get(R.id).room, [rx, rz, rw, rd] = r.rect;
+    if (p.x > rx && p.x < rx + rw && p.z > rz && p.z < rz + rd) return R.id;
+  }
+  return null;
+}
+const lens = lensFor('410');   // 410(チュートリアル場面 4 と P2 のテストの基準)
 const peephole = new Peephole({ camera, player, floorY, lens });
 composer.insertPass(peephole.pass, composer.passes.indexOf(grainPass));
+// 覗く部屋のレンズへ差し替える(覗いていない時は 410 に戻す = チュートリアルの強制の覗き穴は 410)
+function setPeepLens(rid) {
+  const L = (rid && lensFor(rid)) || lens;
+  peephole.setLens(L, L.floorY);
+}
 let doorScope = null;
-buildDoorScopeInside();
-// 4F を解放して読み直したら、室内側のドアスコープを新しい扉板へ付け直す
+let doorScopeDoor = null;
+buildDoorScopeInside(door410);
+// 階を読み直したら、室内側のドアスコープを今いる部屋(無ければ 410)の新しい扉板へ付け直す
 world.onFloorReady = (lv, rec) => {
-  if (lv === 4 && door410.node && (!doorScope || doorScope.parent !== door410.node)) buildDoorScopeInside();
+  updateDoorScope();
   if (lv === glbLevel(playerLevel)) hud.evPanel = rec.panel;
 };
+// P6b-A: 室内側のドアスコープは 1 組だけ持ち、プレイヤーが入った覗き穴のある部屋の扉板へ付け替える(廊下からは扉板の裏で見えない = 全室に置く必要がない)
+function updateDoorScope() {
+  const rid = peepRoomHere();
+  const d = (rid && PEEP_ROOMS.get(rid).door) || door410;
+  if (!d || !d.node) return;
+  if (doorScope && doorScope.parent === d.node && doorScopeDoor === d) return;
+  if (d.angle > 0.005) return;   // 閉じた姿勢で測って付ける(開いている間は次の機会に)
+  buildDoorScopeInside(d);
+}
 
 // P2c: ドアスコープを室内側から見えるように(§3.4.1)。扉板の内面・目の高さに真鍮のリングとレンズ。
-// 扉板(door410.node)の子にするので扉と一緒に回る。レンズには廊下側の光の点(小さな発光)と環境反射
-function buildDoorScopeInside() {
-  const c = door410.collision;
-  const z = (c.minZ + c.maxZ) / 2;
-  const rc = new THREE.Raycaster(new THREE.Vector3(c.maxX + 0.5, floorY + 1.48, z), new THREE.Vector3(-1, 0, 0), 0, 1);
-  const hit = rc.intersectObject(door410.node, true)[0];
-  const innerX = hit ? hit.point.x : c.maxX;
+// 扉板(d.node)の子にするので扉と一緒に回る。レンズには廊下側の光の点(小さな発光)と環境反射。
+// P6b-A: 扉の向き(facing)に合わせて回す(410 = 西向きの扉で回転 0)
+function buildDoorScopeInside(d) {
+  if (!d || !d.node || !d.collision) return;
+  if (doorScope) { doorScope.removeFromParent(); doorScope.traverse((m) => { if (m.geometry) m.geometry.dispose(); }); doorScope = null; }
+  const c = d.collision, [nx, nz] = FACING_N[d.facing];
+  const cx = (c.minX + c.maxX) / 2, cz = (c.minZ + c.maxZ) / 2, y = levelY(d.level) + PEEP.eyeY;
+  d.node.updateMatrixWorld(true);
+  const rc = new THREE.Raycaster(new THREE.Vector3(cx - nx * 0.5, y, cz - nz * 0.5), new THREE.Vector3(nx, 0, nz), 0, 1);
+  const hit = rc.intersectObject(d.node, true)[0];
+  const inner = hit ? hit.point : new THREE.Vector3(nx > 0 ? c.minX : nx < 0 ? c.maxX : cx, y, nz > 0 ? c.minZ : nz < 0 ? c.maxZ : cz);
   const grp = new THREE.Group();
-  grp.name = 'DoorScopeInside_410';
+  grp.name = 'DoorScopeInside_' + d.roomId;
   const brass = new THREE.MeshStandardMaterial({ color: 0xb48a46, metalness: 1.0, roughness: 0.32, envMap: envTex, envMapIntensity: 0.55 });
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0165, 0.0048, 10, 28).rotateY(Math.PI / 2), brass);
   const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.0125, 0.0125, 0.012, 20).rotateZ(Math.PI / 2), brass);
@@ -464,20 +518,32 @@ function buildDoorScopeInside() {
   lensMesh.position.x = 0.0085;
   grp.add(ring, barrel, lensMesh);
   for (const m of [ring, barrel, lensMesh]) { m.castShadow = false; m.receiveShadow = true; }
-  // 扉板ローカル(開閉角 0 のとき世界の向きと同じ。原点 = 蝶番)
-  grp.position.set(innerX - door410.node.position.x + 0.004, floorY + 1.48 - door410.node.position.y, z - door410.node.position.z);
-  door410.node.add(grp);
+  // 扉板ローカル(開閉角 0 のとき世界の向きと同じ。原点 = 蝶番)。リングの軸(ローカル +x)を部屋の側(−n)へ向ける
+  grp.rotation.y = Math.atan2(nz, -nx);
+  grp.position.set(inner.x - nx * 0.004 - d.node.position.x, y - d.node.position.y, inner.z - nz * 0.004 - d.node.position.z);
+  d.node.add(grp);
   doorScope = grp;
+  doorScopeDoor = d;
 }
 let pendingE = null;   // E の長押し判定 {t, held}
+// P6b-A(§3.9 #1): 覗き穴のある居室の中・扉の内側 1.0m 以内(扉面からの奥行き)・レンズまで 1.2m 以内・扉に正対(P2c のヒントと同じ角度)・扉が閉じている
 function canPeep() {
-  const p = player.object.position;
-  if (playerLevel !== 4 || door410.angle > 0.03) return false;
-  if (!(p.x > 7.86 && p.z > 5.8 && p.z < 8.7)) return false;   // 410 の室内
+  const rid = peepRoomHere();
+  if (!rid) return false;
+  const R = PEEP_ROOMS.get(rid), d = R.door;
+  if (!d || d.angle > 0.03) return false;
+  const L = lensFor(rid);
+  if (!L) return false;
+  const p = player.object.position, [nx, nz] = R.n;
+  const depth = -((p.x - R.pos[0]) * nx + (p.z - R.pos[1]) * nz);
+  if (depth < 0 || depth > 1.0) return false;
   const fwd = new THREE.Vector3(); camera.getWorldDirection(fwd);
-  const dx = lens.x - p.x, dz = lens.z - p.z, dist = Math.hypot(dx, dz);
-  return dist < 1.2 && (dx * fwd.x + dz * fwd.z) / dist > 0.5;   // P2c: 1.2m 以内で扉に正対(ヒント表示と同じ条件)
+  const dx = L.x - p.x, dz = L.z - p.z, dist = Math.hypot(dx, dz);
+  return dist < 1.2 && (dx * fwd.x + dz * fwd.z) / dist > 0.5;
 }
+// 覗き穴を開く(E 長押し・P)。今いる部屋のレンズへ差し替えてから
+function peepOn() { setPeepLens(peepRoomHere()); peephole.set(true); }
+function peepOff() { peephole.set(false); setPeepLens(null); }
 function onUseKey() {
   if (canPeep()) { pendingE = { t: 0, held: false }; return null; }   // 短押し=扉、長押し=覗き穴(離した時に決まる)
   return useAndReport();
@@ -493,19 +559,21 @@ player.onKey = (code) => {
     else { const n = +dm[1]; elevator.select(n); hud.flash(HUD_TEXT.ev.selected(n)); }
   }
   // P5a: L キーの施錠/解錠は撤去(DESIGN §3.7・§3.8 B「施錠要素は全廃」)。L は何もしない
-  if (code === 'KeyP' && canPeep()) peephole.set(true);
+  if (code === 'KeyP' && canPeep()) peepOn();
 };
 function updatePeepInput(dt) {
   if (pendingE) {
     if (player.keys.has('KeyE')) {
       pendingE.t += dt;
-      if (!pendingE.held && pendingE.t >= 0.35) { pendingE.held = true; peephole.set(true); }
+      if (!pendingE.held && pendingE.t >= 0.35) { pendingE.held = true; peepOn(); }
     } else {
-      if (pendingE.held) peephole.set(false); else useAndReport();
+      if (pendingE.held) peepOff(); else useAndReport();
       pendingE = null;
     }
   }
-  if (peephole.active && !pendingE && !player.keys.has('KeyP') && !peephole.forced) peephole.set(false);
+  if (peephole.active && !pendingE && !player.keys.has('KeyP') && !peephole.forced) peepOff();
+  if (!peephole.active && peephole.lens !== lens) setPeepLens(null);   // 他の経路で閉じた(襲撃・死亡・スコープ演出)→ 410 に戻す
+  updateDoorScope();
   const size = renderer.getDrawingBufferSize(new THREE.Vector2());
   peephole.update(size.x, size.y);
 }
@@ -603,6 +671,8 @@ const elevator = new Elevator({ building, world, player, camera, listener: enemy
 // 行き先(±1)を先に読み始める(到着は読み終わってから)。P5b-3: 出発階(カゴを描いている階)は到着まで解放しない
 //  (旧: 2 階以上離れた行き先では出発階が解放され、移動中は何も描かれず画面が暗転していた = docs/p5b3/NOTES.md §1)
 elevator.onRideStart = (to) => world.focus(to, { keep: [playerLevel] });
+// P6b-A(§3.9 #9): プレイヤーのカゴが管理人のいる階へ向かう → 管理人は EV ホールで待ち構える(条件は ai.evRideCheck)
+elevator.onPlayerRide = (to, info) => { if (!TOUR) ai.evRideCheck(to, info); };
 // P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
 rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, bank, getLevel: () => playerLevel, flags: FLAGS,
   onNoise: (f) => { if (!TOUR && !(tutorial && tutorial.active)) ai.noiseRoom(f.room, f.x, f.z, f.level); },
@@ -840,6 +910,7 @@ function step(dt) {
     viewLock.update(dt);
   }
   updateDoors(dt);
+  if (!TOUR) ai.afterDoors();   // P6b-A: 空室の扉が閉まり切ったこのフレームで潜む(描かない)
   elevator.update(dt);
   enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit && !ai.concealed;   // P5a: 空室の中に潜んでいる間は描かない
   updateCarLamp();
@@ -938,7 +1009,9 @@ window.__n2 = {
   // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
   get hideOdds() { return { ...ai.hideOdds, open: +ai.hideOpenOdds().toFixed(3), start: { ...HIDE_ODDS_START } }; },   // P5b-6: 逃げ込みの確率の現在値(起動時の値)
-  enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
+  enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
+  get lens() { return peephole.active ? peephole.lens : (lensFor(peepRoomHere()) || lens); },   // P6b-A: 今いる部屋のレンズ(覗いている間はその部屋)
+  lensFor, peepRoomHere, canPeep, get doorScopeDoor() { return doorScopeDoor && doorScopeDoor.roomId; },   // P6b-A
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial, title,   // P5a・P6a
   story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間
@@ -948,7 +1021,7 @@ window.__n2 = {
   get exteriorLoad() { return exteriorLoad; },
   // 手動ポンプ: 本物のループと同じ順(player → peephole入力 → AI → enemy(mixer) → doors → 音 → 死亡演出)で n 回進め、最後に1回描画
   pump(dt = 1 / 60, n = 1, render = true) { for (let i = 0; i < n; i++) step(dt); if (render) this.render(); return ai.stats(); },
-  peephole(on) { peephole.forced = !!on; if (on) peephole.set(true); else peephole.set(false); return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray() }; },
+  peephole(on) { peephole.forced = !!on; if (on) { if (!peephole.active) setPeepLens(peepRoomHere()); peephole.set(true); } else { peephole.set(false); setPeepLens(null); } return { active: peephole.active, fov: camera.fov, pos: camera.position.toArray(), room: peephole.lens.room }; },
   deathState: () => (death ? { t: +death.t.toFixed(2), respawned: death.respawned } : null),
   deaths: () => deathCount,
   enemy: {

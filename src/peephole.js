@@ -1,4 +1,5 @@
 // peephole.js — ドアスコープ(覗き穴)。DESIGN §3.7「部屋の内側から覗き穴で廊下を見る」。
+//  P6b-A(§3.9 #1): レンズは部屋ごと(main.js の lensFor)。覗く前に setLens で差し替える(410 以外の部屋・別の階)。
 // 部屋の中で扉に向かい E 長押し(または P を押している間)で、扉の廊下側レンズ位置へカメラを移し、
 // FOV 110° ＋ 魚眼(等距離射影へ変換)＋ 円形マスク ＋ 強い周辺減光。離すと元のカメラへ戻す。
 
@@ -52,6 +53,13 @@ export class Peephole {
         }`,
     });
     this.pass.enabled = false;
+  }
+
+  // P6b-A: レンズ(と床の高さ)を差し替える。覗いている間なら位置もすぐ移す
+  setLens(lens, floorY = this.floorY) {
+    this.lens = lens;
+    this.floorY = floorY;
+    if (this.active) this._place();
   }
 
   set(on) {

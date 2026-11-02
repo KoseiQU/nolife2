@@ -128,6 +128,9 @@ export class Elevator {
           c.state = 'moving';
           this.log('depart', { to, riding: c.riding });
           if (c.riding && this.onRideStart) this.onRideStart(to);
+          // P6b-A(§3.9 #9): プレイヤーが乗ったカゴの行き先が決まった → AI へ(管理人がその階の廊下にいれば EV ホールで待ち構える)。
+          //  eta = 扉が開き始めるまでの秒(動き出すまで＋移動＋チャイム)
+          if (c.riding && this.onPlayerRide) this.onPlayerRide(to, { from: c.level, eta: EV.callReact + c.dur + EV.chimeLead });
           this._hum(true);
         }
         break;
