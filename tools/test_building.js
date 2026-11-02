@@ -7,6 +7,7 @@
 //  3c) P3b-A: 階数表示がカゴの現在地に追従(1→2→3→4、▲)。カゴの天井は常時点灯。管理人の EV 移動でも表示が動く
 //  3d) P5b-3: EV で 1F→4F に乗って移動中(扉が閉まってから開くまで)、画面中央と四隅の平均輝度が出発時の ±15% 以内(毎フレーム)
 //  4) 外階段: 4F の鉄扉→踊り場→上る(5F,6F,7F,屋上B)→屋上を歩く(落ちない)→下る(…→1F)。段の手前の当たりで階段へ踏み外さない
+// 4b) P6b #5: 階段で着く位置 = 段の口の外・扉から約 1.0m・扉を向く、着いて 1.5 秒はヒントなし(外階段 1→RB→1・北階段・地下の全停留所)
 //  5) 北階段(P3a-2: 屋外の鉄骨): 3F の鉄扉→屋外通路→3F→2F→1F の地面(小さな矩形から出ない)→2F→3F
 //  5b) 地下への階段: 1F→B1 の踊り場→施錠扉(「鍵がかかっている」＋ガチャ音・開かない)→1F
 //  9) 見学モード(?test=building&tour のときだけ): 管理人が scene に無い。P3b-3: 内装のない部屋(空室 73・物語の部屋 5)の扉は開かない
@@ -343,6 +344,47 @@ export async function run(N) {
     return { from, to: N.level, y: +N.player.pos.y.toFixed(2), x: +N.player.pos.x.toFixed(2), z: +N.player.pos.z.toFixed(2), hint };
   }
   const walk = (yaw, frames, x = N.player.pos.x, z = N.player.pos.z) => { N.setView(x, z, yaw, 0); key('KeyW', true); N.pump(DT, frames, false); key('KeyW', false); N.pump(DT, 2, false); return pos(); };
+
+  // P6b #5: 着いた位置 = 段の口の外・扉寄り(扉から約 1.0m・扉を向く)、着いて 1.5 秒は段のヒントを出さない。外階段 1→RB→1・北階段 3→1→3・地下 1→B1→1 の全停留所
+  await T('4b_stair_arrival_near_door_no_hint', async () => {
+    const S = N.stairs;
+    const arrive = async (id, dir) => {
+      const st = N.building.stairs.find((s) => s.id === id), g = st.geom;
+      const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
+      const from = N.level;
+      if (g.axis === 'x') N.setView(g.s0 - 0.3, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); else N.setView((lane[0] + lane[1]) / 2, g.s0 - 0.3, Math.PI, 0);
+      N.pump(DT, 1, false);
+      key('KeyW', true); let t = 0;
+      while (S.busy || N.level === from) { N.pump(DT, 1, false); t += DT; if (t > 25) break; }
+      key('KeyW', false);
+      N.pump(DT, 1, false);
+      const p = N.player.pos, yaw = N.player.object.rotation.y, a = S.lastArrive || {};
+      const D = a.door || st.door;
+      const want = Math.atan2(-(D[0] - p.x), -(D[1] - p.z));
+      let dyaw = want - yaw; while (dyaw > Math.PI) dyaw -= 2 * Math.PI; while (dyaw < -Math.PI) dyaw += 2 * Math.PI;
+      const r = 0.28, cols = (N.world.collisions(N.level) || []).filter((c) => !c.disabled && c.kind !== 'door' && p.x + r > c.minX && p.x - r < c.maxX && p.z + r > c.minZ && p.z - r < c.maxZ);
+      const hud0 = N.hudState(), m0 = S.mouth(p.x, p.z, N.level);
+      N.pump(DT, 60, false); const hud1 = N.hudState();
+      N.pump(DT, 40, false); const hud2 = N.hudState();
+      for (let i = 0; i < 100 && N.world.loadedLevels().indexOf(N.level === 'B1' ? 1 : N.level === 'RB' ? 7 : N.level) < 0; i++) await sleep(50);
+      const stairHint = (h) => h.kind === 'stair' || /の階へ|屋上へ|地下へ/.test(h.hint);
+      return { id, from, to: N.level, x: +p.x.toFixed(2), z: +p.z.toFixed(2), door: D, dist: +Math.hypot(D[0] - p.x, D[1] - p.z).toFixed(2), faceDeg: +(Math.abs(dyaw) * 180 / Math.PI).toFixed(1),
+        inMouth: !!m0, inSolid: cols.length, hint0: stairHint(hud0), hint1: stairHint(hud1), hint2: stairHint(hud2), quiet0: +S.quiet.toFixed(2) };
+    };
+    await N.teleport(1, 4.6, 20.85, 0); await settle('1,2');
+    const main = [];
+    for (let i = 0; i < 7; i++) main.push(await arrive('main', 'up'));     // 1→2→…→7→RB
+    for (let i = 0; i < 7; i++) main.push(await arrive('main', 'down'));   // RB→7→…→1
+    await N.teleport(3, 14.0, 2.2, -Math.PI / 2); await settle('2,3,4');
+    const north = [await arrive('north', 'down'), await arrive('north', 'down'), await arrive('north', 'up'), await arrive('north', 'up')];
+    await N.teleport(1, 8.3, 1.45, -Math.PI / 2); await settle('1,2');
+    const base = [await arrive('basement', 'down'), await arrive('basement', 'up')];
+    const all = [...main, ...north, ...base];
+    const ok = (a) => !a.inMouth && a.inSolid === 0 && !a.hint0 && !a.hint1 && !a.hint2 && a.faceDeg < 5;
+    const pass = main.map((a) => a.to).join(',') === '2,3,4,5,6,7,RB,7,6,5,4,3,2,1' && north.map((a) => a.to).join(',') === '2,1,2,3' && base.map((a) => a.to).join(',') === 'B1,1'
+      && all.every(ok) && main.every((a) => a.dist <= 1.2 && a.dist >= 0.8) && base.every((a) => a.dist <= 1.2);
+    return { pass, main, north, base, bad: all.filter((a) => !ok(a)) };
+  });
 
   await T('5_north_stairs', async () => {
     // P3a-2: 北階段は屋外の鉄骨。3F の縦廊下の北端の鉄扉→屋外通路→踊り場→3F→2F→1F の地面(建物へは戻れない)→2F→3F
