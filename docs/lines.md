@@ -40,3 +40,8 @@ DESIGN.md §3.5 の「台詞は `docs/lines.md` に集約し、ファイル名�
   - `tools/make_tts.sh` を引数なしで実行すると全部を仮声で作り直す(録音も上書きされる)。録音を残したい ID は `KEEP="mgr_line_know_01 …" bash tools/make_tts.sh`、特定の ID だけ作るなら `bash tools/make_tts.sh <ID> …`。
   - 録音の長さが仮声と違って切れ方がおかしい時は `src/audio_voice.js` の `len`(切り出す秒)・`loop`(伸ばす区間)を直す。録音が最初から低く遅いなら `rate` を 1.0 寄りに。
 
+
+## P4d: 録音の取り込みと仮声の関係(2026-11-02)
+- **録音は 1 コマンドで取り込む**:iPhone のボイスメモなどで録った m4a / wav / aiff を `assets/audio/rec_in/` に、ファイル名の先頭を台詞 ID にして置く(例 `mgr_line_found_01.m4a`、`mgr_line_found_01 取り直し.m4a`、`mgr_scream_01_take2.wav`)。リポジトリの直下で `bash tools/import_rec.sh`。macOS 付属の `afconvert` でモノラル 22.05kHz 16bit の wav にし、前後の無音を詰めて `assets/audio/tts/<ID>.wav` へ上書きする。ID がこの表に無いファイルは警告して飛ばす。ゲームを再読み込み(Cmd+Shift+R)すれば鳴る。録り方と優先順は `docs/recording_guide.md`。
+- **仮声との関係(KEEP)**:取り込んだ ID は `assets/audio/tts/recorded.txt` に追記される。`tools/make_tts.sh` はこの一覧の ID を**仮声で上書きしない**(従来の `KEEP="ID …"` と併用できる)。仮声に戻したい時だけ `FORCE=1 bash tools/make_tts.sh <ID>`。`rec_in/` は gitignore(元ファイルはコミットしない)。変換後の `tts/<ID>.wav` と `recorded.txt` はコミットする。
+- 台詞の言い回しを変えた時は、この表の「台詞」の欄を直す(ID は変えない)。

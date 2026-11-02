@@ -1,10 +1,11 @@
 #!/bin/bash
 # make_tts.sh — 管理人の仮声(P4a-3)。macOS 付属の say(日本語音声)で台詞を読み上げ、22.05kHz/16bit/モノラルの wav にする。
 # 台詞の正は docs/lines.md(ID = ファイル名)。ユーザーの録音が来たら同じ名前の wav で assets/audio/tts/ を上書きする(このスクリプトは再実行しない。
-# 再実行すると録音を仮声で上書きしてしまう。録音した ID だけ残したい時は KEEP="ID1 ID2" を付ける)。
+# 再実行すると録音を仮声で上書きしてしまう。P4d 以降は tools/import_rec.sh で取り込んだ ID(assets/audio/tts/recorded.txt)を自動で残す。手で置いた録音は KEEP="ID1 ID2" を付ける)。
 # 使い方: bash tools/make_tts.sh            (全部を作り直す。リポジトリの直下で。macOS 専用)
 #         bash tools/make_tts.sh mgr_door_laugh_01 mgr_door_line_02   (指定した ID だけ)
 #         KEEP="mgr_line_know_01" bash tools/make_tts.sh              (KEEP の ID は作らない = 録音を残す)
+#         FORCE=1 bash tools/make_tts.sh mgr_scream_01                (recorded.txt を無視して仮声に戻す)
 # P4b: ゲームは声を wav に焼き込まず、鳴らす時に加工する(src/audio_voice.js)ので、作り直した仮声・置いた録音はそのまま試聴盤とゲームに効く。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -12,7 +13,10 @@ OUT=assets/audio/tts
 TMP=$(mktemp -d)
 mkdir -p "$OUT"
 ONLY=" $* "
-KEEP=" ${KEEP:-} "
+# P4d: tools/import_rec.sh が取り込んだ録音の ID は assets/audio/tts/recorded.txt に残る。その ID は仮声で上書きしない(仮声に戻したい時は FORCE=1)
+REC=""
+if [ -z "${FORCE:-}" ] && [ -f "$OUT/recorded.txt" ]; then REC=$(tr '\n' ' ' <"$OUT/recorded.txt"); fi
+KEEP=" ${KEEP:-} $REC "
 line() { # ID 音声 速さ(語/分) 台詞
   if [ "$ONLY" != "  " ] && [[ "$ONLY" != *" $1 "* ]]; then return; fi
   if [[ "$KEEP" == *" $1 "* ]]; then echo "keep $1"; return; fi

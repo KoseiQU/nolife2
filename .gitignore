@@ -17,3 +17,6 @@ build/floor_*_baked.blend
 build/floor_*_lightmap.png
 build/_denoise_tmp.exr
 build/logs/
+
+# P4d: ユーザーの声の録音の元ファイル(iPhone のボイスメモなど)。tools/import_rec.sh が assets/audio/tts/<ID>.wav に変換する。元ファイルはコミットしない
+assets/audio/rec_in/
