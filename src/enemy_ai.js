@@ -378,6 +378,7 @@ export class EnemyAI {
     if (this.elevator && this.elevator.npc && this.elevator.npc.ambush) this.elevator.npc = null;
     this.concealed = false; this.lurkRoomId = null; this.lurkMode = null; this.lurkTargetRoom = null; this._lurkWake = null; this._concealOnClose = null; this._chaseSlowUntil = 0; this._chaseWalkUntil = 0; this._chaseSlowSpeed = null;
     this.chaseOmni = false;   // P5b-2a
+    this.runGate = false;     // P6b-A2
     this.setState('PATROL', { force: true, log: true });
   }
 
@@ -393,12 +394,13 @@ export class EnemyAI {
     this.log('dormant', { on: this.dormant });
   }
   // ロッカー(居室のクローゼット)から飛び出す(DESIGN §3.8 D①・H 第1段/第5段)。本体の現在地と無関係にその部屋のクローゼットの中に現れる(ワープ)
-  lockerBurst(rid) {
+  // opts.runGate(P6b-A2 §3.9 #18): 221 の初回だけ。視点が玄関へ向き切って操作が戻る瞬間に onRunGate() → 走り出すまで(main が runGate を下ろすまで)止まる
+  lockerBurst(rid, opts = {}) {
     // P5b-1b: 奥の窓際のロッカーがある部屋(221・6F の罠 3 室)はそこから、ゆっくり開いて見せてから(reveal)
     const L = this.roomsSys && this.roomsSys.bursts && this.roomsSys.bursts.get(String(rid));
     if (L) {
       this.dormant = false;
-      this.setState('APPEAR', { force: true, log: true, reveal: L, level: L.level, x: L.b.feet[0], z: L.b.feet[1], out: L.b.out, label: 'locker_burst', room: String(rid) });
+      this.setState('APPEAR', { force: true, log: true, reveal: L, level: L.level, x: L.b.feet[0], z: L.b.feet[1], out: L.b.out, label: 'locker_burst', room: String(rid), runGate: !!opts.runGate });
       return true;
     }
     const c = this.roomsSys && this.roomsSys.closets.get(String(rid));
@@ -598,6 +600,17 @@ export class EnemyAI {
     this.revealPhase = 'exit';
     mark('exit');
     while (this.time - lockT0 < lockTotal - 1e-6) { facePlayer(2.0); yield; }
+    // P6b-A2(§3.9 #18): 221 の初回は、ここで「Shift＋W で走って逃げろ！」を出して時間を止める(main が ai・管理人・物語の更新を止める)。
+    //  プレイヤーが走って動き出したら runGate が下りる。grace はそこから数える
+    if (o.runGate && this.onRunGate) {
+      this.revealPhase = 'runGate';
+      this.runGate = true;
+      mark('runGate');
+      this.log('run_gate', { room: id });
+      this.onRunGate();
+      while (this.runGate) { facePlayer(2.0); yield; }
+      this.log('run_gate_go', { room: id });
+    }
     // 6) 操作が戻ってから grace 秒は立ち止まったまま(照らしてこちらを見ている。殴らない)
     this.revealPhase = 'grace';
     mark('control');

@@ -776,6 +776,7 @@ function updateAmbience() {
 }
 // 自分の足音: 居室の床(410 などの入れる部屋と 312 の複製の部屋)だけ pl_step_room A「靴下・柔らかい」。廊下・屋外・外階段の足音は「なし」
 player.onStep = ({ run }) => {
+  if (runGate.active) return;   // P6b-A2: 走り確認の間は歩いても進まない(足音も出さない)
   const lv = playerLevel, p = player.pos;
   const room = lv === 'X312' || (typeof lv === 'number' && roomKindAt(lv, p.x, p.z) === 'unit');
   if (room) bank.play('pl_step_room', { vol: run ? 1.0 : 0.75 });
@@ -886,21 +887,49 @@ function updateOutdoorQuality(on) {
 const frameTimes = []; // [timestamp, frameMs, cpuMs]
 let last = performance.now();
 let simTime = 0;
+// P6b-A2(§3.9 #18): 221 の初回の走り確認。管理人が玄関へ視点を向け終えて操作を返す瞬間(ai.onRunGate)に表示し、
+//  プレイヤーが Shift を押しながら W で実際に前へ動くまで時間を止める: 管理人(AI・アニメ)・物語の時計(電話の鳴り)・窓の管理人は止め、
+//  見回し(マウス)だけできる。W だけ・A/S/D では動かない(位置を戻す・表示はそのまま)。走って動いた瞬間に表示を消して再開(grace はそこから)
+const runGate = { active: false, t: 0, log: [] };
+ai.onRunGate = () => {
+  runGate.active = true; runGate.t = 0;
+  hud.runPrompt(true);
+  runGate.log.push({ ev: 'on', at: +simTime.toFixed(3) });
+};
+function updateRunGate(dt, gx, gz) {
+  if (!runGate.active) return;
+  if (!ai.runGate || death) { runGate.active = false; hud.runPrompt(false); runGate.log.push({ ev: 'cancel', at: +simTime.toFixed(3) }); return; }   // 復帰・死亡などで解けた
+  runGate.t += dt;
+  const k = player.keys, run = (k.has('ShiftLeft') || k.has('ShiftRight')) && k.has('KeyW');
+  const dx = player.pos.x - gx, dz = player.pos.z - gz, moved = Math.hypot(dx, dz);
+  if (run && moved > 1e-4 && !player.frozen) {
+    runGate.active = false; ai.runGate = false; hud.runPrompt(false);
+    runGate.log.push({ ev: 'go', at: +simTime.toFixed(3), waited: +runGate.t.toFixed(3), speed: +(moved / Math.max(dt, 1e-4)).toFixed(2) });
+    return;
+  }
+  if (moved > 0) {   // 歩き・横歩き・後ろ歩きでは進まない
+    player.pos.x = gx; player.pos.z = gz;
+    player.object.position.x -= dx; player.object.position.z -= dz;
+    if (!runGate.walkTried && k.has('KeyW')) { runGate.walkTried = true; runGate.log.push({ ev: 'walk_ignored', at: +simTime.toFixed(3) }); }
+  }
+}
 function step(dt) {
   simTime += dt;
+  const gx = player.pos.x, gz = player.pos.z;
   player.update(dt);
+  updateRunGate(dt, gx, gz);
   updatePortal();
   if (!movie.active && !death) stairs.update(dt);   // P5b-1b: 襲撃ムービー・死亡演出の間は段の上り下りを止める
   rooms.update(dt, playerLevel);
   if (tutorial.active) tutorial.update(dt);   // P6a: 場面を映すチュートリアル(カメラ・演出体の管理人・扉・EV を動かす。rooms の後 = 隠れ場所のカメラの向きを上書き)
   rooms.updateWind(dt, outdoorKind());   // P4b: 風の音は updateAmbience(amb_roof)。ここは場所の記録だけ
-  if (!tutorial.active) story.update(dt);   // P5b-1(P6a: チュートリアルの間は止める)
+  if (!tutorial.active && !runGate.active) story.update(dt);   // P5b-1(P6a: チュートリアルの間は止める。P6b-A2: 走り確認の間も)
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   if (!TOUR) {
-    if (!tutorial.active) ai.update(dt);   // P6a: チュートリアルの間は AI の通常動作を止める(管理人は tutorial.js が演出体として動かす)
-    enemy.update(dt, camera);
+    if (!tutorial.active && !runGate.active) ai.update(dt);   // P6a: チュートリアルの間は AI の通常動作を止める(管理人は tutorial.js が演出体として動かす)。P6b-A2: 走り確認の間も
+    if (!runGate.active) enemy.update(dt, camera);   // P6b-A2: 走り確認の間は管理人の動き(アニメ・足音)も止める
     // P5b-3: 管理人もシアターの段床に乗る(見た目の足元の高さだけ。当たり・経路・視線の判定は床のまま。段は約 0.1 秒で登る)
     if (!ai.transit && TIERS.has(ai.level)) {
       const want = liftAt(ai.level, enemy.pos.x, enemy.pos.z);
@@ -920,7 +949,7 @@ function step(dt) {
   updateVisibility();
   updateOutdoorLook(dt);
   spaces.update(dt);   // P5b-2a: 今いる別空間の演出(霧などの見た目の上書きもあるので外の見た目の後)
-  if (!TOUR && !tutorial.active) watcher.update(dt);
+  if (!TOUR && !tutorial.active && !runGate.active) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
   updateAmbience();   // P4b: 場所ごとの環境音(地下の水滴 updateDrips を置き換え)
   bank.update(dt);
@@ -1013,6 +1042,7 @@ window.__n2 = {
   enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   get lens() { return peephole.active ? peephole.lens : (lensFor(peepRoomHere()) || lens); },   // P6b-A: 今いる部屋のレンズ(覗いている間はその部屋)
   lensFor, peepRoomHere, canPeep, get doorScopeDoor() { return doorScopeDoor && doorScopeDoor.roomId; },   // P6b-A
+  runGate,   // P6b-A2: 221 の初回の走り確認({ active, t, log })
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial, title,   // P5a・P6a
   story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間

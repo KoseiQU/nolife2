@@ -74,6 +74,7 @@ export class Story {
     this.trans = null; this.ending = null; this.ended = false;
     this.siteChased = false; this.pending = [];
     this.burst221 = false;    // P5b-1b: 221 の奥のロッカーから出たか(第1段の初回。逃げる途中で死ぬと戻す)
+    this.runGateShown = false;   // P6b-A2(§3.9 #18): 221 の走り確認を出したか(遊び 1 回につき 1 回。逃げる途中で死んで飛び出しがもう一度起きても出さない)
     this.introDone = false;   // P5b-1b: 冒頭の見せ場(4F の EV の管理人)を見せたか。死亡しても戻さない(繰り返さない)
     this.group = new THREE.Group(); this.group.name = 'StoryProps';
     this.scene.add(this.group);
@@ -395,6 +396,7 @@ export class Story {
     this.ended = false; this.ending = null; this.trans = null; this.pending = []; this.siteChased = false;
     this.introDone = n > 1;
     this.burst221 = n > 1;
+    if (n === 1) this.runGateShown = false;   // P6b-A2: 第1段からやり直す(テスト・デバッグ)時は初回に戻す
     if (this.rooms.resetBursts) this.rooms.resetBursts();   // P5b-1b: 奥の窓際のロッカーの扉を閉じる(221・罠の部屋)
     this.stage = n; this.sub = n === 1 ? 'memo' : null; this.item = START_ITEM[n];
     this.taken.clear();
@@ -599,7 +601,9 @@ export class Story {
       this.sub = 'flee';
       this.log('burst221');
       this.log('stage', { stage: 1, sub: 'flee' });
-      this.ai.lockerBurst('221');
+      this.ai.lockerBurst('221', { runGate: !this.runGateShown });   // P6b-A2: 初回だけ走り確認(main が表示と時間の停止)
+      if (!this.runGateShown) this.log('run_gate_armed');
+      this.runGateShown = true;
       return;
     }
     // 逃げ切った: 追跡が解けた(見失った)か、プレイヤーが階を変えた(飛び出しの演出中・襲撃中・死亡演出中は数えない)

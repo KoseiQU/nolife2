@@ -207,6 +207,7 @@ export async function run(N) {
   const roomU = (id, x, z) => { const r = room(id).r; const [rx, rz, rw, rd] = r.rect; if (!(x > rx && x < rx + rw && z > rz && z < rz + rd)) return -1; const n = FN[r.door.facing]; return -((x - r.door.pos[0]) * n[0] + (z - r.door.pos[1]) * n[1]); };
   const run221 = async (opts = {}) => {
     const r = room('221').r, pts = r.interior.points, BL = r.interior.burst;
+    if (!opts.keepGate) S.runGateShown = !opts.gate;   // P6b-A2: 走り確認(18 番)は opts.gate の時だけ。他のケースは 2 回目以降の扱い(従来の流れ)
     await tp(2, ...front('221', 0.9), 0);
     face(r.door.pos[0], r.door.pos[1], 0); N.pump(DT, 2, false);
     const doorHint = N.hudState().hint;
@@ -931,6 +932,55 @@ export async function run(N) {
       midStairs, midY, respawned, atSpawn, respawnAt: pos(), moved2, movieOn, missed, afterMiss, moved3, cam3 };
   });
 
+  // ---------------------------------------------------------------- 18) P6b-A2(§3.9 #18): 221 の初回の走り確認
+  //  視点が玄関へ向き切って操作が戻る瞬間に「Shift＋W で走って逃げろ！」→ 時間が止まる(10 秒待っても管理人が動かず OUT しない・物語の時計も止まる)→
+  //  W だけでは動かず解けない(表示はそのまま)→ Shift＋W で走り出すと表示が消え、grace(立ち止まって見ている間)はそこから数える。2 回目(死んで戻った後)は出ない
+  await T('18_p6b_221_run_gate', async () => {
+    S.applyStage(1); await settle(4);
+    S.sub = null; S.introDone = true; N.ai.setDormant(true);
+    const G = N.runGate, gl0 = G.log.length;
+    const A = await run221({ light: true, gate: true });
+    let t = 0;
+    for (; t < 12 && !G.active; t += DT) N.pump(DT, 1, false);
+    const at = { active: G.active, prompt: N.hudState().runPrompt, phase: N.ai.revealPhase, frozen: N.player.frozen, viewLock: N.viewLock.active, afterBurst_s: +(N.ai.time - A.t0).toFixed(2) };
+    // 10 秒待つ(何も押さない)
+    const ai0 = N.ai.time, e0 = N.enemyObj.pos.clone(), sl0 = S.logCount, st0 = S.time, p0 = N.player.pos.clone(), d0 = N.deaths(), mix0 = N.enemyObj.mixer ? N.enemyObj.mixer.time : null;
+    for (let i = 0; i < 600; i++) N.pump(DT, 1, false);
+    const wait = { aiTimeAdvanced: +(N.ai.time - ai0).toFixed(4), enemyMoved: +N.enemyObj.pos.distanceTo(e0).toFixed(4), storyLogs: S.logCount - sl0, storyTimeAdvanced: S.time - st0, mixerAdvanced: mix0 === null ? null : +(N.enemyObj.mixer.time - mix0).toFixed(4),
+      dead: !!N.deathState() || N.deaths() !== d0, state: N.ai.state, prompt: N.hudState().runPrompt, active: G.active };
+    // 見回しはできる(向きを変えても戻されない)
+    const yaw0 = N.player.object.rotation.y; N.player.object.rotation.y = yaw0 + 0.4; N.pump(DT, 5, false);
+    const lookOK = Math.abs(N.player.object.rotation.y - (yaw0 + 0.4)) < 1e-6; N.player.object.rotation.y = yaw0; N.pump(DT, 2, false);
+    // W だけ(歩き): 動かない・解けない
+    key('KeyW', true); for (let i = 0; i < 60; i++) N.pump(DT, 1, false); key('KeyW', false); N.pump(DT, 2, false);
+    const walk = { moved: +N.player.pos.distanceTo(p0).toFixed(4), active: G.active, prompt: N.hudState().runPrompt, aiTimeAdvanced: +(N.ai.time - ai0).toFixed(4) };
+    // Shift＋W: 走って動き出した瞬間に解ける → grace はそこから
+    key('ShiftLeft', true); key('KeyW', true);
+    let goAt = null; const tGo0 = N.ai.time;
+    for (let i = 0; i < 30 && goAt === null; i++) { N.pump(DT, 1, false); if (!G.active) goAt = i + 1; }
+    const go = { frames: goAt, active: G.active, prompt: N.hudState().runPrompt, phase: N.ai.revealPhase, log: G.log.slice(gl0).map((l) => l.ev + (l.speed ? ':' + l.speed : '')) };
+    key('KeyW', false); key('ShiftLeft', false); N.pump(DT, 1, false);
+    const RL = N.ai.revealLog || {};
+    // grace の間(K × 3 秒)は立ち止まったまま。終わると歩き出す
+    const eG = N.enemyObj.pos.clone(); let graceMoved = 0, moveAt = null;
+    for (let i = 0; i < 60 * 5; i++) { N.pump(DT, 1, false); const d = N.enemyObj.pos.distanceTo(eG); if (N.ai.time - tGo0 < 2.9) graceMoved = Math.max(graceMoved, d); if (moveAt === null && d > 0.05) moveAt = +(N.ai.time - tGo0).toFixed(2); }
+    // 2 回目: 逃げる途中で死ぬ → 戻ってもう一度 221 の奥へ → 走り確認は出ない
+    N.ai.onKill(); for (let i = 0; i < 60 * 8 && N.deathState(); i++) N.pump(DT, 1, false);
+    const shownFlag = S.runGateShown, rearmed = !S.burst221;   // 死んで戻ると飛び出しは再び起きる(初回扱いにはしない)
+    const B = await run221({ light: true, keepGate: true });
+    let again = false; for (let i = 0; i < 60 * 8; i++) { N.pump(DT, 1, false); if (G.active) again = true; if (N.ai.revealPhase === 'grace' || N.ai.state === 'CHASE') break; }
+    void B;
+    for (let i = 0; i < 60 * 8 && !N.deathState(); i++) N.pump(DT, 1, false);
+    for (let i = 0; i < 60 * 8 && N.deathState(); i++) N.pump(DT, 1, false);
+    quiet();
+    const pass = at.active && at.prompt === 'Shift＋W で走って逃げろ！' && at.phase === 'runGate' && !at.frozen && !at.viewLock
+      && wait.aiTimeAdvanced === 0 && wait.enemyMoved === 0 && wait.storyLogs === 0 && wait.storyTimeAdvanced === 0 && (wait.mixerAdvanced === null || wait.mixerAdvanced === 0) && !wait.dead && wait.state === 'APPEAR' && wait.prompt && wait.active
+      && lookOK && walk.moved < 1e-3 && walk.active && walk.prompt && walk.aiTimeAdvanced === 0
+      && go.frames !== null && go.frames <= 3 && !go.active && go.prompt === '' && go.log.includes('walk_ignored') && go.log.some((x) => x.startsWith('go:'))
+      && RL.control !== undefined && RL.runGate !== undefined && Math.abs(RL.control - RL.runGate) < 0.05 && graceMoved < 0.02 && moveAt !== null && moveAt >= 2.9 && shownFlag && rearmed && !!B.ev && !again;
+    return { pass, at, wait, lookOK, walk, go, reveal: { runGate: RL.runGate, control: RL.control, move: RL.move }, graceMoved: +graceMoved.toFixed(3), enemyMovesAfterGo_s: moveAt, secondTime: { flagKept: shownFlag, rearmed, burstAgain: !!B.ev, shown: again } };
+  });
+
   // ---------------------------------------------------------------- 15) 登場演出(P5b-1b 差し戻し 4): 奥の窓際のロッカーがゆっくり開き、中の管理人が見えてから飛び出す
   //  221(ライト点灯)と 6F の罠 606(ライト消灯 = 管理人が中で自分の懐中電灯を点ける)で同じ共通コード
   await T('15_locker_reveal_timeline', async () => {
@@ -958,7 +1008,7 @@ export async function run(N) {
     const toTrigger = async (C) => {
       S.applyStage(C.stage); quiet();
       const r = room(C.id).r, pts = r.interior.points, lv = room(C.id).level;
-      if (C.stage === 1) { S.sub = null; S.introDone = true; N.ai.setDormant(true); }
+      if (C.stage === 1) { S.sub = null; S.introDone = true; N.ai.setDormant(true); S.runGateShown = true; }   // P6b-A2: 走り確認は 18 番で見る
       else N.ai.dormant = false;
       N.setFlashlight(C.light);
       await tp(lv, ...front(C.id, 0.9), 0);

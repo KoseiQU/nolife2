@@ -58,6 +58,9 @@ const CSS = `
 #hud-light.shown.pulse { opacity: 1; background: rgba(0,0,0,.5); }
 #hud-light.on.pulse { color: #ffc56a; }
 #hud-light.pulse:not(.on) { color: #b9b5ad; }
+#hud-run { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%); padding: 18px 0; text-align: center; background: rgba(0,0,0,.55);
+  font-size: 34px; font-weight: 600; letter-spacing: .16em; color: #fff3dc; text-shadow: 0 2px 6px rgba(0,0,0,.9); opacity: 0; transition: opacity .2s linear; }
+#hud-run.on { opacity: 1; }
 #hud-dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: rgba(234,230,223,.45); }
 `;
 
@@ -72,7 +75,7 @@ export class Hud {
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
       + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>'
-      + '<div id="hud-tl"><div id="hud-obj" class="off"></div><div id="hud-item"></div></div>'
+      + '<div id="hud-tl"><div id="hud-obj" class="off"></div><div id="hud-item"></div></div><div id="hud-run"></div>'
       + '<div id="hud-light"><svg viewBox="0 0 22 14" aria-hidden="true"><path class="beam" d="M15 4.2 L22 0.5 L22 13.5 L15 9.8 Z" fill="currentColor"/>'
       + '<rect x="0.5" y="5" width="8.5" height="4" rx="1" fill="currentColor"/><path d="M9 4.2 L14.5 3 L14.5 11 L9 9.8 Z" fill="currentColor"/></svg><span></span></div>';
     document.body.appendChild(this.root);
@@ -82,6 +85,7 @@ export class Hud {
       notice: this.root.querySelector('#hud-notice'),
       obj: this.root.querySelector('#hud-obj'), item: this.root.querySelector('#hud-item'),
       light: this.root.querySelector('#hud-light'), lightText: this.root.querySelector('#hud-light span'),
+      run: this.root.querySelector('#hud-run'),   // P6b-A2(§3.9 #18): 221 の初回の「Shift＋W で走って逃げろ！」(画面中央・大きめ・帯)
     };
     this.lightPulseT = 0; this._lightKey = '';   // P6b #8
     this.objective = ''; this.objEmT = 0; this.objLog = []; this.itemText = '';   // P5b-1
@@ -99,6 +103,11 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- 外部から
+  // P6b-A2(§3.9 #18): 走り確認の表示(出している間は main が時間を止める)
+  runPrompt(on) {
+    this.el.run.textContent = TX.runGate;
+    this.el.run.classList.toggle('on', !!on);
+  }
   flash(text, sec = HUD.flashSec) {
     this.el.toast.textContent = text;
     this.toastT = sec;
@@ -248,6 +257,7 @@ export class Hud {
       release: this.el.release.classList.contains('on') ? this.el.release.textContent : '',
       controls: this.el.controls.classList.contains('on'),
       center: this.el.center.classList.contains('on') ? this.el.center.textContent : '',
+      runPrompt: this.el.run.classList.contains('on') ? this.el.run.textContent : '',   // P6b-A2
       notice: this.el.notice.classList.contains('on') ? this.el.notice.textContent : '',
       objective: this.el.obj.classList.contains('off') ? '' : this.objective,
       objectiveEm: this.el.obj.classList.contains('em'),

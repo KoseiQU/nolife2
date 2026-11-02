@@ -107,6 +107,7 @@ export const HUD_TEXT = {
   title: { name: 'NOLIFE', start: 'クリックで開始' },
   controls: 'WASD 移動　／　Shift 走る　／　F 懐中電灯　／　E 調べる　／　H 操作の表示',
   flashlight: { on: '懐中電灯　ON', off: '懐中電灯　OFF' },
+  runGate: 'Shift＋W で走って逃げろ！',   // P6b-A2(§3.9 #18): 221 の初回、視点が玄関へ向き切った時(走り出すまで時間が止まる)
   start: 'クリックで開始',
   resume: 'クリックで再開',
   death: { title: '見つかった', sub: '…　チェックポイントへ戻ります' },
