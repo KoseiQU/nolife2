@@ -788,6 +788,7 @@ function updatePortal() {
   if (!S) return;
   const P = S.portal, p = player.pos;
   if (p.x < P.x0 || p.x > P.x1) return;
+  if (Math.abs(p.z - P.z) > 1.0) return;   // P6b #12: 玄関の線の近くだけ(敷地の自転車置き場 x 14.9〜19.5・z 3〜13 も同じ x の範囲にあり、そこで 1F に化けていた)
   if (playerLevel === 1 && p.z > P.z + 0.02) setPlayerLevel('G');
   else if (playerLevel === 'G' && p.z < P.z - 0.02) setPlayerLevel(1);
 }

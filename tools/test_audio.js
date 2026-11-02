@@ -382,7 +382,7 @@ export async function run(N) {
     const later = cnt('xb1_loop_notice') - n0;
     SP.show(null); S.applyStage(1); quiet();
     await tp(4, 6.9, 15.0, Math.PI);
-    return { pass: lv === 'XB1' && atNotice.passes === 3 && atNotice.armed && atNotice.notice === 1 && rec.kind === 'play' && later === 1, level: lv, atNotice, kind: rec.kind, countAfterMoreWalk: later };
+    return { pass: lv === 'XB1' && atNotice.passes === 2 && atNotice.armed && atNotice.notice === 1 && rec.kind === 'play' && later === 1, level: lv, atNotice, kind: rec.kind, countAfterMoreWalk: later };
   });
 
   // 9) エンディング: エンジン → 門
