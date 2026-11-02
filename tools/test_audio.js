@@ -1,20 +1,24 @@
-// test_audio.js — P4b 音の本実装の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=audio で自動実行。結果: window.__N2.testResult
+// test_audio.js — P4b 音の本実装(P4c で 3 周目を反映)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=audio で自動実行。結果: window.__N2.testResult
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。AudioContext が止まっていても(ユーザー操作なし)、
 // AudioBank は「鳴らそうとした場面」を count / log に残すので、ゲームの出来事 → 再生 API の接続を確かめられる。
-//  0) 読み込み: manifest の採用 20 場面の wav がすべて読めて長さが合う・声の場面 2 つ(素材＋加工)の音量合わせができる・なし／3 周目／未選択の振り分け
-//  1) なし = 無音: 開かない扉・取っ手・空室の扉・鍵を使う・車のドア・偽の鍵・窓・ロッカーの予兆・EV の扉・705 の空気・B1 の扉の音は AudioBank に行かない(記録だけ)
+//  0) 読み込み: manifest の採用 21 場面の wav がすべて読めて長さが合う・声の場面 2 つ(素材＋加工)の音量合わせができる・なし 39／3 周目 9(新 312)／未選択 1 の振り分け
+//  1) なし = 無音: 開かない扉・取っ手・空室の扉・鍵を使う・車のドア・偽の鍵・窓・ロッカーの予兆・EV の扉・705 の空気・B1 の扉の音は AudioBank に行かない(記録だけ)。
+//     P4c: 3 周目でなしになった 叫び(scream)・目の前の息(breath)・ガタガタ扉(slam)・ロッカーの軋み(lockerCreak)も同じ。合成の仮音が残っていない
 //  2) 居室: 自分の足音(pl_step_room)・クローゼットの開け閉め(pl_closet の open/close 区間)・落ちる物(room_fall の割れ物/本の区間)
 //  3) 環境音: 廊下(amb_corridor)・敷地(amb_outdoor)・屋上B(amb_roof)・地下(amb_b1)。居室・1F ロビーでは鳴らない。離れると止まる(鳴りっぱなしにしない)
 //  4) EV: 走行音(ev_motor)→ 到着チャイム(ev_chime)→ 止まって数秒で走行音の音源が止まる(P4a の申し送り)
-//  5) 管理人: 追跡の足音(enemy_step_run)・扉の向こうの声(enemy_breath_door)・扉を破る(enemy_door_smash)→ 一撃(enemy_hit)→ 死亡(death)
+//  5) 管理人: 巡回の歩き(enemy_step_walk。P4c)・追跡の足音(enemy_step_run)・扉の向こうの声(enemy_breath_door)・扉を破る(enemy_door_smash)→ 一撃(enemy_hit)→ 死亡(death)
 //  6) 物語: 221 の電話(story_221_lure)・メモ(pickup_paper)・鍵(pickup_key)
 //  7) 105: 空気(amb_x105)・追跡の始まりの悲鳴(x105_scream)
 //  8) 705: 鍵で灯りが消える(x705_lights_off)
 //  9) エンディング: エンジン(car_engine)→ 門を抜ける(ending_gate)
-//  10) まとめ: 採用 22 場面すべてが 1 回以上呼ばれ、採用以外の場面は 1 回も呼ばれていない
+//  10) まとめ: 採用 23 場面すべてが 1 回以上呼ばれ、採用以外の場面(なしの 39 場面を含む)は 1 回も呼ばれていない
 const DT = 1 / 60;
 const ADOPTED = ['pl_step_room', 'amb_corridor', 'pl_closet', 'room_fall', 'ev_chime', 'ev_motor', 'enemy_step_run', 'enemy_breath_door', 'enemy_door_smash', 'enemy_hit',
-  'death', 'story_221_lure', 'pickup_key', 'pickup_paper', 'amb_x105', 'x105_scream', 'amb_outdoor', 'amb_roof', 'x705_lights_off', 'amb_b1', 'car_engine', 'ending_gate'];
+  'death', 'story_221_lure', 'pickup_key', 'pickup_paper', 'amb_x105', 'x105_scream', 'amb_outdoor', 'amb_roof', 'x705_lights_off', 'amb_b1', 'car_engine', 'ending_gate',
+  'enemy_step_walk'];   // P4c: 3 周目 A
+// P4c: 3 周目でなしになった 8 場面(room_door_rattle は演出ごと廃止 = なし扱い)
+const R3_NONE = ['pl_flashlight', 'door_wood', 'enemy_presence', 'enemy_breath_close', 'room_door_rattle', 'enemy_scream', 'locker_open_slow', 'locker_burst'];
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
@@ -76,10 +80,11 @@ export async function run(N) {
     const lens = sc.map((id) => ({ id, ok: B.bufs.has(id) && Math.abs(B.bufs.get(id).duration - M.scenes[id].dur) < 0.02 }));
     const vg = Object.fromEntries(vo.map((id) => [id, (B.voiceGain[id] || []).map((g) => +g.toFixed(2))]));
     const statusOK = ADOPTED.every((id) => ['wav', 'voice'].includes(B.status(id)));
-    const pass = B.ready && !B.error && sc.length === 20 && vo.length === 2 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
-      && statusOK && M.none.length === 31 && M.round3.length === 18 && M.unselected.length === 1 && M.unselected[0] === 'xb1_loop_notice'
+    const r3None = R3_NONE.every((id) => B.status(id) === 'none'), r3New = M.round3.every((id) => /^(amb_)?x312_/.test(id));
+    const pass = B.ready && !B.error && sc.length === 21 && vo.length === 2 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
+      && statusOK && r3None && r3New && M.none.length === 39 && M.round3.length === 9 && M.unselected.length === 1 && M.unselected[0] === 'xb1_loop_notice'
       && sc.concat(vo).sort().join() === [...ADOPTED].sort().join();
-    return { pass, wav: sc.length, voice: vo, voiceGain: vg, badLength: lens.filter((l) => !l.ok).map((l) => l.id), none: M.none.length, round3: M.round3.length, unselected: M.unselected,
+    return { pass, wav: sc.length, voice: vo, voiceGain: vg, badLength: lens.filter((l) => !l.ok).map((l) => l.id), none: M.none.length, round3: M.round3, round3NoneOK: r3None, unselected: M.unselected,
       totalMB: +(M.totalBytes / 1048576).toFixed(2), ctx: N.enemyAudio.ctx.state };
   });
 
@@ -87,13 +92,16 @@ export async function run(N) {
   await T('1_none_scenes_silent', async () => {
     const n0 = B.n, p = new N.THREE.Vector3(6.9, 12.1, 13);
     const ea0 = N.enemyAudio.logCount || 0;
-    for (const nm of ['rattle', 'handle', 'latch']) N.enemyAudio.play(nm, p, 0.8);
+    const EA_NONE = ['rattle', 'handle', 'latch', 'scream', 'breath', 'slam'];   // P4c: scream・breath・slam(3 周目でなし)
+    for (const nm of EA_NONE) N.enemyAudio.play(nm, p, 0.8);
     for (const nm of ['unlock', 'rattle', 'car', 'decoy']) S._sfx(nm);
-    for (const nm of ['slide', 'climb', 'lockerRattle']) N.rooms._sfx(nm, p, 0.6);
+    for (const nm of ['slide', 'climb', 'lockerRattle', 'lockerCreak']) N.rooms._sfx(nm, p, 0.6);
+    // P4c: 合成の仮音(管理人の歩き・叫び・息・ガタガタ、ロッカーの軋み)のバッファが残っていない
+    const noSynth = !N.enemyAudio.buffers && !N.enemyAudio.pool && !N.rooms.bufs && !N.rooms.pool;
     N.elevator._sfx('door');
     const direct = B.n - n0;
     const ea = N.enemyAudio.log.filter((l) => l.n > ea0);
-    const silentFlag = ea.length === 3 && ea.every((l) => l.silent === true);
+    const silentFlag = ea.length === EA_NONE.length && ea.every((l) => l.silent === true);
     // 開かない扉を E で引く(地下の鉄扉と同じ経路 = main の useNearestDoor): 記録は残るが無音
     await tp(4, 6.9, 12.0, Math.PI);
     const d = N.doorApi.get('408');
@@ -102,8 +110,8 @@ export async function run(N) {
     tap('KeyE'); N.pump(DT, 10, false);
     const tapCalls = B.log.filter((l) => l.n > n1 && l.kind !== 'loop').length;   // 環境音のループ(廊下)は除く
     const locked = N.enemyAudio.log.filter((l) => l.n > ea1 && l.name === 'rattle');
-    const pass = direct === 0 && tapCalls === 0 && silentFlag && locked.length >= 1 && locked.every((l) => l.silent) && !d.collision.disabled;
-    return { pass, bankCallsDirect: direct, bankCallsOnLockedDoor: tapCalls, enemyAudioLogged: ea.map((l) => l.name + (l.silent ? ':silent' : '')), lockedDoorRattle: locked.length };
+    const pass = direct === 0 && tapCalls === 0 && silentFlag && noSynth && locked.length >= 1 && locked.every((l) => l.silent) && !d.collision.disabled;
+    return { pass, bankCallsDirect: direct, noSynth, bankCallsOnLockedDoor: tapCalls, enemyAudioLogged: ea.map((l) => l.name + (l.silent ? ':silent' : '')), lockedDoorRattle: locked.length };
   });
 
   // 2) 居室: 足音・クローゼット・落ちる物
@@ -173,10 +181,18 @@ export async function run(N) {
   });
 
   // 5) 管理人: 追跡の足音・扉の向こうの声・扉を破る → 一撃 → 死亡
-  await T('5_enemy_run_breathdoor_smash_hit_death', async () => {
+  await T('5_enemy_walk_run_breathdoor_smash_hit_death', async () => {
     S.applyStage(2); quiet(); resetKeys();
     N.ai.dormant = false; N.ai.lurkEnabled = false;
     await tp(4, 6.9, 8.6, Math.PI);
+    // 0) P4c: 巡回の歩き(enemy_step_walk 3 周目 A)。歩きの接地 = wav の足音区画(走りの区画とは別の場面)
+    N.ai.reset(6.9, 19.5, Math.PI, 4); N.enemyObj.place(6.9, 15.6, Math.PI);
+    N.ai.setState('PATROL', { force: true, log: true });
+    const w0 = cnt('enemy_step_walk'), wr0 = cnt('enemy_step_run');
+    pumpS(4.0, () => cnt('enemy_step_walk') - w0 >= 2);
+    const walkSteps = cnt('enemy_step_walk') - w0, walkAsRun = cnt('enemy_step_run') - wr0;
+    const walkLog = B.log.filter((l) => l.id === 'enemy_step_walk').pop() || {};
+    quiet(); N.pump(DT, 2, false);
     // a) 追跡の足音(run_intent の接地)
     N.ai.reset(6.9, 19.5, Math.PI, 4); N.ai.lastKnown = { x: 6.9, z: 8.6 };
     N.ai.setState('CHASE', { force: true, log: true });
@@ -206,8 +222,8 @@ export async function run(N) {
     const got = { smash: cnt('enemy_door_smash') - k0.smash, hit: cnt('enemy_hit') - k0.hit, death: cnt('death') - k0.death };
     settleDeath(); N.setFlashlight(false);
     N.doorApi.repairDoor('407'); N.ai.lurkEnabled = true;
-    const pass = runSteps >= 1 && runLog >= 1 && breath >= 1 && voiceKind === 'voice' && burst && got.smash >= 1 && got.hit >= 1 && got.death >= 1;
-    return { pass, runSteps, breathDoor: breath, breathDoorKind: voiceKind, burst, ...got };
+    const pass = walkSteps >= 1 && walkAsRun === 0 && walkLog.kind === 'play' && runSteps >= 1 && runLog >= 1 && breath >= 1 && voiceKind === 'voice' && burst && got.smash >= 1 && got.hit >= 1 && got.death >= 1;
+    return { pass, walkSteps, walkStepsCountedAsRun: walkAsRun, runSteps, breathDoor: breath, breathDoorKind: voiceKind, burst, ...got };
   });
 
   // 6) 物語: 221 の電話・メモ・鍵
@@ -288,7 +304,8 @@ export async function run(N) {
     const called = Object.keys(B.count);
     const missing = ADOPTED.filter((id) => !(B.count[id] > 0));
     const extra = called.filter((id) => !ADOPTED.includes(id));
-    return { pass: missing.length === 0 && extra.length === 0, missing, extra, counts: Object.fromEntries(ADOPTED.map((id) => [id, B.count[id] || 0])) };
+    const noneCalled = R3_NONE.filter((id) => B.count[id] > 0);
+    return { pass: missing.length === 0 && extra.length === 0 && noneCalled.length === 0, missing, extra, r3NoneCalled: noneCalled, counts: Object.fromEntries(ADOPTED.map((id) => [id, B.count[id] || 0])) };
   });
 
   quiet();
