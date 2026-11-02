@@ -188,7 +188,7 @@ export class Rooms {
   isWindowOpen(id) { const w = this.windows.get(id); return !!(w && w.box && w.box.disabled); }
 
   openCloset(id, speed = 1) { const c = this.closets.get(id); if (c) { c.target = 1; c.speed = speed; this._sfx('creak', this._closetFront(c, 0)); this.log('closet_open', { room: id }); } }
-  closeCloset(id, speed = 1) { const c = this.closets.get(id); if (c) { c.target = 0; c.speed = speed; } }
+  closeCloset(id, speed = 1) { const c = this.closets.get(id); if (c) { if (c.target !== 0) this._sfx('closetClose', this._closetFront(c, 0)); c.target = 0; c.speed = speed; } }   // P4b: 閉める区間(pl_closet close)
   _closetFront(c, d = 0.3) {
     const [x0, z0, x1, z1] = c.h.b;
     const F = FACING_VEC[c.h.f];
@@ -504,7 +504,11 @@ export class Rooms {
     for (const f of this.fallables) { f.state = 'rest'; f.mesh.position.copy(f.rest.pos); f.mesh.rotation.copy(f.rest.rot); }
   }
 
-  // ------------------------------------------------------------ 音(仮。P4 で録音: room_window_slide_01 / room_closet_01 / room_fall_<type>_01 / room_climb_01)
+  // ------------------------------------------------------------ 音(P4b)
+  //  クローゼット(隠れる・出る・管理人が開ける)= 採用 pl_closet A「折戸のレール」(開ける区間 open・閉める区間 close)、
+  //  落ちる物 = 採用 room_fall A「薄いガラス(パリーン！)」(割れ物。本・ファイルと缶は同じ作りの派生区間。manifest の types)。
+  //  窓の開閉・室外機の乗り越え(room_window)・ロッカーの中で当たる予兆(locker_tease)は「なし」= 無音(記録だけ)。
+  //  ロッカーがゆっくり開く軋み(locker_open_slow)は 3 周目の選択待ちなので仮音のまま。屋上・バルコニーの風(amb_roof 採用 A)は main.js の環境音が鳴らす
   _initAudio() {
     const ctx = this.listener ? this.listener.context : null;
     if (!ctx) return;
@@ -512,38 +516,11 @@ export class Rooms {
     const sr = ctx.sampleRate;
     const rnd = (seed) => { let s = seed; return () => ((s = (s * 16807) % 2147483647) / 2147483647); };
     const mk = (sec, fn, seed = 3) => { const b = ctx.createBuffer(1, Math.floor(sr * sec), sr); const d = b.getChannelData(0); const r = rnd(seed); for (let i = 0; i < d.length; i++) d[i] = fn(i / sr, r); return b; };
-    let lp = 0;
     this.bufs = {
-      slide: mk(0.9, (t, r) => { lp += ((r() - 0.5) - lp) * 0.08; return lp * 0.5 * Math.min(1, t * 8) * Math.max(0, 1 - t / 0.9) + Math.sin(2 * Math.PI * 60 * t) * 0.02 * (t < 0.85 ? 1 : 0); }, 5),
-      creak: mk(0.6, (t, r) => (Math.sin(2 * Math.PI * (380 + 120 * Math.sin(t * 9)) * t) * 0.12 + (r() - 0.5) * 0.05) * Math.exp(-t * 3), 7),
-      // P5b-1b(仮音。P4 で録音 room_locker_creak_slow_01 / room_locker_rattle_01): スチールロッカーの扉がゆっくり開く軋み・中で揺れる
+      // P5b-1b(仮音。3 周目の選択待ち locker_open_slow): スチールロッカーの扉がゆっくり開く軋み
       lockerCreak: mk(1.5, (t, r) => (Math.sin(2 * Math.PI * (210 + 70 * Math.sin(t * 3.1) + 25 * Math.sin(t * 17)) * t) * 0.16 + Math.sin(2 * Math.PI * 640 * t) * 0.03 * Math.sin(t * 11) + (r() - 0.5) * 0.04) * Math.min(1, t * 6) * Math.max(0, 1 - t / 1.5), 31),
-      lockerRattle: mk(0.5, (t, r) => { let v = 0; for (const h of [0, 0.11, 0.2, 0.33]) if (t >= h) v += Math.sin(2 * Math.PI * 520 * (t - h)) * Math.exp(-(t - h) * 55) * 0.35; return v + (r() - 0.5) * 0.06 * Math.exp(-t * 6); }, 37),
-      climb: mk(0.8, (t, r) => ((r() - 0.5) * 0.25 * Math.exp(-((t - 0.15) ** 2) / 0.002) + (r() - 0.5) * 0.2 * Math.exp(-((t - 0.55) ** 2) / 0.003)), 9),
-      fall_vase: mk(1.2, (t, r) => (Math.sin(2 * Math.PI * 1320 * t) * 0.4 + Math.sin(2 * Math.PI * 2210 * t) * 0.25 + (r() - 0.5) * 0.6 * Math.exp(-t * 30)) * Math.exp(-t * 6) * 0.8, 11),
-      fall_cans: mk(1.2, (t, r) => { const hits = [0, 0.18, 0.31, 0.42]; let v = 0; for (const h of hits) if (t >= h) v += Math.sin(2 * Math.PI * (2600 - h * 900) * (t - h)) * Math.exp(-(t - h) * 40) * 0.5; return v + (r() - 0.5) * 0.08 * Math.exp(-t * 2) * (t < 1.1 ? 1 : 0); }, 13),
-      fall_books: mk(0.5, (t, r) => (Math.sin(2 * Math.PI * 90 * t) * Math.exp(-t * 25) + (r() - 0.5) * 0.7 * Math.exp(-t * 35)) * 0.8, 17),
-      fall_bottle: mk(0.7, (t, r) => (Math.sin(2 * Math.PI * 420 * t) * Math.exp(-t * 18) * 0.6 + (r() - 0.5) * 0.3 * Math.exp(-t * 20) + Math.sin(2 * Math.PI * 380 * (t - 0.22)) * (t > 0.22 ? Math.exp(-(t - 0.22) * 22) : 0) * 0.3), 19),
-      fall_mug: mk(0.8, (t, r) => (Math.sin(2 * Math.PI * 1900 * t) * 0.35 + Math.sin(2 * Math.PI * 3100 * t) * 0.2 + (r() - 0.5) * 0.5 * Math.exp(-t * 40)) * Math.exp(-t * 9) * 0.8, 23),
-      fall_binders: mk(0.5, (t, r) => (Math.sin(2 * Math.PI * 110 * t) * Math.exp(-t * 22) + (r() - 0.5) * 0.6 * Math.exp(-t * 30)) * 0.9, 29),
     };
-    this.bufs.fall_cup = this.bufs.fall_mug;
-    // 風(屋上A・バルコニー)。低いうなりと、ときどき強まる吹き。ループ 9 秒(room_wind_loop_01)
-    {
-      const n = Math.floor(sr * 9), b = ctx.createBuffer(1, n, sr), d = b.getChannelData(0), r = rnd(41);
-      let a = 0, c = 0;
-      for (let i = 0; i < n; i++) {
-        const t = i / sr;
-        a += ((r() - 0.5) - a) * 0.02; c += (a - c) * 0.05;
-        const gust = 0.55 + 0.45 * Math.sin(2 * Math.PI * t / 9) ** 2 + 0.15 * Math.sin(2 * Math.PI * t * 0.37);
-        d[i] = (c * 6 + a * 1.5) * gust;
-      }
-      for (let i = 0; i < 2000; i++) { const k = i / 2000; d[i] = d[i] * k + d[n - 2000 + i] * (1 - k); }
-      this.wind = { src: null, gain: ctx.createGain(), buf: b, level: 0 };
-      this.wind.gain.gain.value = 0;
-      this.wind.gain.connect(this.listener.getInput ? this.listener.getInput() : ctx.destination);
-    }
-    this.pool = Array.from({ length: 4 }, () => {
+    this.pool = Array.from({ length: 2 }, () => {
       const a = new THREE.PositionalAudio(this.listener);
       a.setRefDistance(1.2); a.setRolloffFactor(1.2);
       return a;
@@ -552,25 +529,25 @@ export class Rooms {
   }
   _sfx(name, pos, vol = null) {
     this.log('sfx', { name });
+    const B = this.bank;
+    if (name === 'creak' || name === 'closetClose') { if (B) B.play('pl_closet', { pos, seg: name === 'creak' ? 'open' : 'close', vol: vol ?? 1, ref: 1.2, rolloff: 1.2 }); return; }
+    if (name.startsWith('fall_')) {
+      const m = B && B.manifest && B.manifest.scenes.room_fall, seg = m && m.types ? m.types[name.slice(5)] || 'glass' : 'glass';
+      if (B) B.play('room_fall', { pos, seg, vol: vol ?? 1, ref: 1.2, rolloff: 1.2 });
+      return;
+    }
+    if (name !== 'lockerCreak') return;   // slide・climb(room_window)・lockerRattle(locker_tease)は「なし」
     if (!this.ac || this.ac.state !== 'running' || !this.bufs[name]) return;
     const a = this.pool[this.poolIdx++ % this.pool.length];
     if (a.isPlaying) a.stop();
     if (!a.parent) this.scene.add(a);
     a.position.copy(pos); a.updateMatrixWorld();
-    a.setBuffer(this.bufs[name]); a.setVolume(vol ?? (name.startsWith('fall') ? 1.0 : 0.6));
+    a.setBuffer(this.bufs[name]); a.setVolume(vol ?? 0.6);
     try { a.play(); } catch (e) { /* suspended */ }
   }
 
-  // 風の音: where = 'roofA' | 'balcony' | null(屋内)
-  updateWind(dt, where) {
-    const W = this.wind;
-    if (!W || !this.ac || this.ac.state !== 'running') return;
-    if (!W.src) { W.src = this.ac.createBufferSource(); W.src.buffer = W.buf; W.src.loop = true; W.src.connect(W.gain); W.src.start(); }
-    const want = where === 'roofA' ? 0.32 : where === 'balcony' ? 0.12 : 0;
-    W.level += (want - W.level) * Math.min(1, dt * 1.5);
-    W.gain.gain.setTargetAtTime(W.level, this.ac.currentTime, 0.1);
-    this.windWhere = where;
-  }
+  // P4b: 風の音は main.js の環境音(amb_roof)へ移した。ここは場所の記録だけ(where = 'roofA' | 'balcony' | null)
+  updateWind(dt, where) { this.windWhere = where; }
 
   state() {
     return {

@@ -609,7 +609,7 @@ export function update(dt, ctx) {
     st.offZ = OZ + C.appear[1] - 1.0;
     ctx.ai.chaseOmni = true;
     ctx.ai.appear({ level: ctx.key, x: OX + C.appear[0], z: OZ + C.appear[1], lock: 0, recover: 0.35, slow: C.slow, label: 'appear_105' });
-    if (ctx.audio) ctx.audio.play('scream', new THREE.Vector3(OX + C.appear[0], SPACE_Y + 1.6, OZ + C.appear[1]), 1.0, { ref: 6.0 });
+    if (ctx.audio) ctx.audio.play('x105_scream', new THREE.Vector3(OX + C.appear[0], SPACE_Y + 1.6, OZ + C.appear[1]), 1.0, { ref: 6.0 });   // P4b: 採用 x105_scream C(声)
     st.log.push({ t: st.t, ev: 'chase', v });
   }
   if (st.chase) {
@@ -637,33 +637,18 @@ export function update(dt, ctx) {
   placeSegments(ctx, run, v);
 }
 
-// ================================================================ 仮音(P4 で録音に差し替え。名前は docs/p5b2a/NOTES.md §5)
-//  x105_hum_loop_01: 灰色の区間の灯具のうなり(進むほど大きく。消えた灯りの所では止む)/ x105_lamp_off_01: 背後の灯りが消える音 / x105_scream_01: 追跡の始まり(仮に管理人の叫び 'scream')
+// ================================================================ 音(P4b)
+//  105 の空気 = 採用 amb_x105 C「長すぎる廊下の静けさ」のループ(src/audio_bank.js)。灰色の区間へ進むほど少し大きく、消えた灯りの所では弱める(仮音の灯具のうなりと同じ曲線)。
+//  背後の灯りが消える音(x105_lamp_off)は「なし」なので鳴らさない。追跡の始まりの悲鳴は x105_scream(採用 C・声)を update から鳴らす
 function sound(ctx, dt, v) {
-  const st = ctx.state, a = ctx.audio && ctx.audio.ctx;
-  if (!a || a.state !== 'running') return;
-  if (!st.hum) {
-    const out = ctx.audio.listener.getInput();
-    const g = a.createGain(); g.gain.value = 0; g.connect(out);
-    const os = [100, 200, 300].map((f, i) => { const o = a.createOscillator(); o.type = i ? 'sine' : 'sawtooth'; o.frequency.value = f; const og = a.createGain(); og.gain.value = [0.25, 0.5, 0.18][i]; const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 900; o.connect(lp); lp.connect(og); og.connect(g); o.start(); return o; });
-    st.hum = { g, os };
-  }
+  const st = ctx.state, bank = ctx.audio && ctx.audio.bank;
+  if (!bank) return;
+  if (!st.amb) st.amb = bank.loop('amb_x105');
   const g = Math.min(1, Math.max(0, (v - X105.look.bld) / (X105.look.gray - X105.look.bld)));
-  const dark = st.chase && v - (st.offZ - OZ) < 3 ? 0.3 : 1;
-  const want = 0.012 * (0.3 + 0.7 * g) * dark;
-  st.hum.g.gain.value += (want - st.hum.g.gain.value) * Math.min(1, dt * 4);
-  // 灯りが消えるたびに小さな音
-  const off = st.chase ? Math.floor(Math.max(0, st.offZ - OZ - 2) / SEG) : 0;
-  if (off > (st.offCount || 0)) {
-    st.offCount = off;
-    const t = a.currentTime, n = a.createBufferSource(), b = a.createBuffer(1, Math.ceil(a.sampleRate * 0.08), a.sampleRate), ch = b.getChannelData(0);
-    for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * Math.exp(-i / (a.sampleRate * 0.012));
-    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 2;
-    const gg = a.createGain(); gg.gain.value = 0.18;
-    n.buffer = b; n.connect(bp); bp.connect(gg); gg.connect(ctx.audio.listener.getInput()); n.start(t);
-  }
+  const dark = st.chase && v - (st.offZ - OZ) < 3 ? 0.5 : 1;
+  st.amb.set((0.6 + 0.4 * g) * dark);
 }
-function stopSound(ctx) { const st = ctx.state; if (!st.hum) return; try { for (const o of st.hum.os) o.stop(); } catch (e) { void e; } st.hum = null; st.offCount = 0; }
+function stopSound(ctx) { const st = ctx.state; if (st.amb) st.amb.set(0); st.amb = null; }
 
 function setRoll(ctx, roll) {
   const pl = ctx.player;

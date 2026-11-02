@@ -226,46 +226,24 @@ export class Elevator {
     this.light.position.set(g.center[0], levelY(c.level) + 2.15, g.center[1]);
   }
 
-  // ------------------------------------------------------------ 音(仮。P4 で録音に差し替え: ev_chime_01 / ev_door_01 / ev_motor_loop_01)
-  _initAudio() {
-    const ctx = this.listener ? this.listener.context : null;
-    if (!ctx) return;
-    this.ac = ctx;
-    const sr = ctx.sampleRate;
-    const mk = (sec, fn) => { const b = ctx.createBuffer(1, Math.floor(sr * sec), sr); const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = fn(i / sr); return b; };
-    this.bufs = {
-      chime: mk(1.6, (t) => { const a = t < 0.55 ? Math.sin(2 * Math.PI * 784 * t) * Math.exp(-t * 4) : Math.sin(2 * Math.PI * 659 * (t - 0.55)) * Math.exp(-(t - 0.55) * 3.5); return a * 0.35; }),
-      door: mk(1.4, (t) => { const env = Math.min(1, t * 6) * Math.max(0, 1 - t / 1.4); return (Math.random() * 2 - 1) * 0.05 * env + Math.sin(2 * Math.PI * 70 * t) * 0.04 * env; }),
-      motor: mk(2.0, (t) => { const ph = 2 * Math.PI * t; return (Math.sin(ph * 55) * 0.10 + Math.sin(ph * 110.5) * 0.04 + (Math.random() * 2 - 1) * 0.02); }),
-    };
-    this.src = new THREE.PositionalAudio(this.listener); this.src.setRefDistance(2); this.src.setRolloffFactor(1.2);
-    this.motor = new THREE.PositionalAudio(this.listener); this.motor.setRefDistance(2); this.motor.setLoop(true); this.motor.setBuffer(this.bufs.motor); this.motor.setVolume(0);
-    this.anchor = new THREE.Object3D();
-    this.anchor.add(this.src, this.motor);
-    this.motorTarget = 0;
-  }
-  attach(scene) { scene.add(this.light); if (this.anchor) scene.add(this.anchor); }
+  // ------------------------------------------------------------ 音(P4b): 到着チャイム = 採用 ev_chime A「柔らかい 2 音」、走行音 = 採用 ev_motor A「低いうなりとケーブル」(ループ)。
+  //  扉の開閉(ev_door)・呼びボタン(ev_button)・カゴの中の静けさ(ev_car_quiet)は「なし」= 無音(扉は記録だけ残す)。bank(AudioBank)は main が渡す。
+  //  走行音はループの持ち手で、止まると音量 0 まで下げて音源を止める(P4a の申し送り: 以前は一度乗ると音量 0 のまま鳴り続けていた)
+  _initAudio() { this.motorTarget = 0; }
+  attach(scene) { scene.add(this.light); }
+  _carPos() { const g = this.rooms[this.car.level].geom; return new THREE.Vector3(g.center[0], levelY(this.car.level) + 1.5, g.center[1] - 0.6); }
   _sfx(name) {
     this.log('sfx', { name });
-    if (!this.ac || this.ac.state !== 'running') return;
-    const g = this.rooms[this.car.level].geom;
-    this.anchor.position.set(g.center[0], levelY(this.car.level) + 1.5, g.center[1] - 0.6);
-    if (this.src.isPlaying) this.src.stop();
-    this.src.setBuffer(this.bufs[name]); this.src.setVolume(name === 'chime' ? 0.9 : 0.7);
-    try { this.src.play(); } catch (e) { /* suspended */ }
+    if (name === 'chime' && this.bank) this.bank.play('ev_chime', { pos: this._carPos(), ref: 2, rolloff: 1.2 });
   }
   _hum(on) { this.motorTarget = on ? 0.8 : 0; }
-  _updateAudio(dt) {
-    if (!this.ac || this.ac.state !== 'running') return;
-    if (this.motorTarget > 0 && !this.motor.isPlaying) { try { this.motor.play(); } catch (e) { /* */ } }
-    const v = this.motor.getVolume();
-    // 乗っていれば耳元(カゴの中)、そうでなければシャフトの中から遠く
+  _updateAudio() {
+    if (!this.bank) return;
+    // 乗っていれば耳元(カゴの中)、そうでなければシャフトの中から遠く(カゴの位置)
     const riding = this.car.riding;
-    const nv = v + (this.motorTarget * (riding ? 1 : 0.35) - v) * Math.min(1, dt * 3);
-    this.motor.setVolume(nv);
-    if (riding) this.motor.position.copy(this.player.pos).sub(this.anchor.position).setY(1.4);
-    else this.motor.position.set(0, 0, 0.6);
+    this.bank.loop('ev_motor').set(this.motorTarget * (riding ? 1 : 0.35), { pos: riding ? null : this._carPos(), ref: 2 });
   }
+  get motorPlaying() { return !!(this.bank && this.bank.loops.get('ev_motor') && this.bank.loops.get('ev_motor').src); }
 
   // ------------------------------------------------------------ 管理人(enemy_ai の _evRide が使う)
   // 管理人がカゴの中で行き先を押す。プレイヤーが乗っていれば(同じカゴ)一緒に動く

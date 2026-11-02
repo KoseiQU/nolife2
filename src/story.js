@@ -27,6 +27,7 @@ export const STORY = {
   // P5b-1b 221 の組み替え: 初回は 221 の奥(玄関の壁から u 3.5m = 洋室の入口 LIVING_U0)へ進むと奥の窓際のロッカーから管理人(鍵は拾わない)。
   //  逃げ切る(追跡が解ける・階を変える)と奥の机に小さな鍵が現れる(sub: null → 'flee' → 'return')
   burst221U: 3.5,
+  lureEvery: 11.0,   // P4b: 221 の口実の電話(story_221_lure)が鳴る間隔(部屋に居る間)
   // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
   introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
@@ -256,7 +257,7 @@ export class Story {
     pk.mesh.visible = false;
     const S = HUD_TEXT.story;
     this.log('pick', { id });
-    if (pk.decoy) { this.hud.flash(S.decoy); this._sfx('key'); return 'decoy'; }
+    if (pk.decoy) { this.hud.flash(S.decoy); this._sfx('decoy'); return 'decoy'; }   // P4b: decoy_key は「なし」(無音)
     if (pk.memo) {
       this._sfx('paper');
       this.hud.flash(pk.memo === 'memo221' ? S.memo221 : S.memo6F, 2.2);
@@ -492,7 +493,7 @@ export class Story {
     }
     if (!this.active) { this.hud.setObjective(''); this.hud.setItem(''); return; }
     // P5b-1b 221: 奥へ進むと奥の窓際のロッカーから管理人(初回)→ 逃げ切ると机に小さな鍵
-    if (this.stage === 1) this._check221(lv, p);
+    if (this.stage === 1) { this._lure221(lv, p, dt); this._check221(lv, p); }
     // P5b-1b 冒頭の見せ場: 初めて 410 から廊下へ出た瞬間、4F の EV ホールに管理人 → EV で 2F へ(DESIGN §3.8 H 第1段)
     if (this.stage === 1 && !this.introDone && lv === 4 && this.aiControl) {
       const I = STORY.introDoor;
@@ -536,6 +537,18 @@ export class Story {
     if (!(p.x > rx && p.x < rx + rw && p.z > rz && p.z < rz + rd)) return -1;
     const [nx, nz] = FACING_N[R.r.door.facing];
     return -((p.x - R.r.door.pos[0]) * nx + (p.z - R.r.door.pos[1]) * nz);
+  }
+  // P4b: 221 の口実(story_221_lure 採用 A「壁越しの電話」)。221 に入ると奥の窓際のロッカーの方で電話が鳴り、居る間は間を置いてまた鳴る(飛び出しの後は鳴らない)
+  _lure221(lv, p, dt) {
+    const inside = lv === 2 && !this.burst221 && (this.sub === 'memo' || this.sub === null) && this._roomU('221', p, 2) >= 0;
+    if (!inside) { this._lure = null; return; }
+    if (!this._lure) this._lure = { t: 0.6 };
+    this._lure.t -= dt;
+    if (this._lure.t > 0) return;
+    this._lure.t = STORY.lureEvery;
+    const B = this.audio && this.audio.bank;
+    if (B) B.play('story_221_lure', { pos: this.rooms.burstFront ? this.rooms.burstFront('221', 0.4) : null, ref: 2.5 });
+    this.log('lure221');
   }
   _check221(lv, p) {
     if (!this.burst221 && (this.sub === 'memo' || this.sub === null) && lv === 2 && this._roomU('221', p, 2) >= STORY.burst221U) {
@@ -653,50 +666,35 @@ export class Story {
     document.body.appendChild(el);
   }
 
-  // ================================================================ 仮音(P4 で録音に差し替え。docs/p5b1/NOTES.md の表)
+  // ================================================================ 音(P4b)
+  //  鍵を拾う = 採用 pickup_key A、メモを拾う = 採用 pickup_paper A、エンジン = 採用 car_engine B「低いアイドリング」、門を抜ける = 採用 ending_gate C(ジャリジャリ感をなくして調整)。
+  //  鍵を使う(key_unlock)・開かない扉(door_locked。105・B1 の扉もここを呼ぶ)・車のドア(car_door)・6F の罠の偽の鍵(decoy_key)は「なし」= 無音(sfxLog に記録だけ)
   _ctx() { const c = this.audio && this.audio.ctx; return c && c.state === 'running' ? c : null; }
   _sfx(name) {
     this.sfxLog = this.sfxLog || []; this.sfxLog.push(name); if (this.sfxLog.length > 100) this.sfxLog.shift();
-    const ctx = this._ctx(); if (!ctx) return;
-    const now = ctx.currentTime, out = ctx.destination;
-    const tone = (f0, f1, dur, vol, type = 'sine', at = 0) => {
-      const o = ctx.createOscillator(), g = ctx.createGain(); o.type = type;
-      o.frequency.setValueAtTime(f0, now + at); o.frequency.exponentialRampToValueAtTime(f1, now + at + dur);
-      g.gain.setValueAtTime(0.0001, now + at); g.gain.exponentialRampToValueAtTime(vol, now + at + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, now + at + dur);
-      o.connect(g); g.connect(out); o.start(now + at); o.stop(now + at + dur + 0.02);
-    };
-    const noise = (dur, vol, f, at = 0, q = 1) => {
-      const n = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * dur), ctx.sampleRate), a = n.getChannelData(0);
+    // 312 の中の開かない扉(x312_door_locked)は 3 周目の選択待ち = 今の仮音(この rattle)のまま。spaces/x312.js がここを呼ぶ
+    if (name === 'rattle' && this.getLevel() === 'X312') {
+      const ctx = this._ctx(); if (!ctx) return;
+      const now = ctx.currentTime, n = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.18), ctx.sampleRate), a = n.getChannelData(0);
       for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 2 - 1) * (1 - i / a.length);
-      const s = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), g = ctx.createGain();
-      s.buffer = n; bp.type = 'bandpass'; bp.frequency.value = f; bp.Q.value = q; g.gain.value = vol;
-      s.connect(bp); bp.connect(g); g.connect(out); s.start(now + at);
-    };
-    if (name === 'key') { tone(2400, 2100, 0.12, 0.05, 'triangle'); tone(3100, 2900, 0.1, 0.035, 'triangle', 0.07); }               // key_pickup_01
-    else if (name === 'paper') noise(0.25, 0.12, 3200, 0, 0.7);                                                                    // paper_pickup_01
-    else if (name === 'unlock') { tone(900, 500, 0.06, 0.08, 'square'); noise(0.08, 0.2, 1800, 0.12, 2); }                          // key_unlock_01
-    else if (name === 'rattle') noise(0.18, 0.18, 900, 0, 1.5);                                                                     // lock_rattle_01
-    else if (name === 'car') { noise(0.12, 0.3, 500, 0, 1); noise(0.2, 0.2, 260, 0.1, 1); }                                        // car_door_01
-  }
-  _engine(mode) {
-    const ctx = this._ctx();
-    this.engineLog = this.engineLog || []; this.engineLog.push(mode);
-    if (!ctx) return;
-    const now = ctx.currentTime;
-    if (mode === 'start' && !this.eng) {                                                                                            // car_engine_start_01 / car_engine_loop_01
-      const o = ctx.createOscillator(), o2 = ctx.createOscillator(), lp = ctx.createBiquadFilter(), g = ctx.createGain();
-      o.type = 'sawtooth'; o2.type = 'square'; o.frequency.value = 30; o2.frequency.value = 15;
-      lp.type = 'lowpass'; lp.frequency.value = 260; g.gain.value = 0.0001;
-      o.connect(lp); o2.connect(lp); lp.connect(g); g.connect(ctx.destination);
-      o.start(); o2.start();
-      o.frequency.setValueAtTime(18, now); o.frequency.linearRampToValueAtTime(46, now + 1.2); o.frequency.linearRampToValueAtTime(34, now + 1.8);
-      g.gain.exponentialRampToValueAtTime(0.16, now + 0.4); g.gain.setValueAtTime(0.16, now + 1.8);
-      this.eng = { o, o2, g, lp };
-    } else if (mode === 'drive' && this.eng) {
-      this.eng.o.frequency.linearRampToValueAtTime(70, now + 6); this.eng.lp.frequency.linearRampToValueAtTime(520, now + 6);
-    } else if (mode === 'stop' && this.eng) {
-      this.eng.g.gain.exponentialRampToValueAtTime(0.0001, now + 0.6); const e = this.eng; setTimeout(() => { e.o.stop(); e.o2.stop(); }, 800); this.eng = null;
+      const src = ctx.createBufferSource(), bp = ctx.createBiquadFilter(), g = ctx.createGain();
+      src.buffer = n; bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 1.5; g.gain.value = 0.18;
+      src.connect(bp); bp.connect(g); g.connect(ctx.destination); src.start(now);
+      return;
     }
+    const B = this.audio && this.audio.bank;
+    if (!B) return;
+    if (name === 'key') B.play('pickup_key');
+    else if (name === 'paper') B.play('pickup_paper');
+  }
+  // エンディングの車: start = 乗ってエンジンを掛ける(car_engine)→ drive = 走り出す(ending_gate へ受け渡し)→ stop = エンディング画面(消す)
+  _engine(mode) {
+    this.engineLog = this.engineLog || []; this.engineLog.push(mode);
+    const B = this.audio && this.audio.bank;
+    if (!B) return;
+    if (mode === 'start' && !this.eng) this.eng = B.play('car_engine') || { stop: () => {} };
+    else if (mode === 'drive') { if (this.eng) this.eng.stop(1.2); this.eng = B.play('ending_gate') || { stop: () => {} }; }
+    else if (mode === 'stop' && this.eng) { this.eng.stop(0.6); this.eng = null; }
   }
 
   // ================================================================ 状態(window.__N2.story)

@@ -159,6 +159,9 @@ export class Player {
     this._walkPhase += dt * Math.PI * 2 * PLAYER.bobFreq * Math.max(0.0, moved / PLAYER.walkSpeed) ** 0.6;
     const bob = Math.abs(Math.sin(this._walkPhase * 0.5)) * PLAYER.bobAmp * this._moveRatio * 2 - PLAYER.bobAmp * this._moveRatio;
     this._applyCamera(bob);
+    // P4b: 一歩ごと(揺れの一番低い所 = 位相が 2π 進むたび)に足音の合図。歩き約 1.85 歩/秒・走り約 3 歩/秒
+    const stepK = Math.floor(this._walkPhase / (2 * Math.PI));
+    if (stepK !== this._stepK) { if (this._stepK !== undefined && moved > 0.3 && this.onStep) this.onStep({ run: run && moved > PLAYER.walkSpeed * 1.2, speed: moved }); this._stepK = stepK; }
 
     if (this.onKey) for (const c of this._justPressed) this.onKey(c);
     if (this._justPressed.has('KeyE') && this.onUse) this.onUse();

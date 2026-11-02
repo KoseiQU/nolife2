@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { SPACE_Y } from '../world.js';
-import { GB, GLSL_NOISE, rng, actx, noiseBuf, burst, tone } from './gb.js';
+import { GB, GLSL_NOISE, rng, actx, tone } from './gb.js';
 
 const OX = 520, OZ = 0;
 // 調整値(docs/p5b2b/NOTES.md §4)
@@ -655,21 +655,13 @@ function useDoor(ctx) {
   return 'door';
 }
 
-// ================================================================ 仮音(P4 で録音に差し替え。名前は docs/p5b2b/NOTES.md §5)
-//  xb1_water_loop_01: 水の流れる低い音 / xb1_drip_01: 滴り / xb1_door_clank_01: 踊り場の扉が閉まる / xb1_loop_notice_01: 3 回目に気づく / xb1_release_01: 抜ける /
-//  xb1_door_creak_01: 戻りで扉が開く / xb1_key_drone_01: キーを取った時 / 上の足音・遠い悲鳴(管理人は来ない。enemy_audio の step・scream をこもらせて)
+// ================================================================ 音(P4b)
+//  水の流れ・滴り = 採用 amb_b1 B「流れる水」のループ。地下(B1・XB1・1F の地下への階段)の空気は main.js の環境音(updateAmbience)がまとめて鳴らす。
+//  踊り場の扉が閉まる音(door_steel)・抜ける音と鍵の低音(space_release)・戻りで扉が開く軋み(door_creak_slow)は「なし」で外した(無音)。
+//  3 回目に気づく音(xb1_loop_notice)は未選択なので仮音のまま。上の足音(enemy_step_walk・3 周目の仮音)と遠い悲鳴(x105_scream 採用 C・声)は enemy_audio をこもらせて
 function sound(ctx, dt, inTun) {
+  void inTun;
   const st = ctx.state, c = actx(ctx); if (!c) return;
-  if (!st.amb) {
-    const out = ctx.audio.listener.getInput();
-    const src = c.createBufferSource(); src.buffer = noiseBuf(c, 4); src.loop = true;
-    const bp = c.createBiquadFilter(); bp.type = 'lowpass'; bp.frequency.value = 380;
-    const g = c.createGain(); g.gain.value = 0.0; src.connect(bp); bp.connect(g); g.connect(out); src.start();
-    st.amb = { src, g, drip: 1 };
-  }
-  st.amb.g.gain.value += ((inTun ? 0.05 : 0.025) - st.amb.g.gain.value) * Math.min(1, dt * 2);
-  st.amb.drip -= dt;
-  if (st.amb.drip <= 0) { st.amb.drip = 0.6 + Math.random() * 2.2; const f = 1300 + Math.random() * 1400; tone(ctx, f, f * 0.55, 0.12, 0.03 + Math.random() * 0.03, 'sine'); }
   // 上の階の足音(管理人は地下には来ない。音だけ)
   st.stepsT -= dt;
   if (st.stepsT <= 0 && !st.steps) { st.steps = { n: 6 + ((Math.random() * 4) | 0), t: 0 }; const E = st.keyTaken ? XB1.sounds.stepsEveryRet : XB1.sounds.stepsEvery; st.stepsT = E[0] + Math.random() * (E[1] - E[0]); }
@@ -680,16 +672,12 @@ function sound(ctx, dt, inTun) {
       st.steps.t = 0.58; if (--st.steps.n <= 0) st.steps = null;
     }
   }
-  if (st.keyTaken && !st.screamed && st.retLoops >= 1 && ctx.audio && ctx.audio.play) { st.screamed = true; const p = ctx.player.pos; ctx.audio.play('scream', new THREE.Vector3(p.x, SPACE_Y + 6, p.z + 10), 0.35, { cutoff: 450, ref: 2 }); }
+  if (st.keyTaken && !st.screamed && st.retLoops >= 1 && ctx.audio && ctx.audio.play) { st.screamed = true; const p = ctx.player.pos; ctx.audio.play('x105_scream', new THREE.Vector3(p.x, SPACE_Y + 6, p.z + 10), 0.35, { cutoff: 450, ref: 2 }); }
 }
-function stopSound(ctx) { const st = ctx.state; if (!st.amb) return; try { st.amb.src.stop(); } catch (e) { void e; } st.amb = null; }
+function stopSound(ctx) { void ctx; }
 function sfx(ctx, name) {
   const st = ctx.state; st.sfx = st.sfx || []; st.sfx.push(name);
-  if (name === 'clank') { burst(ctx, 0.5, 220, 1.0, 0.4); burst(ctx, 0.2, 1800, 3.0, 0.12, 0.02); }                // xb1_door_clank_01
-  else if (name === 'notice') { tone(ctx, 55, 52, 2.4, 0.09, 'sawtooth'); tone(ctx, 82, 80, 2.0, 0.04, 'sine', 0.3); }   // xb1_loop_notice_01
-  else if (name === 'release') { burst(ctx, 0.8, 300, 0.7, 0.2); tone(ctx, 140, 70, 1.4, 0.05, 'triangle', 0.1); }    // xb1_release_01
-  else if (name === 'creak') { tone(ctx, 260, 200, 1.6, 0.03, 'sawtooth'); tone(ctx, 400, 330, 1.2, 0.012, 'square', 0.2); }   // xb1_door_creak_01
-  else if (name === 'key_drone') { tone(ctx, 46, 44, 3.0, 0.1, 'sawtooth'); }                                         // xb1_key_drone_01
+  if (name === 'notice') { tone(ctx, 55, 52, 2.4, 0.09, 'sawtooth'); tone(ctx, 82, 80, 2.0, 0.04, 'sine', 0.3); }   // xb1_loop_notice_01(未選択 = 仮音のまま)
 }
 
 // テスト・スクショ用

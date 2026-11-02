@@ -12,7 +12,7 @@
 
 import * as THREE from 'three';
 import { SPACE_Y } from '../world.js';
-import { GB, GLSL_NOISE, rng, actx, noiseBuf, burst, tone } from './gb.js';
+import { GB, GLSL_NOISE, rng } from './gb.js';
 
 const OX = 420, OZ = 0;
 // 調整値(docs/p5b2b/NOTES.md §3)
@@ -680,32 +680,15 @@ export function nav(ctx, fx, fz, tx, tz) {
   return out;
 }
 
-// ================================================================ 仮音(P4 で録音に差し替え。名前は docs/p5b2b/NOTES.md §5)
-//  x705_room_tone_loop_01: 天窓の灯りのうなり(灯りが消えると止む)/ x705_lights_off_01: 灯りが一斉に消える(遮断器の音)/ x705_door_creak_01: 南の扉が開く /
-//  x705_warp_drone_01: 歪みの間の低いうなり
-function sound(ctx, dt) {
-  const st = ctx.state, c = actx(ctx); if (!c) return;
-  if (!st.amb) {
-    const out = ctx.audio.listener.getInput();
-    const g = c.createGain(); g.gain.value = 0; g.connect(out);
-    const src = c.createBufferSource(); src.buffer = noiseBuf(c, 3); src.loop = true;
-    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 180; bp.Q.value = 1.2;
-    src.connect(bp); bp.connect(g); src.start();
-    const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = 120; const og = c.createGain(); og.gain.value = 0.25; o.connect(og); og.connect(g); o.start();
-    const dg = c.createGain(); dg.gain.value = 0; dg.connect(out);
-    const d1 = c.createOscillator(), d2 = c.createOscillator(); d1.type = d2.type = 'sawtooth'; d1.frequency.value = 41; d2.frequency.value = 43.3;
-    const dl = c.createBiquadFilter(); dl.type = 'lowpass'; dl.frequency.value = 160; d1.connect(dl); d2.connect(dl); dl.connect(dg); d1.start(); d2.start();
-    st.amb = { g, src, o, dg, d1, d2 };
-  }
-  const k = Math.min(1, dt * 4);
-  st.amb.g.gain.value += (0.03 * st.U.uOn.value - st.amb.g.gain.value) * k;
-  st.amb.dg.gain.value += (0.05 * st.warp - st.amb.dg.gain.value) * k;
-}
-function stopSound(ctx) { const st = ctx.state; if (!st.amb) return; try { st.amb.src.stop(); st.amb.o.stop(); st.amb.d1.stop(); st.amb.d2.stop(); } catch (e) { void e; } st.amb = null; }
+// ================================================================ 音(P4b)
+//  広間の空気(amb_x705)・歪みのうなり(space_warp)・南の扉がひとりでに開く軋み(door_creak_slow)は「なし」で外した(無音)。
+//  灯りが一斉に消える音は採用 x705_lights_off B「次々と消える」(src/audio_bank.js)。st.sfx は鳴らした名前の記録(テスト用)
+function sound(ctx, dt) { void ctx; void dt; }
+function stopSound(ctx) { void ctx; }
 function sfx(ctx, name) {
   const st = ctx.state; st.sfx = st.sfx || []; st.sfx.push(name);
-  if (name === 'lights_off') { burst(ctx, 0.35, 140, 0.8, 0.5); burst(ctx, 0.12, 2200, 1.5, 0.25); tone(ctx, 120, 40, 0.6, 0.08, 'sawtooth'); }   // x705_lights_off_01
-  else if (name === 'creak') { tone(ctx, 310, 240, 1.1, 0.03, 'sawtooth'); tone(ctx, 460, 380, 0.9, 0.015, 'square', 0.15); }                 // x705_door_creak_01
+  const bank = ctx.audio && ctx.audio.bank;
+  if (name === 'lights_off' && bank) bank.play('x705_lights_off');
 }
 
 // テスト・スクショ用

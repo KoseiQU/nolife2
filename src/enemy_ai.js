@@ -220,7 +220,7 @@ export class EnemyAI {
     this.enemy.onFootstep = (foot, pos) => {
       if (!this.audio) return;
       const run = this.enemy.current === 'run_intent';
-      this.audio.play('step', pos, run ? 1.0 : (this.state === 'PATROL' ? 0.6 : this.state === 'LURK' ? 0.4 : 0.8));
+      this.audio.play('step', pos, run ? 1.0 : (this.state === 'PATROL' ? 0.6 : this.state === 'LURK' ? 0.4 : 0.8), { run });   // P4b: 走りは enemy_step_run(採用)、歩きは仮音(3 周目)
     };
     this.setState('PATROL');
   }

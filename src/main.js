@@ -23,6 +23,7 @@ import { Elevator, EV } from './elevator.js';
 import { Enemy } from './enemy.js';
 import { EnemyAI } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
+import { AudioBank } from './audio_bank.js';
 import { Peephole } from './peephole.js';
 import { AttackMovie } from './attack_movie.js';
 import { Hud } from './hud.js';
@@ -46,7 +47,7 @@ const TOUR = PARAMS.has('tour');
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
 // P5b-1: 物語(story.js)のモード。通常プレイと ?test=story = 'play'(段・目標・鍵・221/6F の罠・最終追跡・エンディング)、?tour = 'tour'(全部解放・別空間に入れる)、
 //  他のテスト(?test=enemy/rooms/building)= 'off'(物語の扉は施錠のまま、それ以外は P5a までと同じ)
-const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'
+const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces' || PARAMS.get('test') === 'audio') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'。P4b: ?test=audio も
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -370,6 +371,10 @@ for (const f of building.floors) {
   }
 }
 const enemyAudio = new EnemyAudio(camera, enemy);
+// P4b: 採用した音(assets/audio の wav と声)の共通の再生器。管理人の音・EV・部屋・物語・別空間はこれで鳴らす(読み込み中・失敗しても遊べる)
+const bank = new AudioBank({ listener: enemyAudio.listener });
+enemyAudio.bank = bank;
+const bankLoad = bank.load();
 // AudioContext はユーザー操作で起こす(P4a: 常時ループの鼻歌を削除したので見学モードとの差は無くなった)
 const resumeAudio = () => enemyAudio.resume();
 window.addEventListener('pointerdown', resumeAudio);
@@ -515,7 +520,7 @@ let death = null;   // { t, respawned }
 // P5b-1b: 入力を止めておく理由がまだ残っているか(視点固定・襲撃ムービーが終わった時に frozen を戻す判定)
 function inputHeld() { return !!(stairs && stairs.busy) || !!death || movie.active || viewLock.active || !!(story && (story.trans || story.ending)) || !!(rooms && rooms.hidden) || peephole.active; }
 // P2c: ヒット(t=0)の後は血飛沫を見せてから暗転。ATTACK 開始から暗転完了まで ≈0.85+1.75 = 2.6 秒
-const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0.8 };
+const DEATH = { flash: 0.08, blackFrom: 1.1, toBlack: 1.75, hold: 3.0, fadeIn: 0.8, sound: 0.85 };   // P4b: sound = 倒れる音(death 採用 A)を鳴らす時刻(暗転の手前)
 function startDeath(why = null) {
   if (death) return;
   death = { t: 0, respawned: false, why };
@@ -528,6 +533,7 @@ function updateDeath(dt) {
   if (!death) return;
   death.t += dt;
   const t = death.t;
+  if (!death.snd && t >= DEATH.sound) { death.snd = true; bank.play('death'); }
   flash.style.opacity = String(t < DEATH.flash ? 0.35 : Math.max(0, 0.35 - (t - DEATH.flash) * 3));
   const respawnAt = DEATH.toBlack + DEATH.hold;
   let black;
@@ -588,13 +594,13 @@ function setPlayerLevel(key, { dy = null } = {}) {
   updateVisibility();
 }
 const levelLog = [];
-const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel,
+const elevator = new Elevator({ building, world, player, camera, listener: enemyAudio.listener, bank, getLevel: () => playerLevel,
   setLevel: (key, o) => setPlayerLevel(key, o) });
 // 行き先(±1)を先に読み始める(到着は読み終わってから)。P5b-3: 出発階(カゴを描いている階)は到着まで解放しない
 //  (旧: 2 階以上離れた行き先では出発階が解放され、移動中は何も描かれず画面が暗転していた = docs/p5b3/NOTES.md §1)
 elevator.onRideStart = (to) => world.focus(to, { keep: [playerLevel] });
 // P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
-rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, getLevel: () => playerLevel, flags: FLAGS,
+rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, bank, getLevel: () => playerLevel, flags: FLAGS,
   onNoise: (f) => { if (!TOUR) ai.noiseRoom(f.room, f.x, f.z, f.level); },
   onHide: () => {} });
 world.onBind = (lv, binds) => rooms.onBind(lv, binds);
@@ -659,38 +665,47 @@ function extraTarget() {
   return null;
 }
 
-// ---------------------------------------------------------------- 地下への階段の湿った音(P3a-2・仮音: WebAudio 合成の水滴＋残響)
-// 地下への階段の区画(1F の踊り場)では遠く小さく、B1 では近く。録音素材は P4 で差し替え
-const DRIP = { t: 2.0, bus: null, count: 0 };
-function updateDrips(dt) {
-  const bs = building.stairs.find((s) => s.id === 'basement');
-  const [x0, z0, w, d] = bs.pos.concat(bs.size);
-  const p = player.pos;
-  const near = playerLevel === 'B1' || (playerLevel === 1 && p.x > x0 - 1.5 && p.x < x0 + w && p.z > z0 - 0.5 && p.z < z0 + d + 1.5);
-  if (!near) { DRIP.t = Math.min(DRIP.t, 1.0); return; }
-  DRIP.t -= dt;
-  if (DRIP.t > 0) return;
-  DRIP.t = 1.4 + Math.random() * 3.2;
-  const ctx = enemyAudio.ctx;
-  if (ctx.state !== 'running') return;
-  if (!DRIP.bus) {
-    const dry = ctx.createGain(); dry.gain.value = 1;
-    const delay = ctx.createDelay(1.0); delay.delayTime.value = 0.23;
-    const fb = ctx.createGain(); fb.gain.value = 0.42;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200;
-    dry.connect(ctx.destination); dry.connect(delay); delay.connect(lp); lp.connect(fb); fb.connect(delay); lp.connect(ctx.destination);
-    DRIP.bus = dry;
-  }
-  const now = ctx.currentTime, vol = playerLevel === 'B1' ? 0.2 : 0.06;
-  const o = ctx.createOscillator(), g = ctx.createGain();
-  o.frequency.setValueAtTime(1300 + Math.random() * 700, now);
-  o.frequency.exponentialRampToValueAtTime(420, now + 0.08);
-  g.gain.setValueAtTime(0.0001, now);
-  g.gain.exponentialRampToValueAtTime(vol, now + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
-  o.connect(g); g.connect(DRIP.bus); o.start(now); o.stop(now + 0.16);
-  DRIP.count++;
+// ---------------------------------------------------------------- 場所ごとの環境音・自分の足音(P4b)
+// 採用した環境音を場所で 1 本ずつ選んで鳴らす(AudioBank のループ。目標音量へなめらかに寄せ、0 になったら止まる):
+//  廊下・EV ホール = amb_corridor A「空調のうなり」/ 敷地・外階段・北階段 = amb_outdoor B「森を抜ける風」/ 屋上A・屋上B(強)とバルコニー(弱)= amb_roof A「強い風」/
+//  地下(B1・XB1 は強く、1F の地下への階段の区画は遠く小さく)= amb_b1 B「流れる水」(P3a-2 の仮音の水滴 updateDrips を置き換え)。105 の中は spaces/x105.js が amb_x105 を鳴らす。
+//  「なし」= 居室(amb_room)・1F ロビー(amb_lobby)・カゴの中(ev_car_quiet)・705(amb_x705)・迷路(amb_maze)は無音。312 の中は spaces/x312.js の仮音のまま(3 周目)
+const AMB = { corridor: 1.0, outdoor: 1.0, outdoorStair: 0.7, roofA: 1.0, roofB: 1.0, balcony: 0.4, b1: 0.8, xb1: 1.0, b1Stair: 0.35 };
+const ROOM_RECTS = new Map();   // level → [{ rect, kind }](居室・共用室・EV。階段の区画は stairs.inStairArea で見る)
+for (const f of building.floors) ROOM_RECTS.set(f.level, f.rooms.filter((r) => r.kind !== 'stair').map((r) => ({ rect: r.rect, kind: r.kind })));
+function roomKindAt(lv, x, z) {
+  for (const r of ROOM_RECTS.get(lv) || []) if (inRect(x, z, r.rect)) return r.kind;
+  return null;
 }
+function ambienceAt() {
+  const p = player.pos, lv = playerLevel, w = { corridor: 0, outdoor: 0, roof: 0, b1: 0 };
+  if (lv === 'G') w.outdoor = AMB.outdoor;
+  else if (lv === 'RB') w.roof = AMB.roofB;
+  else if (lv === 'B1') w.b1 = AMB.b1;
+  else if (lv === 'XB1') w.b1 = AMB.xb1;
+  else if (typeof lv === 'number') {
+    const st = stairs.inStairArea(p.x, p.z), ok = outdoorKind();
+    if (ok === 'roofA') w.roof = AMB.roofA;
+    else if (ok === 'balcony') w.roof = AMB.balcony;
+    else if (st === 'basement') w.b1 = AMB.b1Stair;
+    else if (st) w.outdoor = AMB.outdoorStair;
+    else if (!roomKindAt(lv, p.x, p.z)) w.corridor = AMB.corridor;
+  }
+  return w;
+}
+function updateAmbience() {
+  const w = TOUR || !death ? ambienceAt() : { corridor: 0, outdoor: 0, roof: 0, b1: 0 };
+  bank.loop('amb_corridor').set(w.corridor);
+  bank.loop('amb_outdoor').set(w.outdoor);
+  bank.loop('amb_roof').set(w.roof);
+  bank.loop('amb_b1').set(w.b1);
+}
+// 自分の足音: 居室の床(410 などの入れる部屋と 312 の複製の部屋)だけ pl_step_room A「靴下・柔らかい」。廊下・屋外・外階段の足音は「なし」
+player.onStep = ({ run }) => {
+  const lv = playerLevel, p = player.pos;
+  const room = lv === 'X312' || (typeof lv === 'number' && roomKindAt(lv, p.x, p.z) === 'unit');
+  if (room) bank.play('pl_step_room', { vol: run ? 1.0 : 0.75 });
+};
 
 // ---------------------------------------------------------------- P3c: 敷地への出入り・外を描くか・外の霧
 // 正面玄関の線(外側の自動ドア)を越えたら 1F ⇔ 敷地 'G' を切り替える(床の高さは同じ。当たりだけ差し替わる)
@@ -802,7 +817,7 @@ function step(dt) {
   updatePortal();
   if (!movie.active && !death) stairs.update(dt);   // P5b-1b: 襲撃ムービー・死亡演出の間は段の上り下りを止める
   rooms.update(dt, playerLevel);
-  rooms.updateWind(dt, outdoorKind());
+  rooms.updateWind(dt, outdoorKind());   // P4b: 風の音は updateAmbience(amb_roof)。ここは場所の記録だけ
   story.update(dt);   // P5b-1
   updatePeepInput(dt);
   camera.updateMatrixWorld();
@@ -830,7 +845,8 @@ function step(dt) {
   spaces.update(dt);   // P5b-2a: 今いる別空間の演出(霧などの見た目の上書きもあるので外の見た目の後)
   if (!TOUR) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
-  updateDrips(dt);
+  updateAmbience();   // P4b: 場所ごとの環境音(地下の水滴 updateDrips を置き換え)
+  bank.update(dt);
   updateDeath(dt);
   hud.update(dt);
   grainPass.uniforms.time.value = simTime;
@@ -909,7 +925,7 @@ window.__n2 = {
   setLevel(key) { setPlayerLevel(key); return world.focus(key); },
   // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
-  enemyObj: enemy, ai, enemyAudio, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
+  enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial,   // P5a
   story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間
@@ -976,3 +992,4 @@ if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then(
 if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'story') import('../tools/test_story.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'spaces') import('../tools/test_spaces.js').then((m) => m.run(window.__N2)).catch(showErr);   // P5b-2a: 異世界 105・312
+if (PARAMS.get('test') === 'audio') import('../tools/test_audio.js').then((m) => m.run(window.__N2)).catch(showErr);     // P4b: 音の接続
