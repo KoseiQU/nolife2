@@ -21,7 +21,7 @@ import { World, levelY, glbLevel, FACING_N, LEVELS, isSpace } from './world.js';
 import { Stairs } from './stairs.js';
 import { Elevator, EV } from './elevator.js';
 import { Enemy } from './enemy.js';
-import { EnemyAI } from './enemy_ai.js';
+import { EnemyAI, hideOddsFrom } from './enemy_ai.js';
 import { EnemyAudio } from './enemy_audio.js';
 import { AudioBank } from './audio_bank.js';
 import { Peephole } from './peephole.js';
@@ -381,7 +381,10 @@ window.addEventListener('pointerdown', resumeAudio);
 window.addEventListener('keydown', resumeAudio);
 const CHECKPOINT = { x: 8.75, z: 7.3, yaw: Math.PI / 2 };   // 410 の入口(室内、扉を向く)
 const ENEMY_HOME = { x: 6.9, z: 20.6, yaw: Math.PI };       // 復帰時の管理人(EV ホール、北を向く)
+// P5b-6: 逃げ込みの確率(DESIGN §3.4.1)。?pEnter=0.7&pCloset=0.5 で起動時に上書き(既定は enemy_ai.js の HIDE_ODDS)
+const HIDE_ODDS_START = hideOddsFrom(PARAMS);
 const ai = new EnemyAI({ enemy, audio: enemyAudio, player, world, building, getPlayerLevel: () => playerLevel, doors: doorApi, doorInfo,
+  hideOdds: HIDE_ODDS_START,
   onLevel: (lv) => enemy.setLevel(levelY(lv), world.collisions(lv), lampDefsFor(lv)),
   onKill: () => { movie.hit(); startDeath(); },
   onAttackStart: () => { if (peephole.active) { peephole.forced = false; peephole.set(false); } pendingE = null; viewLock.handoff(); movie.start(); },
@@ -925,6 +928,7 @@ window.__n2 = {
   setLevel(key) { setPlayerLevel(key); return world.focus(key); },
   // 階・位置へ直接移る(テスト・スクショ用)。読み込み完了の Promise を返す
   teleport(key, x, z, yaw = 0, pitch = 0) { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); return world.focus(key); },
+  get hideOdds() { return { ...ai.hideOdds, open: +ai.hideOpenOdds().toFixed(3), start: { ...HIDE_ODDS_START } }; },   // P5b-6: 逃げ込みの確率の現在値(起動時の値)
   enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial,   // P5a

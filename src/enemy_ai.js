@@ -11,7 +11,7 @@
 //  懐中電灯は PATROL/ALERT/CHASE で点灯、LURK で消灯(§3.2.1)。
 //  P2d: 「部屋を知っている」(knownRoomId)。①入室の瞬間(扉通過から 1.5 秒)を視錐＋遮蔽なしで目撃 ②室内の懐中電灯の光漏れ
 //  (廊下側で扉から 6m、開いていれば 10m)③室内の物音を聞いた、のどれかで立つ。知らなければ、室内で消灯して潜む限り
-//  扉の前で止まってもノブを鳴らして去る。知っていてプレイヤーがスコープを覗いていれば SCOPE 演出(通り過ぎ→消える→
+//  扉の前で止まっても入らずに去る。知っていてプレイヤーがスコープを覗いていれば SCOPE 演出(通り過ぎ→消える→
 //  約 2 秒の静寂→戻ってスコープを覗き込む→鍵→扉を開けて襲う)。
 
 //  P3b: 「部屋」を 410 だけから入れる部屋すべてへ一般化(_rid=その点のある部屋の id。バルコニーは部屋の内)。鍵で入る扉は居室と管理室、
@@ -27,6 +27,10 @@
 //  プレイヤーが階を移ると 20〜60 秒後に静かに扉を開けて出てくる(扉は壊さない)。階の移動は EV だけ(階段を使わない)。
 //  行き先の階は重み付き乱数＋監督役(director: 直近の遭遇からの経過で重みを変える)。大きな音は別の階にも届き(階差で減衰)、EV でその階へ来る。
 //  EV の賭け: EV で降りてから T 秒以内にプレイヤーが別の階で EV を呼ぶと、カゴの中に乗っている(EVAMBUSH)。
+//  P5b-6(DESIGN §3.4.1 逃げ込みの確率): 知っている部屋に逃げ込まれた時、閉じた扉の前に着いたら 1 回「入るか」(HIDE_ODDS.enter)、
+//  クローゼット/ロッカーの前で焦らした後に 1 回「開けるか」(closet / enter)を引く。外れたら扉の前で立ち止まって(または手を掛けたまま離れて)
+//  立ち去り、部屋を忘れる(knownRoomId を消す＋HIDE_FORGET.grace 秒はその部屋の光漏れ・物音で再発見しない。扉を開けた・部屋を出たら即終わる)。
+//  扉が開いていれば入るのは必ず。スコープ演出①は覗き返しの後、扉を開ける直前に enter を引く。
 
 import * as THREE from 'three';
 import { segmentHitT } from './enemy.js';
@@ -147,6 +151,27 @@ export const LOCKER = {
   tease: [2.0, 4.0],       // 目の前で立ち止まって焦らす(秒)
   openAfter: 0.35,         // 扉を開けてから襲いかかるまで
 };
+// P5b-6(DESIGN §3.4.1 逃げ込みの確率。2026-11-02 確定): 決める数は 2 つ。enter = 閉じた扉の部屋に入ってくる確率、
+//  closet = クローゼット/ロッカーに隠れた時に捕まる合計(入室後に開ける確率 = closet / enter)。?pEnter=&pCloset= で起動時に上書き(main.js)
+export const HIDE_ODDS = { enter: 0.7, closet: 0.5 };
+// 助かった時の段取りと、部屋を忘れた後の再発見の猶予
+export const HIDE_FORGET = {
+  grace: 10.0,               // 忘れてからこの秒数は、その部屋の光漏れ・物音では再発見しない(プレイヤーが扉を開けた・部屋を出たら即終わる。目で見られるのは別)
+  pause: [1.5, 2.5],         // 扉の前で入らない時: 足音を止めて立ち止まる秒数(この範囲で乱数)→ 無言で立ち去る。扉は揺らさない・音なし(2026-11-02 ユーザー指示)
+  letGo: 1.0,                // クローゼット/ロッカーの前: 焦らし終えた後、手を掛けたまま止まって離れるまで
+  away: 5.0,                 // 猶予の間、忘れた部屋の扉からこの距離以内の巡回先(扉・廊下の端・EV)へは行かない
+};
+// ?pEnter=&pCloset=(URLSearchParams か文字列)→ { enter, closet }。数でない値は既定のまま、範囲外は 0..1 に収める
+export function hideOddsFrom(params, base = HIDE_ODDS) {
+  const q = typeof params === 'string' ? new URLSearchParams(params) : params;
+  const o = { ...base };
+  for (const [k, name] of [['enter', 'pEnter'], ['closet', 'pCloset']]) {
+    const s = q && q.get ? q.get(name) : null;
+    const v = s === null || s === '' ? NaN : Number(s);
+    if (Number.isFinite(v)) o[k] = Math.min(1, Math.max(0, v));
+  }
+  return o;
+}
 const XFER = { evWait: 2.0, evBase: 2.4, evPerFloor: 1.5, stairPerFloor: 4.0 };
 void P0_NODES;
 
@@ -177,6 +202,9 @@ export class EnemyAI {
     this.patrolIdx = 0;
     this._rand = mulberry(1234);
     this.knownRoomId = null;     // P2d: プレイヤーがいると知っている部屋
+    // P5b-6: 逃げ込みの確率(ctx.hideOdds = main.js が ?pEnter/?pCloset から作る)と、部屋を忘れた後の猶予 { room, until, leaving, why }
+    this.setHideOdds(this.hideOdds || HIDE_ODDS);
+    this._grace = null;
     this._playerArea = 'C';
     this._playerRoom = null;
     // P3b: 部屋(入れる部屋＋食堂・シアター)。rid → { id, level, rect, bal(バルコニー), key(鍵で入る扉か), points }
@@ -239,6 +267,19 @@ export class EnemyAI {
     this.log('level', { lv });
   }
 
+  // P5b-6: 逃げ込みの確率を差し替える(テスト・デバッグ)。値は 0..1 に収める
+  setHideOdds(o = {}) {
+    const n = (v, d) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
+    const cur = this.hideOdds || HIDE_ODDS;
+    this.hideOdds = { enter: n(o.enter, cur.enter ?? HIDE_ODDS.enter), closet: n(o.closet, cur.closet ?? HIDE_ODDS.closet) };
+    return { ...this.hideOdds };
+  }
+  // 入室後にクローゼット/ロッカーを開ける確率 = closet / enter(合計で closet になる)。enter が 0 の時(扉が開いていて入った)は closet そのまま
+  hideOpenOdds() {
+    const { enter, closet } = this.hideOdds;
+    return enter > 0 ? Math.min(1, closet / enter) : Math.min(1, closet);
+  }
+
   log(ev, extra = {}) {
     this.events.push({ t: +this.time.toFixed(3), ev, state: this.state, ...extra });
     if (this.events.length > 400) this.events.shift();
@@ -279,6 +320,7 @@ export class EnemyAI {
     }[s];
     if (s !== 'LURK') { this.lurkMode = null; this.lurkTargetRoom = null; if (!opts.keepConcealed) { this.concealed = false; this.lurkRoomId = null; } }
     if ((s === 'CHASE' && prev !== 'CHASE') || s === 'ATTACK' || s === 'SCOPE' || s === 'LOCKER') this._encounter(s);
+    if (s === 'CHASE' && this._grace) this._endGrace('chase');   // P5b-6: 見つけ直した → 猶予は終わり(通常の判定へ)
     this.task = gen ? gen() : null;
     if (this.audio) this.audio.setState(s);
     if (prev !== s || opts.log) this.log('state', { from: prev, to: s });
@@ -300,6 +342,7 @@ export class EnemyAI {
     this._rayTimer = 0;
     this._prevPlayer.copy(this.player.pos);
     this.knownRoomId = null;
+    this._grace = null;          // P5b-6
     this.lurkFound = null;
     this._enterWatch = 0;
     this._playerRoom = this._rid(this.player.pos.x, this.player.pos.z, this._plv());
@@ -570,6 +613,7 @@ export class EnemyAI {
     this.stateTime += dt;
     { const k = Math.exp(-dt * Math.LN2 / AI.director.noiseHalfLife); for (const lv in this.noiseHist) this.noiseHist[lv] *= k; }
     this._trackPlayer(dt);
+    this._updateGrace();
     this._updateRoomKnowledge(dt);
     // P3b 演出②: 知っている部屋のクローゼット/ロッカーに隠れた
     const hid = this.player.hidden;
@@ -661,6 +705,8 @@ export class EnemyAI {
       const n = this._noise; this._noise = null;
       if (Math.hypot(n.x - e.x, n.z - e.z) <= n.r) { this.heard = true; this._heardAt = { x: n.x, z: n.z }; this.log('heard_noise', { r: n.r }); }
     }
+    // P5b-6: 忘れた部屋の猶予中は、その部屋の中の物音を聞かない(扉を開けた・部屋を出たら猶予は終わっている = _updateGrace)
+    if (this.heard && this._grace && this._playerRoom === this._grace.room) { this.heard = false; this._heardAt = null; }
     if (this.state === 'DEAD' || this.state === 'EVAMBUSH') return;
     if (this.state === 'LURK') {
       if (this.lurkMode !== 'room') { this._lurkTrigger(p, dist); return; }
@@ -697,6 +743,7 @@ export class EnemyAI {
       return;
     }
     if (this.knownRoomId === rid || this.state === 'DEAD' || this.state === 'SCRIPTED') return;
+    if (this._grace && this._grace.room === rid) return;   // P5b-6: 忘れた部屋の猶予中は光漏れ・物音で知らない
     const e = this.enemy.pos;
     let why = null;
     if (this._enterWatch > 0) {
@@ -737,8 +784,73 @@ export class EnemyAI {
     if (lv !== this.level && !this.transit) { this.floorNoise(lv, x, z, 'fall'); return false; }   // P5a: 別の階の落下音は階差で減衰して届く
     if (lv !== this.level || this.transit || ['ATTACK', 'DEAD', 'SCRIPTED', 'SCOPE', 'LOCKER', 'EVAMBUSH'].includes(this.state)) return false;
     if (!this.rooms.has(rid)) return false;
+    if (this._grace && this._grace.room === rid) { this.log('room_noise_grace', { room: rid }); return false; }   // P5b-6
     this._learnRoom('noise', rid);
     return true;
+  }
+
+  // ------------------------------------------------------------ P5b-6: 逃げ込みの確率(DESIGN §3.4.1)
+  // 1 回引く。kind: 'enter'(閉じた扉の前)/ 'scope'(覗き返しの後、扉を開ける直前)/ 'closet'(クローゼットの前で焦らした後)
+  _hideRoll(kind, p, room) {
+    const r = this._rand();
+    const ok = r < p;
+    const result = ok ? (kind === 'closet' ? 'open' : 'enter') : (kind === 'closet' ? 'spare' : 'refuse');
+    this.log('hide_roll', { kind, room, p: +p.toFixed(3), r: +r.toFixed(3), result });
+    return ok;
+  }
+  // 部屋を忘れる(knownRoomId を消す＋猶予)。leaving = 管理人が中から出て行く途中(自分で開けた扉が開いているのは猶予を終わらせない)
+  _forgetRoom(rid, why, leaving = false) {
+    if (this.knownRoomId === rid) this.knownRoomId = null;
+    this.lastKnown = null;
+    this._enterWatch = 0;
+    this._grace = { room: rid, until: this.time + HIDE_FORGET.grace, since: this.time, leaving, why };
+    this.log('hide_forget', { room: rid, why, grace: HIDE_FORGET.grace });
+  }
+  // 巡回先 tgt(部屋の id / 'EV' / 'N0')が、猶予中の部屋の扉から HIDE_FORGET.away 以内か
+  _graceNear(tgt) {
+    const g = this._grace;
+    if (!g) return false;
+    const gr = this.rooms.get(g.room), gd = this.doors.get(g.room);
+    if (!gr || !gd || gr.level !== this.level) return false;
+    if (tgt === g.room) return true;
+    let p = null;
+    if (tgt === 'EV' || tgt === 'N0') { const nd = this.G.nodes[this.level === 4 ? tgt : this._levelTop(this.level, tgt)]; if (nd) p = [nd.x, nd.z]; }
+    else { const d = this.doors.get(tgt); if (d) p = d.pos; }
+    return !!p && Math.hypot(p[0] - gd.pos[0], p[1] - gd.pos[1]) < HIDE_FORGET.away;
+  }
+  _endGrace(why) {
+    const g = this._grace;
+    if (!g) return;
+    this._grace = null;
+    this.log('hide_grace_end', { room: g.room, why, after: +(this.time - g.since).toFixed(2) });
+  }
+  // 毎フレーム: 猶予の終わり(時間切れ・プレイヤーが部屋を出た・プレイヤーが扉を開けた)
+  _updateGrace() {
+    const g = this._grace;
+    if (!g) return;
+    const p = this.player.pos, e = this.enemy.pos;
+    const d = this.doors.get(g.room);
+    const doorOpen = !!d && (this.doors.isOpen(g.room) || d.target > 0);
+    if (g.leaving && !doorOpen && this._rid(e.x, e.z) !== g.room) { g.leaving = false; this.log('hide_left', { room: g.room }); }
+    if (this.time >= g.until) this._endGrace('time');
+    else if (this._rid(p.x, p.z, this._plv()) !== g.room) this._endGrace('left');
+    else if (doorOpen && !g.leaving) this._endGrace('door');
+  }
+  // 扉の前で入らない: 足音を止めて短く立ち止まり(HIDE_FORGET.pause)、無言で立ち去り、部屋を忘れる。扉は揺らさない・音なし(2026-11-02 ユーザー指示)。
+  //  呼び出し元の段取りはここで打ち切る(PATROL へ)
+  *_refuseDoor(door, why) {
+    const e = this.enemy, F = HIDE_FORGET;
+    this.uninterruptible = true;
+    e.speed = 0;
+    e.play('look_idle', { fade: 0.3, timeScale: 0.4 });
+    const pause = F.pause[0] + this._rand() * (F.pause[1] - F.pause[0]);
+    this.log('hide_stand', { room: door.roomId, why, pause: +pause.toFixed(2) });
+    yield* this._wait(pause);
+    this._forgetRoom(door.roomId, why);
+    this.uninterruptible = false;
+    e.aimPoint = null;
+    this.setState('PATROL');
+    yield;
   }
 
   // その部屋で向かう点(410 は P2 と同じ)
@@ -1122,24 +1234,26 @@ export class EnemyAI {
     this.enemy.aimPoint = new THREE.Vector3(door.collision ? (door.collision.minX + door.collision.maxX) / 2 : f.x, this.floorY + 1.0, f.z);
     yield* this._turnTo(f.yaw);
     // P5b-1: 鍵で開く物語の扉(220)は、プレイヤーが鍵で開けるまで管理人も開けない
-    if (door.storyLock) {
-      door.rattle = 0.25;
-      if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.6);
+    if (door.storyLock) {   // P5b-6: 扉は揺らさない・音なし(2026-11-02 ユーザー指示)。扉の前で立ち止まるだけ
       this.log('door_story_locked', { room: door.roomId });
       yield* this._wait(1.2);
       this.uninterruptible = false;
       this.enemy.aimPoint = null;
       return 'locked';
     }
-    // P2d: 中にいると知らなければ(目撃も光漏れも物音もない)、閉じた扉は開けない。ノブを確かめて去る
+    // P2d: 中にいると知らなければ(目撃も光漏れも物音もない)、閉じた扉は開けない。扉の前で立ち止まって去る(P5b-6: 扉は揺らさない・音なし)
     if (this._rid(this.player.pos.x, this.player.pos.z, this._plv()) === door.roomId && this.knownRoomId !== door.roomId && !this.doors.isOpen(door.roomId)) {
-      door.rattle = 0.25;
-      if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.8);
       this.log('door_skip_unknown', { room: door.roomId });
       yield* this._wait(1.2);
       this.uninterruptible = false;
       this.enemy.aimPoint = null;
       return 'locked';
+    }
+    // P5b-6: 知っている部屋に逃げ込まれて扉が閉まっている → 扉の前に着いたこの時に 1 回だけ「入るか」を引く。外れたら立ち止まって立ち去る
+    if (this.knownRoomId === door.roomId && this._rid(this.player.pos.x, this.player.pos.z, this._plv()) === door.roomId && !this.doors.isOpen(door.roomId)
+      && !this._hideRoll('enter', this.hideOdds.enter, door.roomId)) {
+      yield* this._refuseDoor(door, 'door');
+      return 'refused';
     }
     // P5a: 鍵束→錠の段取りは撤去(施錠要素の全廃)。扉は普通に開けて入る
     if (door.locked) this.doors.setLocked(door.roomId, false);
@@ -1193,9 +1307,13 @@ export class EnemyAI {
     const order = this.level === 4 ? P0_ORDER : this._levelOrder(this.level);
     const ph = this.phase();
     const budget = (AI.lurk.patrolMin + this._rand() * (AI.lurk.patrolMax - AI.lurk.patrolMin)) * (ph === 'calm' ? AI.director.calm.patrolMul : ph === 'tense' ? AI.director.tense.patrolMul : 1);
+    let skips = 0;
     while (true) {
       if (this.stateTime >= budget && this.lurkEnabled !== false) { this.setState('LURK'); yield; return; }   // 巡回は短く、潜伏が主
       const tgt = order[this.patrolIdx++ % order.length];
+      // P5b-6: 猶予の間は、忘れた部屋の扉の近く(HIDE_FORGET.away 以内)の巡回先へは行かない(立ち去った直後に同じ扉・向かいの扉・廊下の端で立ち止まらない)
+      if (this._graceNear(tgt)) { if (++skips >= order.length) { skips = 0; yield* this._wait(1.0); } continue; }
+      skips = 0;
       if (tgt === 'EV' || tgt === 'N0') {
         const nd = this.G.nodes[this.level === 4 ? tgt : this._levelTop(this.level, tgt)];
         if (!nd) continue;
@@ -1216,17 +1334,14 @@ export class EnemyAI {
       yield* this._wait(tgt === '410' ? 3.0 + this._rand() * 2.0 : 1.5 + this._rand() * 2.0);
       const door = this.doors.get(tgt);
       if (door && door.operable && !door.storyLock && this._rand() < 0.6) {
-        // 覗く: 開いていればそのまま、施錠ならノブを確かめて去る
+        // 覗く: 開いていればそのまま、閉じていれば(知らなければ)扉の前で立ち止まって去る
         const res = yield* this._doorEntry(door, false);
         if (res === 'entered') {
           // P3b: 部屋を一通り見る(奥まで歩いて見回す)→出て行く。隠れていても知らなければ開けない
           yield* this._lookAround(tgt);
           yield* this._leaveRoom();
         }
-      } else if (this._rand() < 0.3 && door) {
-        door.rattle = 0.25;
-        if (this.audio) this.audio.play('rattle', doorPos(door, this.floorY), 0.7);
-      }
+      }   // P5b-6: 巡回中に扉を揺らす(旧 30%)は廃止(2026-11-02 ユーザー指示)
     }
   }
 
@@ -1280,7 +1395,7 @@ export class EnemyAI {
     }
   }
 
-  // SWEEP: 部屋へ(開いていれば入り、閉まっていれば鍵を使わずノブを確かめる)→一通り見て→出て行く。opts.room
+  // SWEEP: 部屋へ(開いていれば入り、閉まっていれば鍵を使わず扉の前で立ち止まる)→一通り見て→出て行く。opts.room
   *_sweep(opts) {
     const rid = opts.room;
     const r = this.rooms.get(rid);
@@ -1347,6 +1462,18 @@ export class EnemyAI {
       if (touched === 1 && t > tease * 0.8) { touched = 2; if (this.audio) this.audio.play('handle', doorPos, 0.9); }
       e.setFace('grin', Math.min(1, 0.3 + t / tease));
       yield;
+    }
+    // P5b-6: 開けるかを 1 回引く(closet / enter。扉の前の判定とは別に引く)。外れたら手を掛けたまま止まり、離れて部屋を出て行く
+    if (!this._hideRoll('closet', this.hideOpenOdds(), room)) {
+      this.log('locker_spare', { room });
+      yield* this._wait(HIDE_FORGET.letGo);
+      e.setFace('grin', 0.3);
+      this._forgetRoom(room, 'closet', true);
+      this.uninterruptible = false;
+      e.aimPoint = null;
+      this.setState('PATROL');   // 巡回の始めに部屋を出て扉を閉める(_patrol → _leaveRoom)
+      yield;
+      return;
     }
     // 4) 開ける → 襲う
     if (this.roomsSys) this.roomsSys.openCloset(room, 3.0);
@@ -1990,6 +2117,14 @@ export class EnemyAI {
       yield;
     }
     this._stareWait = 0;
+    // P5b-6: 覗き返した後、扉を開けるかを 1 回引く(enter)。外れたら顔を離し、扉の前で立ち止まって無言で立ち去る(覗き穴は開いたまま = 去るのが見える)
+    if (!this._hideRoll('scope', this.hideOdds.enter, '410')) {
+      e.lean = 0; e.faceFill = 0; e.faceRate.grin = 0.8; e.faceRate.attack = 3.0;
+      e.setFace('attack', 0); e.setFace('grin', 0.5);
+      e.aimPoint = null;
+      yield* this._refuseDoor(this.doors.get('410'), 'scope');
+      return;
+    }
     // 6) ノブに手を掛けて扉を開けて入る(P5a: 鍵束・錠は撤去。覗き穴視点はここで閉じる。プレイヤーは室内から扉が開くのを見る)
     if (this.audio) this.audio.play('handle', doorPos(this.doors.get('410'), this.floorY), 0.9);
     this.log('scope_knob', { room: '410' });
@@ -2024,6 +2159,8 @@ export class EnemyAI {
       canSee: this.canSee, heard: this.heard, occluded: this.occluded, lastKnown: this.lastKnown,
       uninterruptible: this.uninterruptible,
       knownRoomId: this.knownRoomId, scopeFaceDist: this.scopeFaceDist, playerRoom: this._playerRoom,
+      hideOdds: { ...this.hideOdds, open: +this.hideOpenOdds().toFixed(3) },   // P5b-6
+      grace: this._grace ? { room: this._grace.room, left_s: +(this._grace.until - this.time).toFixed(2), leaving: this._grace.leaving, why: this._grace.why } : null,
       lurkSpot: this.state === 'LURK' ? this.lurkSpot : null, lurkFound: this.state === 'LURK' ? this.lurkFound : null,
       enemyFlashlight: this.enemy.flashlight.on,
       lurkMode: this.lurkMode, lurkRoom: this.lurkRoomId, concealed: this.concealed, phase: this.phase(),
