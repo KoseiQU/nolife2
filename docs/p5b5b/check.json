@@ -1,0 +1,1458 @@
+{
+ "rigged": "idle_breathing_skin.fbx",
+ "out": "07_rigged.glb",
+ "mb": 16.34,
+ "keys": [
+  "Basis",
+  "grin",
+  "attack"
+ ],
+ "results": [
+  {
+   "check": "形の照合(読込時の高さ比・補正後の中心ずれ m)",
+   "ok": true,
+   "value": {
+    "height_ratio": 0.01,
+    "arm_scale": 1.0,
+    "offset": [
+     -0.0,
+     0.0,
+     -0.0
+    ]
+   },
+   "limit": "中心ずれ <5mm"
+  },
+  {
+   "check": "最近傍が 2cm より遠い本番頂点",
+   "ok": true,
+   "value": 0,
+   "limit": "0"
+  },
+  {
+   "check": "重みなし頂点",
+   "ok": true,
+   "value": "0 / 46295",
+   "limit": "0"
+  },
+  {
+   "check": "mixamorig:RightHand がある",
+   "ok": true,
+   "value": 65,
+   "limit": "あり"
+  },
+  {
+   "check": "アニメの骨名が全て一致(mixamorig:)",
+   "ok": true,
+   "value": "全一致",
+   "limit": "不一致なし"
+  },
+  {
+   "check": "ハンマー: 頭の中心が正中(骨盤・胸)より右 m(補正の重み 1 のフレームの最小)",
+   "ok": true,
+   "value": {
+    "attack_bash": 0.137,
+    "attack_downward": 0.171,
+    "door_open_in": 0.053,
+    "look_idle": 0.067,
+    "look_nervous": 0.309,
+    "react_surprised": 0.309,
+    "run_intent": 0.08,
+    "turn_left": 0.121,
+    "turn_right": 0.127,
+    "walk_brutal": 0.037,
+    "walk_careful": 0.088,
+    "walk_hurried": 0.111,
+    "walk_oldman": 0.099,
+    "walk_standard": 0.085
+   },
+   "limit": "≥0.03"
+  },
+  {
+   "check": "左右の手が交差しない(補正の重み 1 のフレームで右の握りが左の握りより左にある数)",
+   "ok": true,
+   "value": {
+    "attack_bash": 0,
+    "attack_downward": 0,
+    "door_open_in": 0,
+    "look_idle": 0,
+    "look_nervous": 0,
+    "react_surprised": 0,
+    "run_intent": 0,
+    "turn_left": 0,
+    "turn_right": 0,
+    "walk_brutal": 0,
+    "walk_careful": 0,
+    "walk_hurried": 0,
+    "walk_oldman": 0,
+    "walk_standard": 0
+   },
+   "limit": "0"
+  },
+  {
+   "check": "ハンマー: 柄と左手(懐中電灯)の握りの最短距離 m(同上の最小)",
+   "ok": true,
+   "value": {
+    "attack_bash": 0.318,
+    "attack_downward": 0.293,
+    "door_open_in": 0.217,
+    "look_idle": 0.182,
+    "look_nervous": 0.187,
+    "react_surprised": 0.161,
+    "run_intent": 0.259,
+    "turn_left": 0.411,
+    "turn_right": 0.382,
+    "walk_brutal": 0.508,
+    "walk_careful": 0.438,
+    "walk_hurried": 0.238,
+    "walk_oldman": 0.366,
+    "walk_standard": 0.267
+   },
+   "limit": "≥0.12"
+  },
+  {
+   "check": "ハンマー: ボーンの子にした位置の誤差(m)",
+   "ok": true,
+   "value": 2e-07,
+   "limit": "<0.0001"
+  },
+  {
+   "check": "両手の指を固定ポーズに焼いた(骨数 左右 各 5 指 × 4 節)",
+   "ok": true,
+   "value": 40,
+   "limit": "40"
+  },
+  {
+   "check": "握り: 指の関節と軸の最短距離 cm(右=柄の半径 1.2〜1.65＋指の厚み、左=懐中電灯 1.6＋指)",
+   "ok": true,
+   "value": {
+    "Right": 2.32,
+    "Left": 2.77
+   },
+   "limit": "右≥2.0・左≥2.3"
+  },
+  {
+   "check": "GLB サイズ(MB)",
+   "ok": true,
+   "value": 16.3,
+   "limit": "≤40"
+  },
+  {
+   "check": "帽子の追従(look_nervous 最大首振り: 頭頂〜帽子内側の距離の変化 mm)",
+   "ok": true,
+   "value": {
+    "frame": 21,
+    "head_turn_deg": 61.9,
+    "cap": -0.0,
+    "hair": -0.0
+   },
+   "limit": "±5"
+  },
+  {
+   "check": "髪の追従(同フレーム: うなじ〜髪の距離の変化 mm)",
+   "ok": true,
+   "value": -0.0,
+   "limit": "±5"
+  },
+  {
+   "check": "服の貫通(walk_careful 中間フレーム: 服の外に出た肌の頂点)",
+   "ok": true,
+   "value": {
+    "frame": 70,
+    "verts": 0
+   },
+   "limit": "0"
+  },
+  {
+   "check": "ハンマー: GLB の骨階層＋オフセットで再計算した握り位置と Blender の差(m)",
+   "ok": true,
+   "value": 1e-07,
+   "limit": "<0.0001"
+  },
+  {
+   "check": "ハンマー: オフセットの拡大率が 1(GLB の単位 m)",
+   "ok": true,
+   "value": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "limit": "1"
+  },
+  {
+   "check": "GLB 再読込: 三角形数",
+   "ok": true,
+   "value": 57879,
+   "limit": 57879
+  },
+  {
+   "check": "GLB 再読込: シェイプキー grin・attack",
+   "ok": true,
+   "value": [
+    "Basis",
+    "attack",
+    "grin"
+   ],
+   "limit": "grin, attack"
+  },
+  {
+   "check": "GLB 再読込: アクション数",
+   "ok": true,
+   "value": 14,
+   "limit": 14
+  },
+  {
+   "check": "GLB 再読込: 各アクションの長さ>0",
+   "ok": true,
+   "value": {
+    "attack_bash": 120.0,
+    "attack_downward": 68.0,
+    "door_open_in": 191.0,
+    "look_idle": 190.0,
+    "look_nervous": 188.0,
+    "react_surprised": 110.0,
+    "run_intent": 21.0,
+    "turn_left": 31.0,
+    "turn_right": 31.0,
+    "walk_brutal": 42.0,
+    "walk_careful": 138.0,
+    "walk_hurried": 26.0,
+    "walk_oldman": 38.0,
+    "walk_standard": 37.0
+   },
+   "limit": ">0"
+  },
+  {
+   "check": "GLB のアニメ名=ファイル名",
+   "ok": true,
+   "value": [
+    "attack_bash",
+    "attack_downward",
+    "door_open_in",
+    "look_idle",
+    "look_nervous",
+    "react_surprised",
+    "run_intent",
+    "turn_left",
+    "turn_right",
+    "walk_brutal",
+    "walk_careful",
+    "walk_hurried",
+    "walk_oldman",
+    "walk_standard"
+   ],
+   "limit": "ファイル名(拡張子なし)"
+  },
+  {
+   "check": "GLB 再読込: RightHand",
+   "ok": true,
+   "value": 65,
+   "limit": "あり"
+  }
+ ],
+ "hammer_fix": {
+  "attack_bash": {
+   "frames": [
+    1,
+    121
+   ],
+   "weighted": 68,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -43.9,
+    0.0
+   ],
+   "r_ext_deg": [
+    -13.2,
+    39.5
+   ],
+   "l_abd_deg": [
+    -32.0,
+    32.0
+   ],
+   "l_ext_deg": [
+    -60.0,
+    0.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.481,
+     0.46
+    ],
+    [
+     -0.481,
+     0.523
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.273,
+     0.221
+    ],
+    [
+     -0.353,
+     -0.044
+    ]
+   ],
+   "crossed": [
+    60,
+    0
+   ],
+   "dsup_deg": [
+    -5.0,
+    16.1,
+    40.8
+   ],
+   "ddev_deg": [
+    -11.4,
+    9.2,
+    35.0
+   ],
+   "head_lat_before": [
+    -0.143,
+    0.523
+   ],
+   "head_lat_after": [
+    0.137,
+    0.736
+   ],
+   "left_gap_before": [
+    0.125,
+    0.645
+   ],
+   "left_gap_after": [
+    0.318,
+    0.92
+   ],
+   "sup_after": [
+    -3.064,
+    90.086
+   ],
+   "dev_after": [
+    27.462,
+    40.939
+   ],
+   "d_up_after": [
+    -0.46,
+    1.0
+   ]
+  },
+  "attack_downward": {
+   "frames": [
+    1,
+    69
+   ],
+   "weighted": 7,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -42.1,
+    0.0
+   ],
+   "r_ext_deg": [
+    0.0,
+    28.7
+   ],
+   "l_abd_deg": [
+    -1.0,
+    6.4
+   ],
+   "l_ext_deg": [
+    -3.0,
+    0.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.381,
+     0.614
+    ],
+    [
+     -0.38,
+     0.614
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.223,
+     0.146
+    ],
+    [
+     -0.223,
+     0.138
+    ]
+   ],
+   "crossed": [
+    1,
+    0
+   ],
+   "dsup_deg": [
+    -10.7,
+    5.7,
+    40.0
+   ],
+   "ddev_deg": [
+    -13.4,
+    11.1,
+    60.0
+   ],
+   "head_lat_before": [
+    -0.142,
+    0.1
+   ],
+   "head_lat_after": [
+    0.171,
+    0.349
+   ],
+   "left_gap_before": [
+    0.176,
+    0.46
+   ],
+   "left_gap_after": [
+    0.293,
+    0.531
+   ],
+   "sup_after": [
+    21.475,
+    64.825
+   ],
+   "dev_after": [
+    24.328,
+    49.05
+   ],
+   "d_up_after": [
+    -0.37,
+    1.0
+   ]
+  },
+  "door_open_in": {
+   "frames": [
+    1,
+    192
+   ],
+   "weighted": 112,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -38.0,
+    0.0
+   ],
+   "r_ext_deg": [
+    0.0,
+    24.0
+   ],
+   "l_abd_deg": [
+    0.0,
+    35.0
+   ],
+   "l_ext_deg": [
+    -16.0,
+    0.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.178,
+     0.31
+    ],
+    [
+     -0.085,
+     0.31
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.386,
+     0.257
+    ],
+    [
+     -0.415,
+     0.157
+    ]
+   ],
+   "crossed": [
+    52,
+    0
+   ],
+   "dsup_deg": [
+    -15.0,
+    4.8,
+    45.0
+   ],
+   "ddev_deg": [
+    0.0,
+    22.7,
+    45.0
+   ],
+   "head_lat_before": [
+    -0.176,
+    0.168
+   ],
+   "head_lat_after": [
+    0.053,
+    0.387
+   ],
+   "left_gap_before": [
+    0.172,
+    0.437
+   ],
+   "left_gap_after": [
+    0.217,
+    0.678
+   ],
+   "sup_after": [
+    -36.088,
+    38.091
+   ],
+   "dev_after": [
+    26.053,
+    40.862
+   ],
+   "d_up_after": [
+    -0.54,
+    1.0
+   ]
+  },
+  "look_idle": {
+   "frames": [
+    1,
+    191
+   ],
+   "weighted": 191,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -38.0,
+    -26.0
+   ],
+   "r_ext_deg": [
+    20.0,
+    20.0
+   ],
+   "l_abd_deg": [
+    20.0,
+    35.0
+   ],
+   "l_ext_deg": [
+    -16.0,
+    -16.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.203,
+     0.108
+    ],
+    [
+     0.107,
+     0.315
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     0.013,
+     0.206
+    ],
+    [
+     -0.265,
+     -0.049
+    ]
+   ],
+   "crossed": [
+    191,
+    0
+   ],
+   "dsup_deg": [
+    -20.0,
+    3.7,
+    20.0
+   ],
+   "ddev_deg": [
+    35.0,
+    38.2,
+    45.0
+   ],
+   "head_lat_before": [
+    -0.14,
+    0.112
+   ],
+   "head_lat_after": [
+    0.067,
+    0.341
+   ],
+   "left_gap_before": [
+    0.048,
+    0.408
+   ],
+   "left_gap_after": [
+    0.182,
+    0.55
+   ],
+   "sup_after": [
+    -15.757,
+    22.997
+   ],
+   "dev_after": [
+    36.018,
+    40.913
+   ],
+   "d_up_after": [
+    -0.06,
+    0.69
+   ]
+  },
+  "look_nervous": {
+   "frames": [
+    1,
+    189
+   ],
+   "weighted": 189,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -8.0,
+    1.0
+   ],
+   "r_ext_deg": [
+    8.0,
+    12.0
+   ],
+   "l_abd_deg": [
+    -1.0,
+    1.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     0.075,
+     0.166
+    ],
+    [
+     0.068,
+     0.175
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.194,
+     -0.054
+    ],
+    [
+     -0.193,
+     -0.053
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    35.0,
+    41.6,
+    50.0
+   ],
+   "ddev_deg": [
+    50.0,
+    53.0,
+    55.0
+   ],
+   "head_lat_before": [
+    0.096,
+    0.217
+   ],
+   "head_lat_after": [
+    0.309,
+    0.411
+   ],
+   "left_gap_before": [
+    0.164,
+    0.292
+   ],
+   "left_gap_after": [
+    0.187,
+    0.398
+   ],
+   "sup_after": [
+    44.459,
+    50.983
+   ],
+   "dev_after": [
+    37.018,
+    40.964
+   ],
+   "d_up_after": [
+    0.14,
+    0.49
+   ]
+  },
+  "react_surprised": {
+   "frames": [
+    1,
+    111
+   ],
+   "weighted": 111,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -5.0,
+    -2.0
+   ],
+   "r_ext_deg": [
+    8.0,
+    12.0
+   ],
+   "l_abd_deg": [
+    -5.0,
+    5.0
+   ],
+   "l_ext_deg": [
+    -8.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     0.075,
+     0.119
+    ],
+    [
+     0.07,
+     0.13
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.26,
+     -0.006
+    ],
+    [
+     -0.274,
+     -0.055
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    20.0,
+    31.0,
+    55.0
+   ],
+   "ddev_deg": [
+    35.0,
+    55.4,
+    60.0
+   ],
+   "head_lat_before": [
+    0.109,
+    0.223
+   ],
+   "head_lat_after": [
+    0.309,
+    0.369
+   ],
+   "left_gap_before": [
+    0.103,
+    0.387
+   ],
+   "left_gap_after": [
+    0.161,
+    0.447
+   ],
+   "sup_after": [
+    21.451,
+    50.746
+   ],
+   "dev_after": [
+    31.029,
+    40.671
+   ],
+   "d_up_after": [
+    0.17,
+    0.67
+   ]
+  },
+  "run_intent": {
+   "frames": [
+    1,
+    22
+   ],
+   "weighted": 22,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -11.0,
+    11.0
+   ],
+   "r_ext_deg": [
+    40.0,
+    44.0
+   ],
+   "l_abd_deg": [
+    -2.0,
+    2.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     0.013,
+     0.072
+    ],
+    [
+     0.106,
+     0.291
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.132,
+     -0.052
+    ],
+    [
+     -0.133,
+     -0.059
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    -20.0,
+    -6.4,
+    5.0
+   ],
+   "ddev_deg": [
+    45.0,
+    54.3,
+    60.0
+   ],
+   "head_lat_before": [
+    0.094,
+    0.282
+   ],
+   "head_lat_after": [
+    0.08,
+    0.342
+   ],
+   "left_gap_before": [
+    0.091,
+    0.304
+   ],
+   "left_gap_after": [
+    0.259,
+    0.624
+   ],
+   "sup_after": [
+    -15.974,
+    -8.925
+   ],
+   "dev_after": [
+    29.184,
+    40.941
+   ],
+   "d_up_after": [
+    0.07,
+    0.97
+   ]
+  },
+  "turn_left": {
+   "frames": [
+    1,
+    32
+   ],
+   "weighted": 32,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -23.0,
+    -17.0
+   ],
+   "r_ext_deg": [
+    16.0,
+    16.0
+   ],
+   "l_abd_deg": [
+    -1.0,
+    -1.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.103,
+     -0.034
+    ],
+    [
+     0.138,
+     0.232
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.252,
+     -0.233
+    ],
+    [
+     -0.247,
+     -0.227
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    5.0,
+    8.4,
+    10.0
+   ],
+   "ddev_deg": [
+    50.0,
+    51.2,
+    55.0
+   ],
+   "head_lat_before": [
+    -0.105,
+    -0.009
+   ],
+   "head_lat_after": [
+    0.121,
+    0.265
+   ],
+   "left_gap_before": [
+    0.155,
+    0.21
+   ],
+   "left_gap_after": [
+    0.411,
+    0.495
+   ],
+   "sup_after": [
+    -15.561,
+    -0.953
+   ],
+   "dev_after": [
+    36.203,
+    40.988
+   ],
+   "d_up_after": [
+    -0.35,
+    -0.13
+   ]
+  },
+  "turn_right": {
+   "frames": [
+    1,
+    32
+   ],
+   "weighted": 32,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -20.0,
+    -17.0
+   ],
+   "r_ext_deg": [
+    16.0,
+    16.0
+   ],
+   "l_abd_deg": [
+    -1.0,
+    -1.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.09,
+     -0.074
+    ],
+    [
+     0.12,
+     0.171
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.244,
+     -0.225
+    ],
+    [
+     -0.238,
+     -0.219
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    5.0,
+    5.0,
+    5.0
+   ],
+   "ddev_deg": [
+    50.0,
+    50.0,
+    50.0
+   ],
+   "head_lat_before": [
+    -0.078,
+    -0.006
+   ],
+   "head_lat_after": [
+    0.127,
+    0.234
+   ],
+   "left_gap_before": [
+    0.149,
+    0.184
+   ],
+   "left_gap_after": [
+    0.382,
+    0.438
+   ],
+   "sup_after": [
+    -9.102,
+    21.26
+   ],
+   "dev_after": [
+    36.847,
+    39.448
+   ],
+   "d_up_after": [
+    -0.28,
+    -0.16
+   ]
+  },
+  "walk_brutal": {
+   "frames": [
+    1,
+    43
+   ],
+   "weighted": 43,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -41.0,
+    -29.0
+   ],
+   "r_ext_deg": [
+    16.0,
+    16.0
+   ],
+   "l_abd_deg": [
+    8.0,
+    8.0
+   ],
+   "l_ext_deg": [
+    -20.0,
+    -20.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.195,
+     0.142
+    ],
+    [
+     0.136,
+     0.384
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.202,
+     0.082
+    ],
+    [
+     -0.341,
+     -0.052
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    -25.0,
+    8.8,
+    30.0
+   ],
+   "ddev_deg": [
+    20.0,
+    39.1,
+    50.0
+   ],
+   "head_lat_before": [
+    -0.194,
+    0.29
+   ],
+   "head_lat_after": [
+    0.037,
+    0.38
+   ],
+   "left_gap_before": [
+    0.093,
+    0.387
+   ],
+   "left_gap_after": [
+    0.508,
+    0.618
+   ],
+   "sup_after": [
+    -15.528,
+    17.834
+   ],
+   "dev_after": [
+    35.782,
+    40.997
+   ],
+   "d_up_after": [
+    -0.0,
+    0.42
+   ]
+  },
+  "walk_careful": {
+   "frames": [
+    1,
+    139
+   ],
+   "weighted": 139,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -1.0,
+    1.0
+   ],
+   "r_ext_deg": [
+    0.0,
+    0.0
+   ],
+   "l_abd_deg": [
+    -1.0,
+    1.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     0.189,
+     0.366
+    ],
+    [
+     0.209,
+     0.406
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.346,
+     -0.112
+    ],
+    [
+     -0.345,
+     -0.108
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    -25.0,
+    -14.4,
+    0.0
+   ],
+   "ddev_deg": [
+    30.0,
+    39.0,
+    50.0
+   ],
+   "head_lat_before": [
+    0.008,
+    0.182
+   ],
+   "head_lat_after": [
+    0.088,
+    0.328
+   ],
+   "left_gap_before": [
+    0.362,
+    0.549
+   ],
+   "left_gap_after": [
+    0.438,
+    0.639
+   ],
+   "sup_after": [
+    -38.332,
+    -20.875
+   ],
+   "dev_after": [
+    33.955,
+    40.938
+   ],
+   "d_up_after": [
+    0.62,
+    0.96
+   ]
+  },
+  "walk_hurried": {
+   "frames": [
+    1,
+    27
+   ],
+   "weighted": 27,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -35.0,
+    -29.0
+   ],
+   "r_ext_deg": [
+    8.0,
+    8.0
+   ],
+   "l_abd_deg": [
+    20.0,
+    20.0
+   ],
+   "l_ext_deg": [
+    -16.0,
+    -16.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.137,
+     -0.043
+    ],
+    [
+     0.133,
+     0.189
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     0.008,
+     0.177
+    ],
+    [
+     -0.163,
+     -0.052
+    ]
+   ],
+   "crossed": [
+    27,
+    0
+   ],
+   "dsup_deg": [
+    15.0,
+    15.0,
+    15.0
+   ],
+   "ddev_deg": [
+    50.0,
+    51.1,
+    55.0
+   ],
+   "head_lat_before": [
+    -0.17,
+    0.085
+   ],
+   "head_lat_after": [
+    0.111,
+    0.211
+   ],
+   "left_gap_before": [
+    0.096,
+    0.565
+   ],
+   "left_gap_after": [
+    0.238,
+    0.669
+   ],
+   "sup_after": [
+    -18.993,
+    -0.875
+   ],
+   "dev_after": [
+    36.147,
+    40.73
+   ],
+   "d_up_after": [
+    -0.47,
+    0.57
+   ]
+  },
+  "walk_oldman": {
+   "frames": [
+    1,
+    39
+   ],
+   "weighted": 39,
+   "elbow_open_deg": 50.3,
+   "r_abd_deg": [
+    -23.0,
+    -23.0
+   ],
+   "r_ext_deg": [
+    12.0,
+    12.0
+   ],
+   "l_abd_deg": [
+    -1.0,
+    -1.0
+   ],
+   "l_ext_deg": [
+    -0.0,
+    -0.0
+   ],
+   "r_grip_lat": [
+    [
+     0.044,
+     0.092
+    ],
+    [
+     0.14,
+     0.176
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.167,
+     -0.129
+    ],
+    [
+     -0.166,
+     -0.128
+    ]
+   ],
+   "crossed": [
+    0,
+    0
+   ],
+   "dsup_deg": [
+    0.0,
+    4.7,
+    5.0
+   ],
+   "ddev_deg": [
+    0.0,
+    3.1,
+    5.0
+   ],
+   "head_lat_before": [
+    0.084,
+    0.174
+   ],
+   "head_lat_after": [
+    0.099,
+    0.176
+   ],
+   "left_gap_before": [
+    0.192,
+    0.244
+   ],
+   "left_gap_after": [
+    0.366,
+    0.425
+   ],
+   "sup_after": [
+    -30.888,
+    -8.02
+   ],
+   "dev_after": [
+    37.045,
+    40.908
+   ],
+   "d_up_after": [
+    0.39,
+    0.55
+   ]
+  },
+  "walk_standard": {
+   "frames": [
+    1,
+    38
+   ],
+   "weighted": 38,
+   "elbow_open_deg": 0.0,
+   "r_abd_deg": [
+    -35.0,
+    -29.0
+   ],
+   "r_ext_deg": [
+    20.0,
+    20.0
+   ],
+   "l_abd_deg": [
+    23.0,
+    23.0
+   ],
+   "l_ext_deg": [
+    -4.0,
+    -4.0
+   ],
+   "r_grip_lat": [
+    [
+     -0.139,
+     -0.077
+    ],
+    [
+     0.159,
+     0.261
+    ]
+   ],
+   "l_grip_lat": [
+    [
+     -0.042,
+     0.085
+    ],
+    [
+     -0.194,
+     -0.054
+    ]
+   ],
+   "crossed": [
+    38,
+    0
+   ],
+   "dsup_deg": [
+    5.0,
+    5.0,
+    5.0
+   ],
+   "ddev_deg": [
+    30.0,
+    37.0,
+    40.0
+   ],
+   "head_lat_before": [
+    -0.23,
+    -0.089
+   ],
+   "head_lat_after": [
+    0.085,
+    0.285
+   ],
+   "left_gap_before": [
+    0.068,
+    0.342
+   ],
+   "left_gap_after": [
+    0.267,
+    0.488
+   ],
+   "sup_after": [
+    -32.765,
+    -18.877
+   ],
+   "dev_after": [
+    36.173,
+    40.206
+   ],
+   "d_up_after": [
+    -0.25,
+    0.56
+   ]
+  }
+ }
+}
