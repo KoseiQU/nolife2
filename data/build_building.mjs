@@ -1209,7 +1209,7 @@ function build() {
 
   const building = {
     meta: {
-      name: 'サンクレスト学生会館',
+      name: 'ノーライフ学生会館',
       floors: 7,
       phantomFloor: 8,
       unit: 'm',
