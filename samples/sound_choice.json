@@ -8,7 +8,7 @@
       "pick": "A"
     },
     "pl_flashlight": {
-      "pick": "redo",
+      "pick": "none",
       "note": "カチッという音"
     },
     "pl_crouch": {
@@ -16,7 +16,7 @@
       "note": "そもそもしゃがむ要素がいらない（しゃがみ廃止。Ctrl は 312 の潜水専用に）"
     },
     "door_wood": {
-      "pick": "redo",
+      "pick": "none",
       "note": "がちゃっというような単純な音でいい"
     },
     "amb_corridor": {
@@ -61,7 +61,7 @@
       "note": "なにかぼそぼそ呟いてる"
     },
     "enemy_step_walk": {
-      "pick": "redo",
+      "pick": "A",
       "note": "金属音感をなくして"
     },
     "enemy_step_run": {
@@ -69,7 +69,7 @@
       "note": "もっと大きい音でドタバタ恐怖感を煽る"
     },
     "enemy_breath_close": {
-      "pick": "redo",
+      "pick": "none",
       "note": "みいつけたで、ただまだ機械音感がする"
     },
     "enemy_breath_door": {
@@ -81,7 +81,7 @@
     },
     "room_door_rattle": {
       "pick": "redo",
-      "note": "機械音感をなくして"
+      "note": "扉のガタガタ演出自体を無くす"
     },
     "enemy_door_latch": {
       "pick": "none"
@@ -91,7 +91,7 @@
       "note": "もっと爆発音のような感じ"
     },
     "enemy_scream": {
-      "pick": "redo",
+      "pick": "none",
       "note": "機械音感をなくして"
     },
     "enemy_hit": {
@@ -140,24 +140,6 @@
       "pick": "A"
     },
     "key_unlock": {
-      "pick": "none"
-    },
-    "amb_x312_above": {
-      "pick": "none"
-    },
-    "x312_dive": {
-      "pick": "none"
-    },
-    "amb_x312_under": {
-      "pick": "none"
-    },
-    "pl_step_water": {
-      "pick": "none"
-    },
-    "x312_gasp": {
-      "pick": "none"
-    },
-    "x312_drown": {
       "pick": "none"
     },
     "amb_x105": {
@@ -221,6 +203,24 @@
     "ending_gate": {
       "pick": "C",
       "note": "ジャリジャリ感をなくして"
+    },
+    "amb_x312_above": {
+      "pick": "none"
+    },
+    "x312_dive": {
+      "pick": "none"
+    },
+    "amb_x312_under": {
+      "pick": "none"
+    },
+    "pl_step_water": {
+      "pick": "none"
+    },
+    "x312_gasp": {
+      "pick": "none"
+    },
+    "x312_drown": {
+      "pick": "none"
     }
   }
 }
