@@ -24,239 +24,9 @@ export const NORM = {
 };
 const db = (d) => Math.pow(10, d / 20);
 
-function rng(seed) {
-  let a = seed >>> 0 || 1;
-  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
-
-// ================================================================ 声の素材(P4a-3)
-// 管理人の仮声は macOS の say(日本語音声)で読み上げた wav(assets/audio/tts/<ID>.wav。台詞と ID は docs/lines.md)を素材にし、
-// Kit.vox でピッチ・フィルタ・歪み・残響を掛けて鳴らす。ユーザーの録音が来たら同じ名前の wav を差し替えるだけで全候補に効く。
-// render は同期なので、声を使う候補(cand.tts に ID の列)は先に loadTTS で読み込む(renderCandidate と prepare がやる)。
-const TTS = new Map();
-const TTS_DIR = new URL('../assets/audio/tts/', import.meta.url);
-let ttsDecoder = null;
-export async function loadTTS(names = []) {
-  for (const nm of names) {
-    if (TTS.has(nm)) continue;
-    const r = await fetch(new URL(nm + '.wav', TTS_DIR), { cache: 'no-store' });
-    if (!r.ok) throw new Error('tts ' + nm + ': HTTP ' + r.status);
-    const ab = await r.arrayBuffer();
-    if (!ttsDecoder) ttsDecoder = new OfflineAudioContext(1, 1, SR);
-    TTS.set(nm, await ttsDecoder.decodeAudioData(ab));
-  }
-}
-export const prepare = (cand) => loadTTS(cand.tts || []);
-const TTS_REV = new Map();
-function ttsBuf(ctx, nm, rev) {
-  const b = TTS.get(nm);
-  if (!b) throw new Error('tts not loaded: ' + nm + '(先に loadTTS / prepare)');
-  if (!rev) return b;
-  if (!TTS_REV.has(nm)) { const r = ctx.createBuffer(1, b.length, b.sampleRate), s = b.getChannelData(0), d = r.getChannelData(0); for (let i = 0; i < s.length; i++) d[i] = s[s.length - 1 - i]; TTS_REV.set(nm, r); }
-  return TTS_REV.get(nm);
-}
-
-// ================================================================ 合成の道具箱
-// t は候補の頭からの秒。to は繋ぎ先(既定 = 候補の出口)。
-export class Kit {
-  constructor(ctx, dest, t0 = 0, seed = 1) {
-    this.c = ctx; this.t0 = t0; this.r = rng(seed); this.sr = ctx.sampleRate;
-    this.out = ctx.createGain(); this.out.connect(dest);
-    this._nb = {};
-  }
-  rnd(a = 0, b = 1) { return a + (b - a) * this.r(); }
-  T(t) { return this.t0 + Math.max(0, t); }
-  gain(v = 1, to) { const g = this.c.createGain(); g.gain.value = v; if (to) g.connect(to); return g; }
-  filt(type, f, q = 0.707, to, gdb = 0) { const b = this.c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; b.gain.value = gdb; if (to) b.connect(to); return b; }
-  // こもり(壁越し・水中): lowpass を挟んだ入口を返す
-  muf(f = 500, vol = 1, to = this.out) { return this.filt('lowpass', f, 0.7, this.gain(vol, to)); }
-  // 残響: 種付きノイズの IR。rt = 残響時間(−60dB までの秒)、damp = 高域の減り(0..1)
-  verb(rt = 1.5, wet = 0.4, damp = 0.5, to = this.out) {
-    const n = Math.ceil(this.sr * rt), b = this.c.createBuffer(1, n, this.sr), d = b.getChannelData(0);
-    let lp = 0;
-    for (let i = 0; i < n; i++) { const w = this.r() * 2 - 1; lp += (w - lp) * (1 - damp * (i / n) * 0.95); d[i] = lp * Math.exp((-6.9 * i) / n); }
-    const cv = this.c.createConvolver(); cv.buffer = b; cv.connect(this.gain(wet, to));
-    return cv;
-  }
-  // 反響(遠い壁・シャフト)
-  echo(time = 0.25, fb = 0.35, f = 2000, to = this.out) {
-    const dl = this.c.createDelay(2); dl.delayTime.value = time;
-    const g = this.gain(fb), lp = this.filt('lowpass', f);
-    dl.connect(lp); lp.connect(g); g.connect(dl); lp.connect(to);
-    return dl;
-  }
-  // 送り: node を dry(to)と wet(fx)の両方へ
-  split(to, fx, amt = 0.5) { const g = this.gain(1, to); g.connect(this.gain(amt, fx)); return g; }
-  ramp(param, t, dur, v1, v2, exp = true) {
-    param.setValueAtTime(v1, this.T(t));
-    if (exp) param.exponentialRampToValueAtTime(Math.max(1e-4, v2), this.T(t + dur)); else param.linearRampToValueAtTime(v2, this.T(t + dur));
-  }
-  // 包絡: 打撃型(立ち上がり a、その後 d 秒で −35dB へ)
-  penv(t, a, d, v, to) {
-    const g = this.gain(0, to);
-    g.gain.setValueAtTime(0, this.T(t)); g.gain.linearRampToValueAtTime(v, this.T(t + a)); g.gain.setTargetAtTime(0, this.T(t + a), Math.max(0.002, d / 4));
-    return g;
-  }
-  // 包絡: 形(u=0..1 → 0..1)を dur 秒にわたって
-  shape(t, dur, v, fn, to, n = 128) {
-    const g = this.gain(0, to), arr = new Float32Array(n);
-    for (let i = 0; i < n; i++) arr[i] = Math.max(0, fn(i / (n - 1))) * v;
-    g.gain.setValueAtTime(0, this.T(t)); g.gain.setValueCurveAtTime(arr, this.T(t) + 1e-4, Math.max(0.01, dur));
-    return g;
-  }
-  noiseBuf(color = 'white') {
-    if (this._nb[color]) return this._nb[color];
-    const n = this.sr * 3, b = this.c.createBuffer(1, n, this.sr), d = b.getChannelData(0);
-    let b0 = 0, b1 = 0, b2 = 0, br = 0;
-    for (let i = 0; i < n; i++) {
-      const w = this.r() * 2 - 1;
-      if (color === 'pink') { b0 = 0.99765 * b0 + w * 0.099046; b1 = 0.963 * b1 + w * 0.2965164; b2 = 0.57 * b2 + w * 1.0526913; d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.25; }
-      else if (color === 'brown') { br = (br + 0.02 * w) / 1.02; d[i] = br * 3.5; }
-      else d[i] = w;
-    }
-    return (this._nb[color] = b);
-  }
-  buf(dur, fill) { const n = Math.max(1, Math.ceil(dur * this.sr)), b = this.c.createBuffer(1, n, this.sr); fill(b.getChannelData(0), this.sr, n); return b; }
-  play(buffer, t, to = this.out, rate = 1) { const s = this.c.createBufferSource(); s.buffer = buffer; s.playbackRate.value = rate; s.connect(to); s.start(this.T(t)); return s; }
-
-  // ノイズの一打/うねり。env: 'perc'(既定)| 'swell'(sin^p の山)| 'flat'(dur の間一定、端だけ 10ms)
-  nz(t, dur, o = {}) {
-    const { color = 'white', type = 'bandpass', f = 1000, f2, q = 1, vol = 0.5, a = 0.002, env = 'perc', p = 1.5, to = this.out, rate = 1 } = o;
-    const s = this.c.createBufferSource(); s.buffer = this.noiseBuf(color); s.loop = true; s.playbackRate.value = rate;
-    const fl = this.filt(type, f, q);
-    if (f2) this.ramp(fl.frequency, t, env === 'perc' ? dur * 0.6 : dur, f, f2);
-    const g = env === 'perc' ? this.penv(t, a, dur, vol, to)
-      : env === 'flat' ? this.shape(t, dur, vol, (u) => Math.min(1, u * dur / 0.01, (1 - u) * dur / 0.01), to)
-        : this.shape(t, dur, vol, (u) => Math.pow(Math.sin(Math.PI * u), p), to);
-    s.connect(fl); fl.connect(g);
-    s.start(this.T(t), this.rnd(0, 2.5)); s.stop(this.T(t + dur * (env === 'perc' ? 1.6 : 1) + 0.05));
-    return g;
-  }
-  // 音程のある一打/持続(f→f2 の指数スイープ)
-  tn(t, dur, o = {}) {
-    const { type = 'sine', f = 440, f2, vol = 0.3, a = 0.003, env = 'perc', p = 1.5, to = this.out, lpf, vib, vibd = 0.01 } = o;
-    const os = this.c.createOscillator(); os.type = type;
-    if (f2) this.ramp(os.frequency, t, dur, f, f2); else os.frequency.value = f;
-    if (vib) { const l = this.c.createOscillator(); l.frequency.value = vib; const lg = this.gain(f * vibd); l.connect(lg); lg.connect(os.frequency); l.start(this.T(t)); l.stop(this.T(t + dur * 1.6 + 0.1)); }
-    const g = env === 'perc' ? this.penv(t, a, dur, vol, to)
-      : env === 'flat' ? this.shape(t, dur, vol, (u) => Math.min(1, u * dur / 0.02, (1 - u) * dur / 0.05), to)
-        : this.shape(t, dur, vol, (u) => Math.pow(Math.sin(Math.PI * u), p), to);
-    if (lpf) { const l = this.filt('lowpass', lpf, 0.7); os.connect(l); l.connect(g); } else os.connect(g);
-    os.start(this.T(t)); os.stop(this.T(t + dur * (env === 'perc' ? 1.6 : 1) + 0.05));
-    return g;
-  }
-  // 固有振動の和(金属・ガラス・陶器・ベル)。modes = [[周波数, 減衰秒, 振幅], ...]
-  modal(t, modes, vol = 0.3, to = this.out, strike = 0.15) {
-    for (const [f, d, a] of modes) this.tn(t, d, { f, vol: vol * a, a: 0.0015, to });
-    if (strike) this.nz(t, 0.015, { type: 'highpass', f: 2500, vol: vol * strike, to });
-  }
-  // 粒(紙・砂利・泡立ち・パチパチ): rate 粒/秒、len 粒の長さ(秒)
-  grains(t, dur, o = {}) {
-    const { rate = 60, len = 0.004, f = 3000, q = 0.8, type = 'bandpass', vol = 0.4, p = 1, to = this.out, tone = 0 } = o;
-    const b = this.buf(dur, (d, sr, n) => {
-      let x = 0;
-      while (x < dur) {
-        const i0 = (x * sr) | 0, L = Math.max(4, (len * (0.5 + this.r()) * sr) | 0), amp = (0.3 + 0.7 * this.r()) * Math.pow(Math.sin(Math.PI * Math.min(1, x / dur)), p);
-        const ft = tone ? tone * (0.7 + 0.6 * this.r()) : 0;
-        for (let k = 0; k < L && i0 + k < n; k++) { const e = Math.exp((-5 * k) / L); d[i0 + k] += amp * e * (ft ? Math.sin((2 * Math.PI * ft * k) / sr) : this.r() * 2 - 1); }
-        x += (-Math.log(1 - this.r() * 0.999) / rate);
-      }
-    });
-    const fl = this.filt(type, f, q, this.gain(vol, to));
-    this.play(b, t, fl);
-  }
-  // 摩擦の軋み(木・蝶番・鉄): スティックスリップ。粒(「ギ」の一つ)ごとに f(と f2)で減衰振動する。
-  //  rate→rate2 = 粒の速さ(毎秒。遅いほど「ギ…ギ…」、速いほど「ギーー」)、q = 響きの長さ、jit = 粒の間隔の揺らぎ
-  creak(t, dur, o = {}) {
-    const { rate = 70, rate2, jit = 0.35, f = 900, q = 5, f2 = 0, vol = 0.5, p = 0.6, to = this.out } = o;
-    const b = this.buf(dur, (d, sr, n) => {
-      const tau = (q / (Math.PI * f)) * sr, L = Math.min(Math.ceil(tau * 5), sr * 0.2);
-      let x = 0;
-      while (x < dur) {
-        const u = x / dur, rr = rate * (1 - u) + (rate2 ?? rate) * u, i = (x * sr) | 0, amp = Math.pow(Math.sin(Math.PI * u), p) * (0.4 + 0.6 * this.r());
-        const fa = f * (1 + 0.04 * (this.r() - 0.5)), fb = f2 * (1 + 0.04 * (this.r() - 0.5)), w1 = (2 * Math.PI * fa) / sr, w2 = (2 * Math.PI * fb) / sr;
-        for (let k = 0; k < L && i + k < n; k++) {
-          const e = Math.exp(-k / tau);
-          d[i + k] += amp * (e * (Math.sin(w1 * k) + (f2 ? 0.6 * Math.sin(w2 * k) : 0)) + (this.r() * 2 - 1) * Math.exp(-k / 6) * 0.3);
-        }
-        x += (1 / rr) * (1 + jit * (this.r() * 2 - 1));
-      }
-    });
-    this.play(b, t, this.filt('highpass', 120, 0.7, this.gain(vol, to)));
-  }
-  // 声(喉): のこぎり波 → 歪み → フォルマントの並列 bandpass。fc(u) は f0 の倍率の曲線
-  voice(t, dur, o = {}) {
-    const { f0 = 120, fc = () => 1, vib = 5, vibd = 0.01, form = [[700, 6, 1], [1150, 8, 0.6], [2700, 10, 0.25]], vol = 0.3, drive = 2, breath = 0.15, a = 0.05, rel = 0.3, to = this.out, gate } = o;
-    const os = this.c.createOscillator(); os.type = 'sawtooth';
-    const arr = new Float32Array(128); for (let i = 0; i < 128; i++) arr[i] = f0 * fc(i / 127);
-    os.frequency.setValueAtTime(arr[0], this.T(t)); os.frequency.setValueCurveAtTime(arr, this.T(t) + 1e-4, dur);
-    const l = this.c.createOscillator(); l.frequency.value = vib; const lg = this.gain(f0 * vibd); l.connect(lg); lg.connect(os.frequency);
-    const ws = this.c.createWaveShaper(), cv = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = (i / 1023) * 2 - 1; cv[i] = Math.tanh(x * drive); } ws.curve = cv;
-    const env = this.shape(t, dur, vol, (u) => Math.min(1, (u * dur) / a, ((1 - u) * dur) / rel) * (gate ? gate(u) : 1), to);
-    os.connect(ws);
-    for (const [f, q, g] of form) { const bp = this.filt('bandpass', f, q); ws.connect(bp); bp.connect(this.gain(g, env)); }
-    os.start(this.T(t)); l.start(this.T(t)); os.stop(this.T(t + dur + 0.05)); l.stop(this.T(t + dur + 0.05));
-    if (breath) this.nz(t, dur, { color: 'pink', f: form[0][0] * 1.6, q: 0.9, vol: vol * breath * 3, env: 'swell', p: 0.5, to });
-  }
-  // 歪み(飽和)の入口を返す。drive = 歪みの強さ(1 でほぼ素通り、8 で強く割れる)。後ろに lowpass を挟んで耳障りな高域を落とす
-  sat(drive = 3, to = this.out, lp = 6000) {
-    const ws = this.c.createWaveShaper(), cv = new Float32Array(2048), k = Math.tanh(drive);
-    for (let i = 0; i < 2048; i++) { const x = (i / 2047) * 2 - 1; cv[i] = Math.tanh(x * drive) / k; }
-    ws.curve = cv; ws.oversample = '2x'; ws.connect(this.filt('lowpass', lp, 0.7, to));
-    return ws;
-  }
-  // 声の素材を鳴らす(P4a-3)。name = assets/audio/tts の ID。
-  //  rate = 再生速度(=音程と速さ。0.6〜0.8 で低く遅い男声、1.2 以上で上ずった叫び)、rev = 逆再生(意味の取れない呟き)
-  //  from/len = 素材の切り出し(素材の秒)。loop = [s0, s1] 素材のその区間を繰り返して hold 秒まで伸ばす(叫びの母音を伸ばす)
-  //  cents(u) = 音程の曲線(セント、u=0..1)、jit = 音程の揺らぎ(セント。合成音声の平らさを崩す)、vib/vibd = ビブラート(Hz/セント)
-  //  hp/lp = フィルタ、drive = 歪み(0 で無し)、rasp = 声でノイズを変調した「ざらつき・かすれ」の量、a/rel = 頭と尻のフェード
-  vox(t, name, o = {}) {
-    const { rate = 0.75, rev = false, from = 0, len, loop, hold = 0, vol = 0.8, to = this.out, cents, jit = 0, jitHz = 7, vib = 0, vibd = 0, hp = 90, lp = 0, drive = 0, rasp = 0, raspF = 2600, a = 0.012, rel = 0.12 } = o;
-    const buf = ttsBuf(this.c, name, rev);
-    const srcLen = Math.min(len ?? Infinity, buf.duration - from), dur = loop ? hold : srcLen / rate;
-    const s = this.c.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate;
-    if (loop) { s.loop = true; s.loopStart = loop[0]; s.loopEnd = loop[1]; }
-    if (cents || jit || vib) {
-      const n = Math.max(32, Math.ceil(dur * 200)), arr = new Float32Array(n), K = Math.ceil(dur * jitHz) + 3, tg = [];
-      for (let k = 0; k < K; k++) tg.push((this.r() * 2 - 1) * jit);
-      const vph = this.r() * 6.28;
-      for (let i = 0; i < n; i++) {
-        const u = i / (n - 1), x = u * dur * jitHz, k = Math.floor(x), f = x - k, sm = f * f * (3 - 2 * f);
-        arr[i] = (cents ? cents(u) : 0) + tg[k] + (tg[k + 1] - tg[k]) * sm + (vib ? vibd * Math.sin(vph + 2 * Math.PI * vib * u * dur) : 0);
-      }
-      s.detune.setValueAtTime(arr[0], this.T(t)); s.detune.setValueCurveAtTime(arr, this.T(t) + 1e-4, dur);
-    }
-    const env = this.shape(t, dur, vol, (u) => Math.min(1, (u * dur) / a, ((1 - u) * dur) / rel), to);
-    let node = this.filt('highpass', hp, 0.7);
-    s.connect(node);
-    if (lp) { const l = this.filt('lowpass', lp, 0.7); node.connect(l); node = l; }
-    if (drive) { const pre = this.gain(1.6); node.connect(pre); const post = this.gain(0.7, env); pre.connect(this.sat(drive, post, lp || 7000)); } else node.connect(env);
-    if (rasp) {
-      const nsrc = this.c.createBufferSource(); nsrc.buffer = this.noiseBuf('white'); nsrc.loop = true;
-      const vca = this.gain(0); nsrc.connect(vca); node.connect(this.gain(rasp * 3, vca.gain));
-      vca.connect(this.filt('bandpass', raspF, 0.6, env));
-      nsrc.start(this.T(t), this.rnd(0, 2.5)); nsrc.stop(this.T(t + dur + 0.05));
-    }
-    if (loop) s.start(this.T(t), from); else s.start(this.T(t), from, srcLen);
-    s.stop(this.T(t + dur + 0.05));
-    return dur;
-  }
-  // 環境の床(ループ前提のノイズの層)。lfo = [速さHz, 深さ0..1] のうねり、fade = 頭と尻のフェード秒
-  bed(dur, o = {}) {
-    const { color = 'pink', type = 'lowpass', f = 400, q = 0.7, vol = 0.3, lfo, fade = 0.6, to = this.out, t = 0 } = o;
-    const s = this.c.createBufferSource(); s.buffer = this.noiseBuf(color); s.loop = true;
-    const fl = this.filt(type, f, q);
-    const g = this.shape(t, dur, vol, (u) => Math.min(1, (u * dur) / fade, ((1 - u) * dur) / fade), to);
-    if (lfo) {
-      const m = this.gain(1 - lfo[1] / 2); const l = this.c.createOscillator(); l.frequency.value = lfo[0];
-      const lg = this.gain(lfo[1] / 2); l.connect(lg); lg.connect(m.gain); l.start(this.T(t)); l.stop(this.T(t + dur + 0.05));
-      s.connect(fl); fl.connect(m); m.connect(g);
-    } else { s.connect(fl); fl.connect(g); }
-    s.start(this.T(t), this.rnd(0, 2.5)); s.stop(this.T(t + dur + 0.05));
-    return fl;
-  }
-}
+import { Kit, rng, hash, loadTTS, prepare, ttsBuf } from '../src/audio_kit.js';
+import { VOICE } from '../src/audio_voice.js';   // P4b: ゲームと共有する声の場面の加工   // P4b: Kit と声の素材の読み込みは src/audio_kit.js へ移した(ゲームの声の加工と共有)
+export { Kit, loadTTS, prepare };
 
 // ================================================================ よく使う形
 function walk(K, n, gap, fn, jit = 0.07, t0 = 0.15) { let t = t0; for (let i = 0; i < n; i++) { fn(t, i, i % 2 ? 0.82 : 1); t += gap * (1 + K.rnd(-jit, jit)); } }
@@ -437,6 +207,76 @@ function P(id, name, dur, desc, fn, kind = 'sfx') { return { id, name, dur, desc
 // 声の素材を使う候補(P4a-3)。tts = 使う assets/audio/tts の ID の列(描く前に読み込む)
 function PV(id, name, dur, desc, tts, fn, kind = 'sfx') { return { id, name, dur, desc, fn, kind, tts }; }
 
+// ---------------------------------------------------------------- P4b の道具(3 周目・調整)
+// 金属の鳴りを持たない重い一歩(ゴム・革の靴底)。踵の鈍い「ドッ」＋床の沈み＋靴底の擦れ。音程のある成分は低い胴だけ(3 周目 enemy_step_walk「金属音感をなくして」)
+function softStep(K, t, o = {}) {
+  const { vol = 0.8, body = 90, floor = 55, heel = 700, scuff = 0.35, drag = 0, creak = 0, to = K.out } = o;
+  const j = () => K.rnd(0.92, 1.08), v = vol * K.rnd(0.85, 1.1);
+  K.nz(t, 0.025, { color: 'pink', type: 'lowpass', f: heel * j(), vol: v * 0.9, a: 0.001, to });       // 踵が床を叩く鈍い面
+  K.nz(t, 0.012, { color: 'pink', type: 'bandpass', f: 1300 * j(), q: 0.7, vol: v * 0.2, to });         // 靴底の縁(乾いた成分を少しだけ)
+  K.tn(t, 0.08, { f: body * 1.6 * j(), f2: body, vol: v * 0.65, to });
+  K.tn(t + 0.004, 0.2, { f: floor * j(), f2: floor * 0.85, vol: v * 0.32, to });
+  K.nz(t, 0.14, { color: 'brown', type: 'lowpass', f: 240, vol: v * 0.55, to });                        // 体重の沈み
+  const tt = t + 0.12 * K.rnd(0.85, 1.25);                                                            // 爪先(柔らかく)
+  K.nz(tt, 0.02, { color: 'pink', type: 'lowpass', f: heel * 1.3, vol: v * 0.3, to }); K.tn(tt, 0.05, { f: body * 1.3, f2: body, vol: v * 0.25, to });
+  if (K.r() < scuff) K.nz(t + 0.04, K.rnd(0.07, 0.14), { color: 'pink', f: 1100, q: 0.6, vol: v * 0.1, env: 'swell', to });
+  if (drag) K.nz(t + 0.1, drag, { color: 'pink', f: 750, f2: 500, q: 0.7, vol: v * 0.16, env: 'swell', p: 0.8, to });
+  if (creak && K.r() < creak) K.creak(t + 0.03, 0.12, { rate: 140, rate2: 90, f: 520, q: 3, vol: v * 0.08, to });   // 革のきしみ(ごく小さく)
+}
+// 追跡の一歩(採用 enemy_step_run C の調整「もっと大きい音でドタバタ」): 重い踏み込み＋床を踏み鳴らす低音＋ときどき二度踏み＋周りの物のカタつき
+function runStomp(K, t, v = 1, to = K.out, dbl = null) {
+  heavyStep(K, t, { vol: 1.15 * v, body: 80, floor: 48, roll: 0.05, scuff: 0.5, to });
+  K.tn(t, 0.32, { f: 48, f2: 34, vol: 0.6 * v, to });                                                  // 床を踏み鳴らす「ドン」
+  K.nz(t, 0.16, { color: 'brown', type: 'lowpass', f: 320, vol: 0.7 * v, a: 0.001, to });
+  if (dbl ?? K.r() < 0.3) heavyStep(K, t + K.rnd(0.06, 0.09), { vol: 0.55 * v, body: 88, floor: 54, roll: 0.04, to });   // つまずくような二度踏み
+  if (K.r() < 0.5) for (let k = 0; k < 3; k++) K.modal(t + 0.02 + k * K.rnd(0.02, 0.035), [[K.rnd(1400, 3000), 0.03, 1]], 0.05 * v, to, 0.2);   // 周りの物がカタつく
+}
+// 小さなスイッチの「カチッ」(押し込みの「カ」と戻りの「チッ」)
+function click(K, t, v = 0.5, o = {}) {
+  const { f = 3000, body = 300, ring = 0, gap = 0.022, to = K.out } = o;
+  K.nz(t, 0.003, { type: 'highpass', f: f * 1.2, vol: v, a: 0.0003, to });
+  K.modal(t, [[f, 0.012, 1], [f * 1.63, 0.008, 0.5]], v * 0.3, to, 0);
+  K.tn(t, 0.02, { f: body * 1.3, f2: body, vol: v * 0.25, to });
+  K.nz(t + gap, 0.0025, { type: 'highpass', f: f * 1.5, vol: v * 0.6, a: 0.0003, to });
+  K.modal(t + gap, [[f * 1.25, 0.01, 1]], v * 0.2, to, 0);
+  if (ring) K.modal(t + gap, [[ring, 0.05, 1], [ring * 1.5, 0.03, 0.5]], v * 0.08, to, 0);
+}
+// 木の扉の胴を叩く(体当たり・揺さぶり)。音程のある成分は扉板の低い鳴りだけで、毎回ゆらす(機械的な繰り返しにしない)
+function doorHit(K, t, v = 0.6, to = K.out) {
+  knock(K, t, { f: K.rnd(85, 115), d: 0.13, vol: v, nf: 800, nq: 0.8, nd: 0.025, nv: v * 0.35, to });
+  K.modal(t, [[K.rnd(165, 195), 0.16, 1], [K.rnd(320, 360), 0.1, 0.55], [K.rnd(600, 680), 0.06, 0.3]], v * 0.4, to, 0.2);
+  K.nz(t, 0.09, { color: 'brown', type: 'lowpass', f: 380, vol: v * 0.6, to });
+  if (K.r() < 0.6) K.modal(t + K.rnd(0.005, 0.02), [[K.rnd(1500, 2400), 0.03, 1], [K.rnd(3000, 3800), 0.02, 0.4]], v * 0.08, to, 0.3);   // 掛け金がかすかに鳴る
+}
+// ノブ・掛け金のガチャつき(手で揺する)
+function knobRattle(K, t, dur, v = 0.3, to = K.out) {
+  K.grains(t, dur, { rate: 110, len: 0.003, f: 2100, q: 1.1, vol: v, to });
+  for (let i = 0; i < Math.ceil(dur * 12); i++) K.modal(t + K.rnd(0, dur), [[K.rnd(1600, 2600), 0.025, 1], [K.rnd(3000, 4000), 0.015, 0.4]], v * K.rnd(0.2, 0.5), to, 0.3);
+}
+// 息を吸う/吐く(声の前後に置いて、生きている人の気配を足す)
+function inhale(K, t, dur, vol = 0.4, to = K.out, f = 1500) { K.nz(t, dur, { color: 'pink', f, f2: f * 1.6, q: 0.9, vol, env: 'swell', p: 0.7, to }); K.nz(t, dur, { type: 'highpass', f: 4000, vol: vol * 0.2, env: 'swell', p: 1, to }); }
+function exhale(K, t, dur, vol = 0.3, to = K.out, f = 900) { K.nz(t, dur, { color: 'pink', f, f2: f * 0.65, q: 0.8, vol, env: 'swell', p: 0.5, to }); }
+// 同じ声を数本わずかにずらして重ねる(合成音声の平らさ・機械っぽさを崩す)。list = [[遅れ秒, 速さ, セント, 音量], ...]
+function voxStack(K, t, name, list, o = {}) {
+  const c0 = o.cents || (() => 0);
+  for (const [d, r, c, g] of list) K.vox(t + d, name, { ...o, rate: r, cents: (u) => c0(u) + c, vol: (o.vol ?? 0.8) * g });
+}
+// 滑らかなエンジン(点火の粒やノイズを持たない倍音の和。ending_gate C の調整「ジャリジャリ感をなくして」)
+function smoothEngine(K, t, dur, rpm, o = {}) {
+  const { cyl = 4, f = 240, vol = 0.5, wob = 0.04, to = K.out } = o;
+  const b = K.buf(dur, (d, sr, n) => {
+    let ph = 0, ph2 = 0;
+    for (let i = 0; i < n; i++) {
+      const u = i / n, fire = (rpm(u) / 60) * (cyl / 2);
+      ph += fire / sr; ph -= Math.floor(ph); ph2 += fire / 2 / sr; ph2 -= Math.floor(ph2);
+      let s = 0; for (let h = 1; h <= 6; h++) s += Math.sin(2 * Math.PI * ph * h + h * 0.7) / Math.pow(h, 1.4);
+      const am = 1 + wob * Math.sin(2 * Math.PI * u * dur * 3.1) + 0.5 * wob * Math.sin(2 * Math.PI * u * dur * 7.3);
+      d[i] = (s * 0.5 + 0.4 * Math.sin(2 * Math.PI * ph2)) * am;
+    }
+  });
+  K.play(b, t, K.filt('lowpass', f, 0.7, K.gain(vol, to)));
+}
+
 // ---------------------------------------------------------------- 1. 目覚め・410 と 4F
 scene('amb_room', '目覚め・410 と 4F', '居室の室内', '410 など居室の中にいる間の空気(BGM の代わりの環境音)。', '新設(P4b で main.js の環境音バスに追加)', '—', [
   P('a', '静まった部屋', 10, 'ほぼ無音の床に、ときどき木の家鳴り。「何も鳴らない」怖さ', (K) => {
@@ -470,30 +310,14 @@ scene('pl_step_room', '目覚め・410 と 4F', '足音：居室のフローリ�
   }),
 ]);
 scene('pl_flashlight', '目覚め・410 と 4F', '懐中電灯のオン/オフ', 'F キーで懐中電灯を点ける・消す(候補はオン→オフの 2 回)。', '新設(P4b で player.js setFlashlight に接続)', '—', [
-  P('a', '金属ボタンのカチッ', 1.6, 'アルミ筒のライトの押しボタン。硬く澄んだ「カチッ」と筒の小さな鳴り、指を離すと戻りの「チッ」', (K) => {
-    for (const t of [0.2, 1.0]) {
-      K.nz(t, 0.004, { type: 'highpass', f: 5000, vol: 0.6 });
-      K.modal(t, [[4400, 0.03, 1], [6900, 0.022, 0.6], [9300, 0.015, 0.35], [2300, 0.05, 0.3]], 0.35, K.out, 0);
-      K.modal(t, [[780, 0.12, 1], [1930, 0.08, 0.4]], 0.08, K.out, 0);
-      K.tn(t + 0.003, 0.06, { f: 1250, vol: 0.04 });
-      K.nz(t + 0.075, 0.003, { type: 'highpass', f: 4500, vol: 0.25 }); K.modal(t + 0.075, [[3900, 0.02, 1], [6100, 0.012, 0.4]], 0.12, K.out, 0);
-    }
+  P('a', '小さなスイッチの「カチッ」', 1.6, '樹脂の小さなスイッチ。押し込みの「カ」と戻りの「チッ」が短く続く、軽く乾いた「カチッ」', (K) => {
+    for (const [t, v] of [[0.2, 0.7], [1.0, 0.6]]) click(K, t, v, { f: 3400, body: 380, gap: 0.02 });
   }),
-  P('b', 'ゴムボタンのポコッ', 1.6, '防水ゴムに覆われたボタン。こもった「ポコッ」と、中の接点の鈍い感触', (K) => {
-    const m = K.muf(2400);
-    for (const t of [0.2, 1.0]) {
-      K.nz(t, 0.03, { type: 'lowpass', f: 900, vol: 0.35 });
-      K.modal(t + 0.012, [[1350, 0.025, 1], [2100, 0.015, 0.4]], 0.32, m, 0.2); K.tn(t + 0.012, 0.04, { f: 420, f2: 260, vol: 0.25 });
-      K.modal(t + 0.1, [[1200, 0.02, 1]], 0.15, m, 0.1); K.nz(t + 0.1, 0.02, { type: 'lowpass', f: 700, vol: 0.15 });
-    }
+  P('b', '金属の「カチッ」', 1.6, '金属の胴のライト。硬く澄んだ「カチッ」で、胴がほんのわずかに鳴る', (K) => {
+    for (const [t, v] of [[0.2, 0.7], [1.0, 0.6]]) click(K, t, v, { f: 4200, body: 520, gap: 0.016, ring: 6200 });
   }),
-  P('c', '古いライトのガチャ', 1.6, '古い大型ライトのスライド。「ガチャ」と二段で入り、中の電池が少し鳴る。点く時は電球がかすかに「チン」', (K) => {
-    for (const [t, on] of [[0.2, 1], [1.0, 0]]) {
-      K.creak(t, 0.06, { rate: 400, f: 2500, q: 3, vol: 0.15 });
-      K.modal(t + 0.05, [[1900, 0.04, 1], [3100, 0.03, 0.5]], 0.4, K.out, 0.6); knock(K, t + 0.05, { f: 240, d: 0.04, vol: 0.3, nf: 1800, nv: 0.3 });
-      let tt = t + 0.08; for (let k = 0; k < 3; k++) { knock(K, tt, { f: K.rnd(300, 420), d: 0.025, vol: 0.2 / (k + 1), nf: 2200, nv: 0.12 }); tt += 0.035 * K.rnd(0.8, 1.4); }
-      if (on) K.tn(t + 0.06, 0.4, { f: 5200, vol: 0.02 });
-    }
+  P('c', '少し重い「カチッ」', 1.6, '大きめのスイッチ。低めで手応えのある「カチッ」。ばねの戻りが少し遅い', (K) => {
+    for (const [t, v] of [[0.2, 0.75], [1.0, 0.65]]) { click(K, t, v, { f: 1900, body: 220, gap: 0.032 }); K.tn(t + 0.035, 0.04, { f: 260, f2: 200, vol: v * 0.12 }); }
   }),
 ]);
 scene('pl_crouch', '目覚め・410 と 4F', 'しゃがみ(廃止)', 'P4a-2 でしゃがみ自体を廃止したので使わない(ユーザー回答も「なし」)。312 の潜水の音は x312_dive。', '— (廃止)', '—', [
@@ -501,29 +325,22 @@ scene('pl_crouch', '目覚め・410 と 4F', 'しゃがみ(廃止)', 'P4a-2 で�
   P('b', '膝が床に', 2, '衣擦れのあと膝が床に当たる鈍い音と小さな軋み', (K) => { K.nz(0.1, 0.3, { color: 'pink', f: 2000, q: 0.6, vol: 0.2, env: 'swell' }); K.tn(0.45, 0.1, { f: 90, f2: 60, vol: 0.5 }); K.creak(0.5, 0.25, { rate: 60, f: 420, q: 4, vol: 0.2 }); }),
   P('c', '息を殺す', 2, '小さく吸って止める→間→鼻から細く吐く。体の緊張', (K) => { K.nz(0.1, 0.35, { color: 'pink', f: 1400, f2: 2200, q: 1, vol: 0.3, env: 'swell' }); K.nz(1.0, 0.9, { color: 'pink', f: 800, q: 1, vol: 0.08, env: 'swell' }); K.nz(0.15, 0.25, { color: 'pink', f: 2500, q: 0.6, vol: 0.08, env: 'swell' }); }),
 ]);
+// P4b 3 周目: メモ「がちゃっというような単純な音でいい」で作り直し(旧 2 周目: 重い無垢の扉/軽い中空の扉/古くて軋む扉)。開ける「ガチャッ」→閉める「ガチャッ」だけ
 scene('door_wood', '目覚め・410 と 4F', '扉の開閉：居室の木扉', 'プレイヤーが居室の扉を開けて閉める(E)。', '新設(P4b で main.js useNearestDoor の開閉に接続)', '—(管理人が開け閉めする音は enemy_door_latch)', [
-  P('a', '重い無垢の扉', 3.6, 'レバーを下ろす「カシャ」、重い扉が空気を押して動き、閉まると低い「ドン」とラッチの「カチン」', (K) => {
-    const v = K.verb(0.7, 0.3, 0.5), o = K.split(K.out, v, 0.5);
-    K.creak(0.1, 0.12, { rate: 300, f: 2200, q: 5, vol: 0.12, to: o }); K.modal(0.2, [[1500, 0.04, 1], [2350, 0.03, 0.5]], 0.35, o, 0.5);
-    K.nz(0.3, 1.0, { color: 'brown', type: 'lowpass', f: 250, vol: 0.25, env: 'swell', p: 1 }); K.creak(0.35, 0.7, { rate: 30, rate2: 20, f: 260, f2: 520, q: 4, vol: 0.18, to: o });
-    K.nz(1.75, 0.4, { color: 'pink', type: 'lowpass', f: 500, vol: 0.15, env: 'swell' });
-    K.tn(2.15, 0.25, { f: 85, f2: 55, vol: 0.9, to: o }); K.modal(2.15, [[160, 0.25, 1], [310, 0.18, 0.6], [540, 0.12, 0.4], [900, 0.07, 0.25]], 0.45, o, 0.6);
-    K.modal(2.16, [[1600, 0.04, 1], [2600, 0.03, 0.5]], 0.4, o, 0.6); knock(K, 2.32, { f: 140, d: 0.05, vol: 0.15, nf: 1200, nv: 0.08, to: o });
+  P('a', 'レバーの「ガチャッ」', 2.4, 'レバーを下ろしてラッチが抜ける「ガチャッ」。閉める時は扉が枠に当たって「ガチャッ」', (K) => {
+    const o = K.split(K.out, K.verb(0.3, 0.12, 0.5), 0.3);
+    latch(K, 0.1, 0.55, 1700, o); K.nz(0.1, 0.05, { color: 'pink', type: 'lowpass', f: 900, vol: 0.25, to: o }); knock(K, 0.16, { f: 140, d: 0.04, vol: 0.15, nf: 1200, nv: 0.08, to: o });
+    knock(K, 1.4, { f: 100, d: 0.1, vol: 0.55, nf: 700, nv: 0.25, to: o }); latch(K, 1.41, 0.5, 1650, o);
   }),
-  P('b', '軽い中空の扉', 3.4, '中が空洞の軽い扉。ノブの小さな音、短く開き、閉まると「ポン」と胴が鳴って枠の中で少しカタつく', (K) => {
-    const v = K.verb(0.5, 0.25, 0.5), o = K.split(K.out, v, 0.45);
-    K.grains(0.1, 0.12, { rate: 200, len: 0.002, f: 3500, vol: 0.12, to: o }); latch(K, 0.22, 0.4, 1900, o);
-    K.creak(0.3, 0.3, { rate: 80, f: 1100, q: 5, vol: 0.1, to: o });
-    K.modal(1.9, [[190, 0.15, 1], [370, 0.12, 0.8], [610, 0.09, 0.5], [1150, 0.05, 0.3]], 0.55, o, 0.8); latch(K, 1.91, 0.35, 2000, o);
-    knock(K, 1.99, { f: 210, d: 0.03, vol: 0.2, nf: 1600, nv: 0.15, to: o }); knock(K, 2.05, { f: 220, d: 0.025, vol: 0.1, nf: 1700, nv: 0.08, to: o });
+  P('b', '丸ノブの「ガチャ」', 2.4, 'ノブを回す短い擦れのあとラッチの「ガチャ」。閉まりは軽い「トン」とラッチ', (K) => {
+    const o = K.split(K.out, K.verb(0.3, 0.12, 0.5), 0.3);
+    K.grains(0.1, 0.1, { rate: 200, len: 0.002, f: 2500, vol: 0.15, to: o }); latch(K, 0.2, 0.5, 1500, o);
+    knock(K, 1.4, { f: 95, d: 0.08, vol: 0.45, nf: 800, nv: 0.2, to: o }); latch(K, 1.41, 0.45, 1450, o);
   }),
-  P('c', '古くて軋む扉', 3.6, 'ざらついたノブ、二つの蝶番が高低で長く軋み、閉める時もまた軋んで「バタン」と枠が鳴る', (K) => {
-    const v = K.verb(0.7, 0.3, 0.5), o = K.split(K.out, v, 0.5);
-    K.grains(0.1, 0.25, { rate: 120, len: 0.004, f: 2000, vol: 0.2, to: o }); latch(K, 0.3, 0.4, 1400, o);
-    K.creak(0.45, 1.5, { rate: 18, rate2: 40, jit: 0.5, f: 420, f2: 980, q: 7, vol: 0.5, p: 0.5, to: o }); K.creak(0.9, 0.6, { rate: 60, f: 1500, q: 8, vol: 0.15, to: o });
-    K.creak(2.2, 0.35, { rate: 40, f: 520, f2: 1100, q: 6, vol: 0.3, to: o });
-    K.tn(2.6, 0.2, { f: 95, f2: 60, vol: 0.8, to: o }); K.modal(2.6, [[210, 0.2, 1], [420, 0.14, 0.6], [780, 0.08, 0.3]], 0.4, o, 0.6); latch(K, 2.62, 0.35, 1500, o);
-    knock(K, 2.72, { f: 180, d: 0.03, vol: 0.18, nf: 1500, nv: 0.1, to: o });
+  P('c', '少し重い「ガチャッ」', 2.4, '低めの金具の「ガチャッ」。閉める時は扉の重さで「ドッ」とラッチが掛かる', (K) => {
+    const o = K.split(K.out, K.verb(0.35, 0.14, 0.5), 0.3);
+    latch(K, 0.1, 0.6, 1250, o); knock(K, 0.13, { f: 120, d: 0.05, vol: 0.25, nf: 900, nv: 0.1, to: o });
+    knock(K, 1.4, { f: 80, d: 0.14, vol: 0.7, nf: 600, nv: 0.25, to: o }); latch(K, 1.405, 0.55, 1200, o); K.modal(1.42, [[2200, 0.03, 1]], 0.06, o, 0.2);
   }),
 ]);
 scene('amb_corridor', '目覚め・410 と 4F', '館内の廊下の静けさ', '居室の外・各階の廊下と EV ホールにいる間の空気。', '新設(P4b で main.js の環境音バスに追加。階・場所で切り替え)', '—', [
@@ -606,13 +423,15 @@ scene('pl_closet', '目覚め・410 と 4F', 'クローゼットに隠れる', '
 ]);
 // P4a-2: ユーザー回答「パリーン！と割れる感じ」で作り直し(旧: 高い陶器/厚いガラス/転がってから割れる)。高い音で砕け散り、破片が散る尾を付ける
 scene('room_fall', '目覚め・410 と 4F', '物が落ちて割れる', '触れると落ちる障害物(花瓶・マグ等)。この音で管理人が部屋を知る。「パリーン!」と高く砕け散り、破片が床に散る。缶・本などは P4b で同じ作りから派生。', 'rooms.js _updateFallables(fall_<type>)', 'room_fall_<vase|cans|books|bottle|mug|binders>_01', [
-  P('a', '薄いガラス', 2.8, 'コップのような薄いガラスが高く「パリーン」。細かい破片がチリチリと散る', (K) => {
-    const v = K.verb(0.7, 0.25, 0.4); const o = K.split(K.out, v, 0.45);
-    K.tn(0.1, 0.03, { f: 260, f2: 160, vol: 0.25, to: o });                                    // 床に当たる一瞬
-    K.nz(0.1, 0.09, { type: 'highpass', f: 3500, vol: 0.85, to: o });                           // 砕ける「パ」
-    K.modal(0.1, [[3300, 0.45, 1], [5100, 0.3, 0.6], [7600, 0.2, 0.35]], 0.35, o, 0.8);        // 薄いガラスの鳴り「リーン」
-    shatter(K, 0.11, { base: 2700, vol: 0.45, shards: 34, spread: 0.45, glass: 1.25, to: o });
-    debris(K, 0.45, 1.9, { n: 26, f0: 4200, f1: 9000, vol: 0.22, d: 0.05, to: o });
+  P('a', '薄いガラス(パリーン！)', 2.8, 'コップのような薄いガラスが高く「パリーン」。P4b: メモ「パリーン！と割れる感じ」で、砕ける瞬間の鋭い「パ」と高い鳴り「リーン」を強く長くし、破片を増やした', (K) => {
+    const v = K.verb(0.8, 0.28, 0.4); const o = K.split(K.out, v, 0.45);
+    K.tn(0.1, 0.03, { f: 260, f2: 160, vol: 0.2, to: o });                                    // 床に当たる一瞬
+    K.nz(0.1, 0.006, { type: 'highpass', f: 2500, vol: 1.0, a: 0.0003, to: o });              // 砕ける瞬間の鋭い「パ」
+    K.nz(0.1, 0.12, { type: 'highpass', f: 3500, vol: 0.9, to: o });
+    K.modal(0.1, [[3300, 0.7, 1], [5100, 0.5, 0.7], [7600, 0.35, 0.45], [4350, 0.55, 0.5]], 0.45, o, 0.9);   // 薄いガラスの鳴り「リーン」(長く)
+    K.modal(0.13, [[3900, 0.5, 1], [6200, 0.35, 0.5]], 0.25, o, 0.4);
+    shatter(K, 0.11, { base: 2700, vol: 0.5, shards: 44, spread: 0.5, glass: 1.25, to: o });
+    debris(K, 0.45, 1.9, { n: 32, f0: 4200, f1: 9000, vol: 0.22, d: 0.05, to: o });
   }),
   P('b', '厚いガラス', 2.8, '瓶や花瓶の厚いガラスが重く砕ける「ガシャーン」。大きめの破片が跳ねて散る', (K) => {
     const v = K.verb(0.9, 0.3, 0.45); const o = K.split(K.out, v, 0.5);
@@ -682,31 +501,35 @@ scene('ev_car_quiet', '冒頭の見せ場・EV', 'EV：カゴの中の静けさ'
 
 // ---------------------------------------------------------------- 3. 管理人(徘徊・潜伏・襲撃)
 scene('enemy_presence', '管理人', '管理人の気配(呟き。常時ハムの置き換え)', '管理人が同じ階を巡回している間、間を置いて鳴る小さな音(常時ループにはしない)。P4a で削除した鼻歌ループの代わり。', '新設(P4b で enemy_ai.js の PATROL 中に 6〜15 秒おきに鳴らす)', 'enemy_hum_loop_01(P4a で削除)', [
-  PV('a', '壁越しの呟き(声)', 6, '壁の向こうで低い男が独り言をぶつぶつ。こもって言葉は聞き取れない(仮声「ちがう…ここじゃない…」)', ['mgr_mumble_01'], (K) => {
-    const o = K.split(K.out, K.verb(1.0, 0.35, 0.6), 0.5);
-    K.vox(0.8, 'mgr_mumble_01', { rate: 0.72, len: 2.9, lp: 650, hp: 110, drive: 1.5, jit: 25, cents: (u) => -60 * u, vol: 0.9, to: o });
+  PV('a', '壁越しのぼそぼそ(声)', 7, '壁の向こうで、低い男がひとりでぼそぼそ呟いている。言葉は聞き取れない程度にこもる(仮声「どこかなあ…」「ちがう…」)', ['mgr_mumble_04', 'mgr_mumble_01'], (K) => {
+    const o = K.split(K.muf(1100, 1), K.verb(0.9, 0.35, 0.6), 0.5);
+    K.vox(0.4, 'mgr_mumble_04', { rate: 0.9, len: 4.0, hp: 120, lp: 1600, rasp: 0.35, raspF: 1200, jit: 18, jitHz: 2, vol: 0.85, to: o });
+    K.vox(5.0, 'mgr_mumble_01', { rate: 0.9, len: 1.7, hp: 120, lp: 1500, rasp: 0.35, raspF: 1200, jit: 18, jitHz: 2, vol: 0.6, to: o });
   }),
-  PV('b', '遠くで数を数える(声)', 6, '廊下の奥のほうで、ゆっくり何かを数えている。遠く反響して途切れ途切れ(仮声「ひとつ…ふたつ…みっつ…」)', ['mgr_mumble_02'], (K) => {
-    const v = K.verb(2.2, 0.7, 0.6), e = K.echo(0.3, 0.3, 1500, K.out), o = K.split(K.split(K.gain(0.55, K.out), v, 1), e, 0.4);
-    K.vox(0.6, 'mgr_mumble_02', { rate: 0.7, len: 2.95, lp: 1400, hp: 150, jit: 20, vol: 0.9, to: o });
+  PV('b', '通り過ぎながら呟く(声)', 7, '廊下を歩きながら小声で呟き、近づいて遠ざかる。重い足音がかすかに混じる(仮声「ちがう…ちがう…ここも、ちがう…」)', ['mgr_mumble_05'], (K) => {
+    const g = K.shape(0, 7, 1, (u) => Math.pow(Math.sin(Math.PI * u), 0.8), K.out);
+    const o = K.split(g, K.verb(1.2, 0.4, 0.6), 0.5);
+    K.vox(0.6, 'mgr_mumble_05', { rate: 0.88, len: 4.3, hp: 110, lp: 2400, rasp: 0.6, raspF: 1600, dry: 0.75, jit: 22, jitHz: 2.5, vol: 0.85, to: o });
+    walk(K, 8, 0.8, (t, i, acc) => softStep(K, t, { vol: 0.22 * acc, to: K.muf(600, 1, o) }), 0.06, 0.3);
   }),
-  PV('c', '逆回しの囁き(声)', 6, 'かすれた囁きが意味の取れない音の並びで続く(仮声を逆回し)。人の声なのに言葉にならない', ['mgr_mumble_03'], (K) => {
-    const o = K.split(K.out, K.verb(0.8, 0.4, 0.6), 0.5);
-    K.vox(1.0, 'mgr_mumble_03', { rev: true, from: 0.95, len: 3.1, rate: 0.78, lp: 1800, hp: 140, rasp: 0.6, jit: 30, vol: 0.7, to: o });
+  PV('c', '囁きの呟き(声)', 7, '息だけの囁きで何かを繰り返し呟く。人の声なのに、何を言っているか分からない(仮声を囁きに変える)', ['mgr_mumble_03'], (K) => {
+    const o = K.split(K.muf(2600, 1), K.verb(0.8, 0.35, 0.6), 0.5);
+    K.vox(0.4, 'mgr_mumble_03', { rate: 0.95, len: 5.6, hp: 200, lp: 5000, dry: 0.15, rasp: 2.0, raspF: 2000, raspQ: 0.5, jit: 15, jitHz: 2, vol: 0.9, to: o });
   }),
 ]);
+// P4b 3 周目: メモ「金属音感をなくして」で作り直し(旧 2 周目: 重い革の作業靴/安全靴の踏み込み/踵に金具)。踵の固有振動(金属・硬い鳴り)を全部外し、鈍い「ドッ」と沈み・擦れだけで重さを出す
 scene('enemy_step_walk', '管理人', '管理人の足音(通常)', '巡回・扉に向かう歩き。B1 では上の階の足音としてこもらせて流用。', 'enemy_ai.js constructor の接地コールバック(step)・_reveal／spaces/xb1.js sound(上の階)', 'enemy_step_walk_01..04・xb1_steps_above_01', [
-  P('a', '重い革の作業靴', 5.6, '大柄な体重の乗った硬い踵の「ゴッ」、床スラブの鈍い鳴り、遅れて爪先。プレイヤーよりゆっくり重い', (K) => {
-    const o = K.split(K.out, K.verb(0.6, 0.25, 0.55), 0.5);
-    walk(K, 7, 0.78, (t, i, acc) => heavyStep(K, t, { vol: 0.8 * acc, to: o }), 0.07);
+  P('a', 'ゴム底の重い足音', 5.6, '大柄な体重の乗った鈍い「ドッ」と床の沈み。響きのない、硬さを感じさせない重い歩き', (K) => {
+    const o = K.split(K.out, K.verb(0.5, 0.2, 0.6), 0.45);
+    walk(K, 7, 0.78, (t, i, acc) => softStep(K, t, { vol: 0.85 * acc, heel: 650, scuff: 0.3, to: o }), 0.07);
   }),
-  P('b', '安全靴の踏み込み', 5.6, '鉄芯入りの靴。踏み込みの低い「ドッ」に、爪先の鉄が床に当たる「コン」が混じる', (K) => {
-    const o = K.split(K.out, K.verb(0.55, 0.25, 0.55), 0.5);
-    walk(K, 7, 0.82, (t, i, acc) => { heavyStep(K, t, { vol: 0.8 * acc, click: 2000, body: 88, floor: 55, roll: 0.15, to: o }); K.modal(t + 0.15 * K.rnd(0.9, 1.1), [[720, 0.06, 1], [1350, 0.04, 0.5], [2600, 0.02, 0.2]], 0.2 * acc, o, 0.3); }, 0.08);
+  P('b', '革底(響きなし)', 5.6, '革の靴底の「ドッ」に、ときどき革のきしみ。床は鳴らない', (K) => {
+    const o = K.split(K.out, K.verb(0.5, 0.2, 0.6), 0.45);
+    walk(K, 7, 0.8, (t, i, acc) => softStep(K, t, { vol: 0.85 * acc, heel: 1050, body: 100, creak: 0.45, scuff: 0.2, to: o }), 0.07);
   }),
-  P('c', '踵に金具', 5.6, '踵に打った金具が硬い床で「カツン」と鳴り、その後ろに重い体の「ドスッ」。歩調が少し乱れる', (K) => {
-    const o = K.split(K.out, K.verb(0.7, 0.28, 0.5), 0.5);
-    walk(K, 7, 0.8, (t, i, acc) => { heavyStep(K, t + 0.01, { vol: 0.7 * acc, click: 1800, roll: 0.12, to: o }); K.nz(t, 0.004, { type: 'highpass', f: 5000, vol: 0.5 * acc, to: o }); K.modal(t, [[2900, 0.05, 1], [4600, 0.035, 0.5], [6800, 0.02, 0.25]], 0.25 * acc, o, 0); }, 0.13);
+  P('c', '片足を擦る', 5.6, '一歩おきに靴底を床に擦って引きずる。ゆっくりで不揃い', (K) => {
+    const o = K.split(K.out, K.verb(0.5, 0.2, 0.6), 0.45);
+    walk(K, 7, 0.85, (t, i, acc) => softStep(K, t, { vol: 0.85 * acc, heel: 700, drag: i % 2 ? 0.28 : 0, scuff: 0.15, to: o }), 0.12);
   }),
 ]);
 scene('enemy_step_run', '管理人', '管理人の足音(追跡)', '追跡(CHASE)の走り。', 'enemy_ai.js 接地コールバック(step・run 時の音量 1.0)', 'enemy_step_run_01..04(予定・現状は歩きの音量違い)', [
@@ -727,30 +550,34 @@ scene('enemy_step_run', '管理人', '管理人の足音(追跡)', '追跡(CHASE
       for (let k = 0; k < 4; k++) K.modal(t + 0.02 + k * 0.025, [[K.rnd(1500, 3200), 0.03, 1]], 0.05 * acc, o, 0.2);
     }, 0.12, 0.08);
   }, 'loud'),
-  P('c', '奥から迫って急停止', 3.4, '遠くこもった足音がみるみる大きく明るくなり、目の前で靴を擦って急停止、最後に一度踏み鳴らす', (K) => {
-    const lp = K.filt('lowpass', 400, 0.7), g = K.gain(1, K.out); lp.connect(g); K.ramp(lp.frequency, 0, 2.4, 400, 8000);
-    g.gain.setValueAtTime(0.25, K.T(0)); g.gain.linearRampToValueAtTime(1, K.T(2.4));
+  P('c', '奥から迫って急停止(大きく・ドタバタ)', 3.4, '遠くこもった足音がみるみる大きく明るくなり、目の前で靴を擦って急停止、最後に一度踏み鳴らす。P4b: メモ「もっと大きい音でドタバタ恐怖感を煽る」で一歩ごとに床を踏み鳴らす低音・二度踏み・周りの物のカタつきを足し、全体を大きく', (K) => {
+    const lp = K.filt('lowpass', 500, 0.7), g = K.gain(1, K.out); lp.connect(g); K.ramp(lp.frequency, 0, 2.2, 500, 9000);
+    g.gain.setValueAtTime(0.35, K.T(0)); g.gain.linearRampToValueAtTime(1, K.T(2.2));
     const o = K.split(lp, K.verb(0.9, 0.3, 0.5), 0.5);
-    walk(K, 10, 0.24, (t, i, acc) => heavyStep(K, t, { vol: 1.0 * acc, body: 85, floor: 52, roll: 0.06, to: o }), 0.15, 0.05);
-    K.nz(2.55, 0.25, { f: 1800, f2: 2600, q: 1.2, vol: 0.35, env: 'swell' }); K.tn(2.6, 0.18, { type: 'sawtooth', f: 1900, f2: 2300, vol: 0.05, env: 'swell', lpf: 3000 });
-    heavyStep(K, 2.85, { vol: 1.1, body: 80, floor: 45, roll: 0.05, to: K.out });
+    let t = 0.05, i = 0;
+    while (t < 2.45) { runStomp(K, t, i % 2 ? 0.9 : 1.05, o); t += 0.22 * K.rnd(0.75, 1.3); i++; }
+    K.nz(2.55, 0.25, { f: 1800, f2: 2600, q: 1.2, vol: 0.4, env: 'swell' }); K.tn(2.6, 0.18, { type: 'sawtooth', f: 1900, f2: 2300, vol: 0.05, env: 'swell', lpf: 3000 });
+    runStomp(K, 2.85, 1.25, K.out, false);
   }, 'loud'),
 ]);
 scene('enemy_breath_close', '管理人', '笑い声・セリフ(目の前)', '隠れたクローゼット/ロッカーの前で管理人が立ち止まる。', 'enemy_ai.js _locker(breath)', 'enemy_breath_close_01', [
-  PV('a', '低い含み笑い(声)', 4.5, 'すぐ目の前で、鼻から息を吸って「ふふ…ふふふ…」と低く笑う(仮声)', ['mgr_laugh_01'], (K) => {
-    const o = K.split(K.out, K.verb(0.35, 0.2, 0.5), 0.4);
-    K.nz(0.05, 0.4, { color: 'pink', f: 900, f2: 1300, q: 1, vol: 0.15, env: 'swell', to: o });
-    K.vox(0.5, 'mgr_laugh_01', { rate: 0.7, len: 2.1, lp: 4000, drive: 1.8, rasp: 0.15, jit: 35, vol: 0.9, to: o });
+  PV('a', '囁き「みいつけた」(声)', 4.5, '息を吸ってから、ほとんど息だけの囁きで「み…つけた」。低い芯がほんの少しだけ残る(仮声)', ['mgr_line_found_01'], (K) => {
+    const o = K.split(K.out, K.verb(0.3, 0.12, 0.5), 0.35);
+    inhale(K, 0.15, 0.55, 0.45, o);
+    K.vox(0.85, 'mgr_line_found_01', { rate: 0.9, len: 2.05, dry: 0.12, rasp: 2.4, raspF: 2300, raspQ: 0.5, hp: 180, lp: 7000, jit: 15, jitHz: 2.5, vol: 0.9, to: o });
+    K.vox(0.85, 'mgr_line_found_01', { rate: 0.9, len: 2.05, hp: 110, lp: 1100, jit: 15, jitHz: 2.5, vol: 0.2, to: o });
+    exhale(K, 3.3, 0.8, 0.2, o);
   }),
-  PV('b', '「みぃつけた」(声)', 4.5, '息を吸って、囁き混じりの低い声で「み…つけた」。近くて乾いている(仮声)', ['mgr_line_found_01'], (K) => {
-    const o = K.split(K.out, K.verb(0.3, 0.15, 0.5), 0.4);
-    K.nz(0.3, 0.35, { color: 'pink', f: 1200, f2: 1800, q: 1, vol: 0.14, env: 'swell', to: o });
-    K.vox(0.8, 'mgr_line_found_01', { rate: 0.72, len: 2.05, lp: 5000, drive: 1.3, rasp: 0.45, raspF: 3000, jit: 25, vol: 0.9, to: o });
+  PV('b', '低い声と息(二重)', 4.5, '低い声で「みいつけた」。同じ声を 2 本わずかにずらして重ね、言い終わりに鼻から重く息を吐く(仮声)', ['mgr_line_found_02'], (K) => {
+    const o = K.split(K.out, K.verb(0.35, 0.15, 0.5), 0.35);
+    voxStack(K, 0.5, 'mgr_line_found_02', [[0, 0.86, 0, 0.6], [0.014, 0.875, 14, 0.45]], { len: 1.7, jit: 30, jitHz: 2.2, rasp: 0.7, raspF: 1800, dry: 0.8, hp: 90, lp: 4200, vol: 0.9, to: o });
+    exhale(K, 2.75, 0.9, 0.35, o, 700);
   }),
-  PV('c', '「そこに…いるんだろう」(声)', 4.5, '低く太い声でゆっくり「そこに…いるんだろう」。最後に重く鼻息を吐く(仮声)', ['mgr_line_there_01'], (K) => {
-    const o = K.split(K.out, K.verb(0.35, 0.2, 0.5), 0.4);
-    K.vox(0.3, 'mgr_line_there_01', { rate: 0.78, len: 2.72, lp: 3500, drive: 2.5, jit: 30, cents: (u) => -40 * u, vol: 0.9, to: o });
-    K.nz(3.9, 0.5, { color: 'pink', f: 700, f2: 500, q: 1.2, vol: 0.25, env: 'swell', to: o });
+  PV('c', '耳元で、間を置いて(声)', 4.5, '耳元で息を吸い、少し間を置いてから低い囁き声で「みーつけた」。最後に笑うような鼻息(仮声)', ['mgr_line_found_03'], (K) => {
+    const o = K.split(K.out, K.verb(0.25, 0.1, 0.5), 0.3);
+    inhale(K, 0.1, 0.5, 0.4, o, 1200);
+    K.vox(1.2, 'mgr_line_found_03', { rate: 0.84, len: 1.5, dry: 0.55, rasp: 1.3, raspF: 2100, hp: 120, lp: 5200, jit: 25, jitHz: 2, vol: 0.9, to: o });
+    for (const t of [3.2, 3.42]) exhale(K, t, 0.18, 0.3, o, 1100);
   }),
 ]);
 scene('enemy_breath_door', '管理人', '笑い声・呟き(扉の向こう)', '管理人が潜伏する空き部屋の扉の前で止まると聞こえる静かな予兆(歩いていると気づかない)。', 'enemy_ai.js _roomLurkTick(breathDoor)', 'enemy_breath_behind_door_01', [
@@ -758,9 +585,8 @@ scene('enemy_breath_door', '管理人', '笑い声・呟き(扉の向こう)', '
     const door = K.filt('peaking', 220, 2, K.muf(650, 1), 6);
     K.vox(1.0, 'mgr_laugh_02', { rate: 0.7, len: 1.6, lp: 900, drive: 1.6, jit: 30, vol: 1, to: door });
   }),
-  PV('b', '「いるのは…わかってるよ」(声)', 4.5, '扉に口を寄せて、こもった低い声でゆっくり。囁きのかすれが混じる(仮声)', ['mgr_line_know_01'], (K) => {
-    const door = K.filt('peaking', 240, 2, K.muf(800, 1), 6);
-    K.vox(0.5, 'mgr_line_know_01', { rate: 0.74, len: 2.8, lp: 1000, rasp: 0.3, jit: 25, vol: 1, to: door });
+  PV('b', '「いるのは…わかってるよ」ほか 3 本(声)', 13.5, '扉に口を寄せて、こもった低い声でゆっくり。P4b: メモ「息遣いではなく、笑い声かセリフにして」で、短い笑い「ふふふ…ふふ」と「もうすこし…ちかくに、おいで」を足した 3 本(ゲームでは立ち止まるたびに 1 本ずつ順に)。加工は src/audio_voice.js(仮声)', VOICE.enemy_breath_door.takes.flat(), (K) => {
+    VOICE.enemy_breath_door.takes.forEach((tk, i) => VOICE.enemy_breath_door.fn(new Kit(K.c, K.out, K.t0 + i * 4.5, 101 + i), tk));
   }),
   PV('c', '軽いノック→「まだ…おきてるのかい」(声)', 4.5, '指の背で 2 回そっと叩いてから、扉越しに穏やかな声。管理人らしい口調が逆に怖い(仮声)', ['mgr_line_awake_01'], (K) => {
     const door = K.filt('peaking', 220, 2, K.muf(700, 1), 6);
@@ -784,31 +610,28 @@ scene('enemy_handle', '管理人', '取っ手に触れる', '隠れ場所の取�
     K.modal(1.2, [[360, 0.18, 1], [800, 0.12, 0.5]], 0.25, K.out, 0.2); K.modal(1.22, [[1800, 0.03, 1]], 0.1);
   }),
 ]);
+// P4b 3 周目: メモ「機械音感をなくして」で作り直し(旧 2 周目: 扉全体が暴れる/金物が鳴る/間欠)。周期的な連打をやめ、毎回強さ・間隔・扉板の鳴りがばらつく人の力の揺さぶりに
 scene('room_door_rattle', '管理人', '扉のガタガタ(ランダム演出)', '部屋の中で何かが暴れて扉が激しく鳴り揺れる。絶対に出てこない(潜伏の静かな予兆と意味を分ける)。', 'door_fx.js(ガタガタ扉 slam)・enemy_ai.js _appear(slam)', 'room_door_rattle_violent_01', [
-  P('a', '扉全体が暴れる', 4, '扉全体が枠の中で激しく前後に叩きつけられる。木の胴が鳴り、ラッチが鳴り、強まっていきなり止む', (K) => {
-    const o = K.split(K.out, K.verb(0.7, 0.3), 0.5);
-    let t = 0.1;
-    while (t < 3.3) {
-      const s = 0.45 + 0.55 * (t / 3.3), v = s * K.rnd(0.6, 1);
-      K.tn(t, 0.12, { f: 75, f2: 55, vol: 0.8 * v, to: o }); K.modal(t, [[140, 0.15, 1], [260, 0.1, 0.6], [470, 0.06, 0.35]], 0.35 * v, o, 0.6);
-      K.modal(t + 0.004, [[1500, 0.03, 1], [2300, 0.02, 0.4]], 0.2 * v, o, 0.4);
-      t += 1 / K.rnd(7, 12);
+  P('a', '激しく揺さぶる(不規則)', 4.5, '中から扉を両手で揺さぶる。強まったり弱まったり、間隔も毎回違う。最後は唐突に止む', (K) => {
+    const o = K.split(K.out, K.verb(0.6, 0.2, 0.5), 0.4);
+    let t = 0.08;
+    while (t < 3.9) {
+      const surge = 0.5 + 0.5 * Math.sin(t * 2.3 + 1);
+      const v = (0.45 + 0.55 * surge) * K.rnd(0.7, 1.05);
+      doorHit(K, t, v, o);
+      if (K.r() < 0.35) knobRattle(K, t + 0.02, 0.1, v * 0.4, o);
+      t += K.rnd(0.07, 0.16) / (0.6 + surge * 0.8) + (K.r() < 0.1 ? K.rnd(0.15, 0.35) : 0);
     }
   }),
-  P('b', '金物が鳴る', 4, '扉は小刻みに揺れ、ノブ・蝶番・ドアガードの金物がガチャガチャと鳴り続ける', (K) => {
-    const o = K.split(K.out, K.verb(0.6, 0.25), 0.4);
-    for (let t = 0.1; t < 3.5; t += 1 / K.rnd(9, 16)) {
-      const v = 0.5 + 0.5 * Math.abs(Math.sin(t * 2.2)); K.modal(t, [[K.rnd(1600, 2400), 0.04, 1], [K.rnd(3200, 4200), 0.025, 0.5]], 0.25 * v, o, 0.4);
-      if (K.r() < 0.35) knock(K, t, { f: 120, d: 0.06, vol: 0.3 * v, nf: 1000, nv: 0.15, to: o });
-    }
-    for (const t of [0.4, 1.3, 2.4]) jingle(K, t, 0.5, 6, 0.15, o);
+  P('b', 'ノブを回す→体当たり', 4.5, 'ノブを乱暴に何度も回すガチャガチャの後、肩でぶつかる重い「ドン」が 3 回', (K) => {
+    const o = K.split(K.out, K.verb(0.7, 0.25, 0.5), 0.45);
+    knobRattle(K, 0.1, 0.5, 0.45, o); knobRattle(K, 0.75, 0.4, 0.4, o); knobRattle(K, 1.3, 0.25, 0.35, o);
+    for (const [t, v] of [[1.7, 0.9], [2.55, 0.85], [3.4, 1.0]]) { doorHit(K, t, v, o); boom(K, t, { vol: 0.25 * v, f: 70, f2: 40, d: 0.3, crack: 0.1, to: o }); knobRattle(K, t + 0.03, 0.15, 0.25, o); }
   }),
-  P('c', '間欠(3 回→沈黙→1 回)', 4, '重い叩きつけが 3 回続いて止まり、長い沈黙。忘れた頃に一番大きいのが 1 回', (K) => {
-    const o = K.split(K.out, K.verb(0.9, 0.35), 0.5);
-    for (const [t, v] of [[0.1, 0.8], [0.42, 0.9], [0.78, 1], [3.15, 1.25]]) {
-      K.tn(t, 0.25, { f: 65, f2: 45, vol: 0.8 * v, to: o }); K.modal(t, [[130, 0.25, 1], [250, 0.18, 0.7], [460, 0.1, 0.4], [800, 0.06, 0.25]], 0.45 * v, o, 0.7);
-      K.modal(t + 0.005, [[1500, 0.05, 1], [2400, 0.04, 0.5]], 0.3 * v, o, 0.5); knock(K, t + 0.09, { f: 110, d: 0.07, vol: 0.3 * v, nf: 900, to: o });
-    }
+  P('c', '間欠(数回→沈黙→一番大きく)', 4.5, '数回ずつ激しく揺れては止む。長い沈黙のあと、一番大きな一撃', (K) => {
+    const o = K.split(K.out, K.verb(0.7, 0.25, 0.5), 0.45);
+    for (const [s, n] of [[0.1, 4], [1.05, 3]]) { let t = s; for (let i = 0; i < n; i++) { doorHit(K, t, K.rnd(0.5, 0.85), o); t += K.rnd(0.08, 0.15); } }
+    doorHit(K, 3.4, 1.1, o); boom(K, 3.4, { vol: 0.45, f: 65, f2: 35, d: 0.45, crack: 0.2, to: o }); knobRattle(K, 3.43, 0.2, 0.3, o);
   }),
 ]);
 scene('enemy_door_latch', '管理人', '空室の扉を普通に開け閉め', '襲撃でない潜伏の解除(管理人が普通に扉を開けて出てくる)。扉は壊れない。', 'enemy_ai.js _npcDoor(latch)', 'door_latch_creak_01', [
@@ -831,38 +654,49 @@ scene('enemy_door_smash', '管理人', '扉を破る(飛び出し)', '懐中電�
     K.modal(0.15, [[1700, 0.5, 1], [2600, 0.35, 0.5], [4100, 0.2, 0.25]], 0.2, o, 0.4);
     debris(K, 0.25, 1.9, { n: 28, f0: 450, f1: 2200, vol: 0.22, d: 0.05, bounce: true, to: o });
   }, 'loud'),
-  P('c', '二重の衝撃', 3, '一撃で扉が割れ、半拍おいて扉板が床に倒れて地響き。埃が落ちる', (K) => {
-    const o = K.split(K.out, K.verb(1.5, 0.45, 0.55), 0.6);
-    boom(K, 0.05, { vol: 0.9, f: 70, f2: 28, d: 0.8, to: K.sat(2.5, o) }); splinter(K, 0.05, 0.35, { vol: 0.5, to: o });
-    boom(K, 0.5, { vol: 1, f: 55, f2: 22, d: 1.1, crack: 0.5, to: K.sat(2, o) });
+  P('c', '二重の衝撃(爆発のように)', 3.5, '一撃で扉が割れ、半拍おいて扉板が床に倒れて地響き。P4b: メモ「もっと爆発音のような感じ」で一撃目を爆発の衝撃波に(低域を長く深く・圧の「ボフッ」・地鳴りの尾)', (K) => {
+    const o = K.split(K.out, K.verb(1.8, 0.5, 0.55), 0.6);
+    boom(K, 0.05, { vol: 1.2, f: 62, f2: 20, d: 1.6, crack: 1.1, to: K.sat(3, o, 7000) });
+    K.nz(0.05, 1.8, { color: 'brown', type: 'lowpass', f: 220, f2: 60, vol: 0.7, to: o });                // 地鳴りの尾
+    K.nz(0.05, 0.4, { color: 'pink', type: 'lowpass', f: 2500, f2: 300, vol: 0.6, to: o });               // 圧の「ボフッ」
+    splinter(K, 0.05, 0.35, { vol: 0.5, to: o });
+    boom(K, 0.5, { vol: 0.9, f: 55, f2: 22, d: 1.1, crack: 0.5, to: K.sat(2, o) });                       // 扉板が倒れる二撃目
     K.modal(0.5, [[120, 0.3, 1], [230, 0.22, 0.7], [410, 0.15, 0.4]], 0.5, o, 0.8);
-    K.grains(0.6, 1.4, { rate: 40, len: 0.003, f: 3000, vol: 0.08, p: 1.5, to: o });
+    debris(K, 0.3, 1.6, { n: 16, f0: 500, f1: 2000, vol: 0.16, d: 0.05, bounce: true, to: o });
+    K.grains(0.6, 1.6, { rate: 40, len: 0.003, f: 3000, vol: 0.08, p: 1.5, to: o });
   }, 'loud'),
 ]);
 scene('enemy_scream', '管理人', '悲鳴・叫び(襲撃)', '襲撃の振りかぶりの瞬間の叫び(105 の追跡の始まりにも流用中)。', 'enemy_ai.js _attack(scream)／spaces/x105.js update', 'enemy_scream_attack_01(105 の悲鳴は x105_scream)', [
-  PV('a', '割れる叫び(声そのまま)', 3, '人の「ああぁぁ」を上ずらせて強く歪ませ、二重にして太くした叫び。最後に声が裏返って落ちる(仮声)', ['mgr_scream_03'], (K) => {
-    const o = K.split(K.out, K.verb(1.0, 0.3, 0.5), 0.4);
-    const c = (u) => 280 * Math.min(1, u * 4) - 450 * Math.max(0, u - 0.72) / 0.28;
-    K.vox(0.05, 'mgr_scream_03', { from: 0.7, loop: [1.0, 1.8], hold: 2.3, rate: 1.3, cents: c, jit: 60, vib: 6, vibd: 30, drive: 7, hp: 200, lp: 7000, vol: 0.8, to: o });
-    K.vox(0.07, 'mgr_scream_03', { from: 0.7, loop: [1.05, 1.75], hold: 2.25, rate: 1.32, cents: (u) => c(u) + 15, jit: 70, drive: 7, hp: 200, lp: 6000, vol: 0.45, to: o });
-  }),
-  PV('b', '叫び笑い(声＋ノイズ)', 3, '笑い声がそのまま叫びに変わる。声で変調したノイズでざらざらに割る(仮声「あはは…あああ」)', ['mgr_scream_laugh_01'], (K) => {
+  PV('a', '息の多い絶叫(声を 3 本重ねる)', 3, '鋭く息を吸ってから、喉が擦り切れるような息の多い「ああぁぁ」。3 本の声がわずかにずれて太く、最後に裏返って落ちる(仮声)', ['mgr_scream_03'], (K) => {
     const o = K.split(K.out, K.verb(0.9, 0.3, 0.5), 0.4);
-    K.vox(0.05, 'mgr_scream_laugh_01', { len: 2.3, rate: 1.15, cents: (u) => 180 * u, jit: 50, drive: 4, rasp: 0.9, raspF: 2200, hp: 150, vol: 0.8, to: o });
-    K.nz(0.9, 1.1, { color: 'pink', f: 1600, q: 0.8, vol: 0.12, env: 'swell', to: o });
+    inhale(K, 0.0, 0.25, 0.5, o, 1300);
+    const c = (u) => 260 * Math.min(1, u * 3) + 60 * Math.sin(u * 9) - 380 * Math.max(0, u - 0.75) / 0.25;
+    voxStack(K, 0.25, 'mgr_scream_03', [[0, 1.12, 0, 0.5], [0.011, 1.14, 18, 0.38], [0.023, 1.1, -14, 0.3]],
+      { from: 0.7, loop: [1.0, 1.8], hold: 2.3, cents: c, jit: 40, jitHz: 3, vib: 5, vibd: 14, drive: 1.3, rasp: 1.6, raspF: 1900, raspQ: 0.5, dry: 0.45, hp: 200, lp: 6500, vol: 0.9, to: o });
   }),
-  PV('c', '太い咆哮(部屋に響く)', 3, '低く太い「うおぉぉ」に 1 オクターブ下の声を重ねた咆哮。部屋の残響が大きい(仮声)', ['mgr_scream_02'], (K) => {
-    const o = K.split(K.out, K.verb(1.6, 0.5, 0.5), 0.5);
-    K.vox(0.05, 'mgr_scream_02', { loop: [0.4, 1.3], hold: 2.4, rate: 0.95, cents: (u) => 220 * Math.sin(Math.PI * u), jit: 50, drive: 8, lp: 4500, hp: 90, vol: 0.8, to: o });
-    K.vox(0.05, 'mgr_scream_02', { loop: [0.3, 1.2], hold: 2.4, rate: 0.5, cents: (u) => 220 * Math.sin(Math.PI * u), jit: 40, drive: 5, lp: 1200, hp: 50, vol: 0.45, to: o });
+  PV('b', '喉が裂ける叫び(声＋喉の息)', 3, '「うああぁ」と叫ぶ声に、声にならない喉の息が強く混じる。声の芯は細く、息の音が前に出る(仮声)', ['mgr_scream_04'], (K) => {
+    const o = K.split(K.out, K.verb(0.8, 0.3, 0.5), 0.4);
+    const c = (u) => 200 * Math.min(1, u * 2.5) + 80 * Math.sin(u * 6);
+    voxStack(K, 0.08, 'mgr_scream_04', [[0, 1.08, 0, 0.55], [0.017, 1.1, 22, 0.4]], { loop: [0.4, 1.2], hold: 2.4, cents: c, jit: 45, jitHz: 3, vib: 4.5, vibd: 12, rasp: 2.2, raspF: 1500, raspQ: 0.45, dry: 0.35, hp: 160, lp: 6000, vol: 0.9, to: o });
+    for (const [f, g] of [[850, 0.18], [1350, 0.12], [2700, 0.07]]) K.nz(0.1, 2.35, { color: 'pink', f, q: 4, vol: g, env: 'swell', p: 0.35, to: o });   // 声にならない喉の息(母音の帯域のノイズ)
+  }),
+  PV('c', '低い咆哮(胸に響く)', 3, '低く太い「うおぉぉ」。2 本の声を重ね、1 オクターブ下をごく薄く。胸と部屋が鳴る(仮声)', ['mgr_scream_02'], (K) => {
+    const o = K.split(K.filt('peaking', 180, 1.2, K.out, 4), K.verb(1.4, 0.45, 0.5), 0.5);
+    inhale(K, 0.0, 0.2, 0.35, o, 900);
+    const c = (u) => 200 * Math.sin(Math.PI * u) + 40 * Math.sin(u * 7);
+    voxStack(K, 0.2, 'mgr_scream_02', [[0, 0.92, 0, 0.55], [0.015, 0.94, 16, 0.42]], { loop: [0.4, 1.3], hold: 2.4, cents: c, jit: 40, jitHz: 3, drive: 1.5, rasp: 0.9, raspF: 1100, dry: 0.65, hp: 80, lp: 4000, vol: 0.9, to: o });
+    K.vox(0.2, 'mgr_scream_02', { loop: [0.3, 1.2], hold: 2.4, rate: 0.47, cents: c, jit: 30, jitHz: 3, rasp: 0.5, raspF: 600, hp: 50, lp: 900, vol: 0.18, to: o });
   }),
 ]);
 scene('enemy_hit', '管理人', 'ハンマーの一撃', '襲撃ムービーで振り下ろしが当たる瞬間(画面は血しぶき)。', 'attack_movie.js hit', 'enemy_hit_hammer_01', [
-  P('a', '重い鈍器', 1.6, '低域の重い衝撃が腹に来る「ドゴッ」。中で鈍く骨が鳴り、肉の湿った音が短く続く', (K) => {
-    const o = K.split(K.out, K.verb(0.6, 0.2, 0.5), 0.3), d = K.sat(2.5, o, 6000);
-    boom(K, 0.05, { vol: 1, f: 62, f2: 30, d: 0.55, crack: 0.5, to: d });
-    K.modal(0.055, [[900, 0.04, 1], [1700, 0.03, 0.5]], 0.35, o, 0.5);
-    K.nz(0.06, 0.15, { color: 'pink', type: 'lowpass', f: 1200, vol: 0.4, env: 'swell', to: o });
+  P('a', '重い鈍器(より重く)', 1.8, '低域の重い衝撃が腹に来る「ドゴッ」。P4b: メモ「もっと重量感のあるものに」で衝撃の低音を深く長く、胴に響く塊と床まで伝わる余韻を足し、骨の鳴りを低くした', (K) => {
+    const o = K.split(K.out, K.verb(0.7, 0.22, 0.5), 0.3), d = K.sat(3, o, 5000);
+    boom(K, 0.05, { vol: 1.15, f: 55, f2: 22, d: 0.9, crack: 0.45, to: d });
+    K.tn(0.05, 0.5, { f: 90, f2: 40, vol: 0.6, to: d });                                   // 胴に響く鈍い塊
+    K.nz(0.05, 0.25, { color: 'brown', type: 'lowpass', f: 300, vol: 0.9, to: o });          // 食い込む重さ
+    K.modal(0.055, [[700, 0.05, 1], [1300, 0.04, 0.5]], 0.3, o, 0.4);                        // 鈍い骨(低め)
+    K.nz(0.07, 0.2, { color: 'pink', type: 'lowpass', f: 1000, vol: 0.4, env: 'swell', to: o });
+    K.tn(0.12, 0.9, { f: 38, vol: 0.35, to: o });                                           // 床まで伝わる余韻
   }, 'loud'),
   P('b', '骨が砕ける', 1.6, '衝撃と同時に乾いた「バキッ」が前に出て、細かく砕ける音が一瞬続く', (K) => {
     const o = K.split(K.out, K.verb(0.5, 0.2, 0.5), 0.3);
@@ -927,42 +761,49 @@ scene('locker_tease', '1F・221・管理室', 'ロッカーの中で何かが当
   P('c', '爪で掻く', 2.5, '内側から鉄板を爪で掻く音がこもって響く', (K) => { const g = K.gain(1); g.connect(K.filt('bandpass', 900, 4, K.out)); g.connect(K.filt('bandpass', 2000, 4, K.gain(0.6, K.out))); K.grains(0.3, 1.2, { rate: 60, len: 0.003, f: 3000, vol: 1.2, to: g }); }),
 ]);
 scene('locker_open_slow', '1F・221・管理室', 'ロッカーの扉がゆっくり開く', 'ロッカー登場の 2 段目(軋み→扉がゆっくり 1.0〜1.5 秒で開き、中に管理人が立っている)。', 'enemy_ai.js _reveal(lockerCreak)', 'room_locker_creak_slow_01', [
-  P('a', '高い一息のキイィ', 2, 'ラッチが小さく外れて、細く高い「キイィ」が一息で 1.3 秒。少しずつ上ずる', (K) => {
-    K.modal(0.05, [[2100, 0.04, 1], [3300, 0.03, 0.4]], 0.2);
-    squeal(K, 0.15, 1.3, { f: 1250, fc: (u) => 1 + 0.15 * u, vol: 0.45 });
-    K.modal(0.15, [[175, 1.2, 1], [415, 0.9, 0.5]], 0.04, K.out, 0);
+  P('a', '短い「キイ」', 2, 'ラッチが外れる小さな「カチ」の後、細く短い「キイ」。語尾が少し上がる', (K) => {
+    K.modal(0.05, [[2100, 0.03, 1], [3300, 0.02, 0.4]], 0.18);
+    squeal(K, 0.14, 0.55, { f: 1450, fc: (u) => 1 + 0.12 * u, amp: (u) => Math.pow(Math.sin(Math.PI * u), 0.5), vol: 0.5 });
+    K.modal(0.14, [[175, 0.8, 1], [415, 0.6, 0.5]], 0.04, K.out, 0);
   }),
-  P('b', '途中で裏返るキイ…ィィ', 2, '低めの「キイ」が途中で一瞬引っかかり、高く裏返って「ィィ」と伸びる', (K) => {
-    squeal(K, 0.15, 1.35, { f: 950, fc: (u) => (u < 0.45 ? 1 + 0.05 * u : 1.48 + 0.08 * (u - 0.45)), amp: (u) => Math.pow(Math.sin(Math.PI * u), 0.4) * (Math.abs(u - 0.45) < 0.03 ? 0.15 : 1), vol: 0.45 });
+  P('b', '「キ…イ」と二段', 2, '一度引っかかって「キ」、少し間を置いてもう一段高く「イ」', (K) => {
+    K.modal(0.05, [[2100, 0.03, 1]], 0.15);
+    squeal(K, 0.14, 0.22, { f: 1300, vol: 0.45 });
+    squeal(K, 0.52, 0.45, { f: 1520, fc: (u) => 1 + 0.08 * u, vol: 0.5 });
+    K.modal(0.52, [[190, 0.7, 1], [440, 0.5, 0.5]], 0.04, K.out, 0);
   }),
-  P('c', '錆びた蝶番と扉板の響き', 2, 'ざらついた錆の「キイィ」に鋼板の扉が低く共鳴し、開き切って「コン」と止まる', (K) => {
-    squeal(K, 0.15, 1.3, { f: 820, fc: (u) => 1 + 0.1 * Math.sin(u * 7), jit: 0.03, harm: 8, grit: 0.7, vol: 0.45 });
-    K.modal(0.2, [[175, 1.3, 1], [415, 1.0, 0.6], [720, 0.7, 0.3]], 0.1, K.out, 0);
-    steelPanel(K, 1.5, { vol: 0.18, base: 200, d: 0.5 });
+  P('c', 'ゆっくり「キイィ」(錆)', 2, '錆びた蝶番の少しざらついた「キイィ」が 1 秒。開き切って鋼板が小さく「コン」', (K) => {
+    squeal(K, 0.12, 1.0, { f: 1250, fc: (u) => 1 + 0.06 * Math.sin(u * 5), jit: 0.02, grit: 0.5, vol: 0.45 });
+    K.modal(0.15, [[175, 1.0, 1], [415, 0.8, 0.5]], 0.06, K.out, 0);
+    steelPanel(K, 1.2, { vol: 0.12, base: 200, d: 0.4 });
   }),
 ]);
+// P4b 3 周目: 2 周目は「なし」＋メモ「もっと驚かせる音で」。前置きを短くして一気に大きく(扉の轟音・叫び・金属の悲鳴が同時)、どれも大きめ(+3dB)
 scene('locker_burst', '1F・221・管理室', 'ロッカーから出てくる', 'ロッカー登場の 3 段目(管理人がゆっくり出てくる→追跡へ)。', '新設(P4b で enemy_ai.js _reveal の emerge に接続。今は無音)', '—', [
-  PV('a', '無音→叩きつけ＋叫び', 3, '小さな「カチ」の後に一瞬の無音、鋼板の扉が壁に叩きつけられる轟音と同時に叫び、重い 2 歩(仮声)', ['mgr_scream_01'], (K) => {
+  PV('a', '無音→轟音と金切り声', 3, '小さな「カチ」の後に一瞬の無音。鋼板の扉が壁に叩きつけられる轟音、扉の金属が擦れる甲高い悲鳴、管理人の叫びが同時に来て、重い 2 歩(仮声)', ['mgr_scream_03'], (K) => {
     const o = K.split(K.out, K.verb(1.0, 0.35, 0.5), 0.5);
     K.modal(0.05, [[2100, 0.03, 1]], 0.08);
-    boom(K, 0.75, { vol: 0.8, f: 66, f2: 30, d: 0.6, crack: 0.7, to: K.sat(2, o) });
-    steelPanel(K, 0.75, { vol: 0.7, base: 175, d: 1.0, to: o }); steelPanel(K, 0.83, { vol: 0.35, base: 212, d: 0.6, to: o });
-    K.vox(0.78, 'mgr_scream_01', { len: 0.9, rate: 1.1, cents: (u) => 200 * u, jit: 60, drive: 7, hp: 180, vol: 0.75, to: o });
-    heavyStep(K, 1.75, { vol: 0.9, to: o }); heavyStep(K, 2.35, { vol: 1, to: o });
+    boom(K, 0.7, { vol: 1, f: 64, f2: 24, d: 0.9, crack: 1.0, to: K.sat(2.5, o) });
+    steelPanel(K, 0.7, { vol: 0.85, base: 170, d: 1.2, to: o }); steelPanel(K, 0.78, { vol: 0.4, base: 210, d: 0.7, to: o });
+    squeal(K, 0.7, 0.4, { f: 2300, fc: (u) => 1 - 0.25 * u, grit: 0.6, vol: 0.35, to: o });
+    voxStack(K, 0.72, 'mgr_scream_03', [[0, 1.15, 0, 0.55], [0.012, 1.17, 18, 0.4]], { from: 0.7, loop: [1.0, 1.8], hold: 1.2, cents: (u) => 220 * u, jit: 40, jitHz: 3, rasp: 1.5, raspF: 1900, dry: 0.5, drive: 1.3, hp: 180, lp: 6500, vol: 0.85, to: o });
+    softStep(K, 1.75, { vol: 1.1, to: o }); softStep(K, 2.35, { vol: 1.2, to: o });
   }, 'loud'),
-  PV('b', '叫びが先→扉が吹き飛ぶ', 3, 'ロッカーの中からこもった叫びが上がり、そのまま扉が吹き飛んで床に落ち、重い足が着地する(仮声)', ['mgr_scream_03'], (K) => {
+  PV('b', '扉が二度叩きつけられる', 3, '扉が内側から蹴り開けられ「ガーン」、壁に当たって跳ね返りもう一度「ガン」。叫びがかぶさり、重い足が床に落ちる(仮声)', ['mgr_scream_04'], (K) => {
     const o = K.split(K.out, K.verb(1.0, 0.35, 0.5), 0.5);
-    K.vox(0.05, 'mgr_scream_03', { from: 0.7, loop: [1.0, 1.8], hold: 1.4, rate: 1.25, cents: (u) => 250 * u, jit: 60, drive: 6, hp: 180, lp: 1800, vol: 0.8, to: o });
-    boom(K, 0.6, { vol: 0.9, f: 70, f2: 30, d: 0.6, to: K.sat(2, o) }); steelPanel(K, 0.6, { vol: 0.6, base: 180, to: o });
-    steelPanel(K, 0.95, { vol: 0.45, base: 150, d: 0.7, to: o }); debris(K, 0.97, 0.6, { n: 8, f0: 1500, f1: 4000, vol: 0.12, to: o });
-    heavyStep(K, 1.25, { vol: 1.1, to: o });
+    boom(K, 0.1, { vol: 0.85, f: 70, f2: 28, d: 0.6, crack: 0.9, to: K.sat(2, o) }); steelPanel(K, 0.1, { vol: 0.75, base: 180, d: 0.9, to: o });
+    boom(K, 0.42, { vol: 0.6, f: 80, f2: 35, d: 0.4, crack: 0.7, to: K.sat(2, o) }); steelPanel(K, 0.42, { vol: 0.55, base: 150, d: 0.8, to: o });
+    voxStack(K, 0.15, 'mgr_scream_04', [[0, 1.1, 0, 0.55], [0.015, 1.12, 20, 0.4]], { loop: [0.4, 1.2], hold: 1.3, cents: (u) => 180 * u, jit: 40, jitHz: 3, rasp: 1.8, raspF: 1600, dry: 0.45, hp: 160, lp: 6000, vol: 0.85, to: o });
+    debris(K, 0.45, 0.6, { n: 8, f0: 1500, f1: 4000, vol: 0.12, to: o });
+    softStep(K, 1.45, { vol: 1.2, to: o }); softStep(K, 2.05, { vol: 1.1, to: o });
   }, 'loud'),
-  PV('c', '軋み→長い無音→一撃', 3, 'わずかに軋んで止まり、1 秒近い無音。忘れかけた所で扉と叫びと床が一度に来る(仮声)', ['mgr_scream_02'], (K) => {
+  PV('c', '鋭く息を吸う→炸裂', 3, 'ロッカーの中で誰かが鋭く息を吸う。その直後、扉・叫び・床の低い衝撃が一度に炸裂する(仮声)', ['mgr_scream_01'], (K) => {
     const o = K.split(K.out, K.verb(1.1, 0.4, 0.5), 0.5);
-    squeal(K, 0.05, 0.35, { f: 1100, vol: 0.15 });
-    boom(K, 1.3, { vol: 1, f: 64, f2: 26, d: 0.8, crack: 0.8, to: K.sat(2.5, o) }); steelPanel(K, 1.3, { vol: 0.75, base: 170, d: 1.1, to: o });
-    K.vox(1.32, 'mgr_scream_02', { len: 1.0, rate: 1.05, cents: (u) => 150 * Math.sin(Math.PI * u), jit: 60, drive: 8, hp: 120, vol: 0.8, to: o });
-    heavyStep(K, 2.2, { vol: 1, to: o });
+    inhale(K, 0.0, 0.42, 0.7, K.muf(3000, 1, o), 1100);
+    boom(K, 0.48, { vol: 1, f: 58, f2: 20, d: 1.2, crack: 1.0, to: K.sat(2.5, o) }); steelPanel(K, 0.48, { vol: 0.8, base: 170, d: 1.1, to: o });
+    K.tn(0.48, 1.0, { f: 45, f2: 25, vol: 0.6, to: o });
+    voxStack(K, 0.5, 'mgr_scream_01', [[0, 1.12, 0, 0.55], [0.013, 1.14, 18, 0.4]], { loop: [0.3, 1.2], hold: 1.4, cents: (u) => 250 * Math.min(1, u * 3), jit: 45, jitHz: 3, rasp: 1.5, raspF: 1800, dry: 0.5, drive: 1.3, hp: 180, lp: 6500, vol: 0.85, to: o });
+    softStep(K, 1.7, { vol: 1.2, to: o });
   }, 'loud'),
 ]);
 scene('pickup_key', '1F・221・管理室', '鍵を拾う', '鍵を取る(221 の小さな鍵・管理室のキーボックスの 312 の鍵・各段の鍵)。', 'story.js pick(key)', 'key_pickup_01', [
@@ -996,36 +837,64 @@ scene('key_unlock', '1F・221・管理室', '鍵を使う', '扉の前で E →�
   }),
 ]);
 
-// ---------------------------------------------------------------- 5. 312 プール(異世界)
-scene('amb_x312_above', '312 プール', '312 プール(水の上)', '312 の中。青いタイルの通路と天井の高い室内プール(水の上にいる間)。', 'spaces/x312.js ambience(st.amb の水の上の層)', 'x312_pool_room_loop_01', [
-  P('a', '循環ポンプとさざ波', 10, 'こもった循環ポンプの音と、プールの縁に寄せるさざ波', (K) => { const v = K.verb(3, 0.4); K.bed(10, { color: 'pink', type: 'bandpass', f: 520, q: 1, vol: 0.25 }); K.bed(10, { color: 'brown', f: 120, vol: 0.1 }); for (let t = 0.5; t < 9.5; t += 1.2 + K.r()) K.nz(t, 0.6, { f: 900, q: 1.2, vol: 0.1, env: 'swell', to: K.split(K.out, v, 0.8) }); }, 'amb'),
-  P('b', '広い残響の滴り', 10, '天井から落ちる滴りが、広い空間で長く響く', (K) => { const v = K.verb(4, 0.8); const e = K.echo(0.31, 0.3, 2500, K.out); K.bed(10, { color: 'brown', f: 100, vol: 0.04 }); for (let t = 0.4; t < 9.5; t += 0.8 + K.r() * 2) { const f = K.rnd(1300, 2600); K.tn(t, 0.12, { f, f2: f * 0.55, vol: 0.25, to: K.split(K.split(K.out, v, 0.9), e, 0.3) }); } }, 'amb'),
-  P('c', '水面の揺らぎ', 10, '大きくゆっくり揺れる水面の音と、小さな泡', (K) => { const v = K.verb(2.5, 0.4); for (const t of [0, 2.5, 5, 7.5]) K.nz(t, 2.8, { color: 'pink', type: 'lowpass', f: 700, vol: 0.2, env: 'swell', p: 1, to: K.split(K.out, v, 0.6) }); bubbles(K, 0, 10, 4, 0.08); }, 'amb'),
+// ---------------------------------------------------------------- 5. 312 無限の自室(異世界・P5b-4)。P4b 3 周目で新設(旧 312 プールの 6 場面は廃止)。
+//  場面は docs/p5b4/NOTES.md「新 312 の音の場面案」。ゲームへの接続は 3 周目の選択の後(src/spaces/x312.js は今は WebAudio の仮音)
+const X312C = 'spaces/x312.js(P5b-4。接続は 3 周目の選択の後)';
+scene('amb_x312_room_loop', '312 無限の自室', '部屋の空気(312)', '312 の部屋(410 の複製)にいる間。冷蔵庫の低いうなり。消灯の R5 では小さく。', X312C, '50Hz のこぎり波 lowpass 140Hz', [
+  P('a', '冷蔵庫(柔らかく)', 10, '台所の冷蔵庫の低く柔らかいうなり。音程はほとんど持たせず、ときどき中で小さく何かが鳴る', (K) => {
+    K.bed(10, { color: 'brown', type: 'bandpass', f: 65, q: 1.2, vol: 0.35, lfo: [0.07, 0.3] }); K.bed(10, { color: 'pink', f: 300, vol: 0.04 });
+    K.modal(4.2, [[1800, 0.03, 1], [2700, 0.02, 0.4]], 0.05); K.modal(8.1, [[1500, 0.03, 1]], 0.035);
+  }, 'amb'),
+  P('b', 'ほぼ無音(部屋の空気)', 10, '耳が慣れるほど静かな部屋。遠くの換気がかすかに流れ、一度だけ家が鳴る', (K) => {
+    K.bed(10, { color: 'brown', f: 160, vol: 0.05 }); K.bed(10, { color: 'pink', type: 'bandpass', f: 500, q: 0.7, vol: 0.02, lfo: [0.1, 0.5] });
+    houseCreak(K, 5.5, 0.15);
+  }, 'amb'),
+  P('c', '冷蔵庫が止まる', 10, '冷蔵庫のうなりが続き、「カチッ」と止まって静かになる。しばらくして「カチッ」とまた動き出す', (K) => {
+    K.bed(6.5, { color: 'brown', type: 'bandpass', f: 62, q: 1.6, vol: 0.38, fade: 0.25 });
+    K.bed(0.9, { t: 9.1, color: 'brown', type: 'bandpass', f: 62, q: 1.6, vol: 0.38, fade: 0.6 });
+    K.modal(6.35, [[1900, 0.03, 1], [3100, 0.02, 0.4]], 0.12); K.modal(9.05, [[1900, 0.03, 1], [3100, 0.02, 0.4]], 0.1);
+    K.bed(10, { color: 'brown', f: 140, vol: 0.03 });
+  }, 'amb'),
 ]);
-scene('x312_dive', '312 プール', '入水・潜る', '312 の水中で Ctrl 長押しで潜る(息を止めて水中へ)。', 'spaces/x312.js sfx(splash)', 'x312_splash_in_01', [
-  P('a', '「ばしゃ」と息を止める', 3, '息を吸って止め、水しぶき→水中のこもった泡', (K) => { K.nz(0.05, 0.4, { color: 'pink', f: 1600, q: 1, vol: 0.3, env: 'swell' }); K.nz(0.5, 0.4, { f: 900, q: 0.8, vol: 0.7 }); K.nz(0.5, 0.25, { type: 'highpass', f: 2500, vol: 0.35 }); K.grains(0.5, 0.6, { rate: 60, len: 0.02, f: 2500, vol: 0.3, tone: 1500 }); bubbles(K, 1.0, 1.6, 15, 0.3, K.muf(600)); }),
-  P('b', '静かに沈む', 3, '水しぶきを立てず、すっと沈んで泡が上がっていく', (K) => { K.nz(0.1, 0.5, { type: 'lowpass', f: 900, vol: 0.2, env: 'swell' }); bubbles(K, 0.7, 2.1, 10, 0.3, K.muf(700)); K.tn(0.7, 0.4, { f: 60, vol: 0.2 }); }),
-  P('c', '勢いよく飛び込む', 3, '大きな水しぶきと体が水を打つ低い音、泡の渦', (K) => { K.nz(0.1, 0.7, { f: 800, q: 0.6, vol: 0.9 }); K.tn(0.1, 0.2, { f: 70, vol: 0.6 }); K.grains(0.1, 0.8, { rate: 90, len: 0.02, f: 2500, vol: 0.3, tone: 1400 }); bubbles(K, 0.9, 1.0, 30, 0.35, K.muf(600)); }),
+scene('x312_clock_tick', '312 無限の自室', '時計の秒', '壁の時計の秒針(R1・R2 だけ。R3 で止む = 止まった時計の合図)。ゲームでは 1 秒ごとに 1 打。', X312C, '0.025 秒のクリック', [
+  P('a', '静かな秒針「チッ」', 4, '壁掛けのクオーツ時計。小さく乾いた「チッ」が 1 秒ごと', (K) => { for (let i = 0; i < 4; i++) { K.nz(0.2 + i, 0.003, { type: 'highpass', f: 3500, vol: 0.25 }); K.modal(0.2 + i, [[3200, 0.015, 1], [5100, 0.01, 0.4]], 0.25, K.out, 0); } }),
+  P('b', '「カチ・コチ」', 4, '一打ごとに少し音の高さが違う「カチ」「コチ」。古い掛け時計', (K) => { for (let i = 0; i < 4; i++) { const f = i % 2 ? 2100 : 2700; K.modal(0.2 + i, [[f, 0.025, 1], [f * 1.6, 0.015, 0.4]], 0.3, K.out, 0.2); K.tn(0.2 + i, 0.03, { f: 420, f2: 300, vol: 0.06 }); } }),
+  P('c', '置時計(少し響く)', 4, '箱の中で鳴る少し低めの「コッ」が、部屋に小さく響く', (K) => { const o = K.split(K.out, K.verb(1.0, 0.3, 0.5), 0.5); for (let i = 0; i < 4; i++) { K.modal(0.2 + i, [[1700, 0.03, 1], [2900, 0.02, 0.4]], 0.25, o, 0.2); K.tn(0.2 + i, 0.05, { f: 520, f2: 380, vol: 0.12, to: o }); } }),
 ]);
-scene('amb_x312_under', '312 プール', '312 水中', '潜っている間(上の照明が歪み、音がこもる)。', 'spaces/x312.js ambience(st.amb の水中の層)', 'x312_underwater_loop_01', [
-  P('a', 'こもりと泡', 10, '低くこもった水の音に、自分の泡がときどき上がる', (K) => { K.bed(10, { color: 'brown', f: 200, vol: 0.35 }); bubbles(K, 0, 10, 3, 0.15, K.muf(900)); K.tn(0, 10, { f: 52, vol: 0.1, env: 'flat' }); }, 'amb'),
-  P('b', '耳の圧迫', 10, '水圧で耳がつまる低いうねり。息が苦しくなる感じ', (K) => { K.bed(10, { color: 'brown', f: 120, vol: 0.4, lfo: [0.2, 0.6] }); K.tn(0, 10, { f: 35, vol: 0.2, env: 'swell', p: 0.5 }); }, 'amb'),
-  P('c', '遠い金属音', 10, 'こもった水の中、遠くで何かが金属に当たる音が届く', (K) => { K.bed(10, { color: 'brown', f: 180, vol: 0.25 }); const v = K.verb(4, 0.8, 0.8); K.modal(4.0, [[220, 2, 1], [550, 1.5, 0.5]], 0.3, K.split(K.muf(600), v, 1)); }, 'amb'),
+scene('x312_door_open', '312 無限の自室', '奥の扉が開く', 'R1〜の奥の扉(元は窓の所)を開ける。', X312C, '軋み＋短いノイズ', [
+  P('a', '「ガチャッ」→ゆっくり開く', 2.5, 'ラッチの「ガチャッ」の後、蝶番が低くゆっくり軋みながら開く', (K) => { const o = K.split(K.out, K.verb(0.4, 0.15, 0.5), 0.3); latch(K, 0.1, 0.5, 1600, o); K.creak(0.3, 1.3, { rate: 35, rate2: 20, f: 520, q: 5, vol: 0.28, to: o }); K.nz(0.3, 1.2, { color: 'brown', type: 'lowpass', f: 260, vol: 0.15, env: 'swell', to: o }); }),
+  P('b', '静かに開く', 2.5, 'ラッチの小さな音と、扉が空気を押す気配だけ', (K) => { latch(K, 0.1, 0.35, 1700); K.nz(0.25, 1.2, { color: 'brown', type: 'lowpass', f: 380, vol: 0.18, env: 'swell' }); }),
+  P('c', '長い軋み', 2.5, 'ラッチの後、扉の重みで蝶番が細く長く「ギィィ」と鳴り続ける', (K) => { const o = K.split(K.out, K.verb(0.5, 0.2, 0.5), 0.35); latch(K, 0.1, 0.45, 1500, o); squeal(K, 0.3, 1.7, { f: 620, fc: (u) => 1 - 0.15 * u, grit: 0.45, jit: 0.025, vol: 0.3, to: o }); }),
 ]);
-scene('pl_step_water', '312 プール', '足音：水中・水辺', 'プールの浅瀬を歩く・底を歩く・泳ぐ。', '新設(P4b で spaces/x312.js の移動に接続)', '—', [
-  P('a', '水を蹴る', 4, '膝までの水をかき分ける「ザブ、ザブ」', (K) => walk(K, 5, 0.75, (t, i, acc) => { K.nz(t, 0.35, { f: 800, q: 0.8, vol: 0.4 * acc, env: 'swell' }); K.grains(t + 0.1, 0.25, { rate: 40, len: 0.02, f: 2500, vol: 0.2, tone: 1700 }); })),
-  P('b', '底を歩く(水中)', 4, '水中で底を踏む鈍い音と、小さな泡', (K) => { const o = K.muf(700); walk(K, 6, 0.65, (t, i, acc) => { K.tn(t, 0.15, { f: 80, f2: 60, vol: 0.5 * acc, lpf: 300 }); bubbles(K, t, 0.2, 6, 0.2, o); }); }),
-  P('c', '浅瀬のぱちゃぱちゃ', 4, '足首までの水を速めに歩く', (K) => walk(K, 8, 0.45, (t, i, acc) => { K.nz(t, 0.08, { f: 1500, q: 0.8, vol: 0.4 * acc }); K.grains(t + 0.03, 0.1, { rate: 80, len: 0.015, f: 2500, vol: 0.15, tone: 1900 }); })),
+scene('x312_door_close', '312 無限の自室', '扉が閉まる(ひとりでに)', '通ってきた扉が閉まる(ひとりでに閉まる時も)。', X312C, '低いノイズ', [
+  P('a', '「バタン」', 2, '扉が枠に当たる「バタン」とラッチの「カチャ」', (K) => { const o = K.split(K.out, K.verb(0.5, 0.2, 0.5), 0.35); doorHit(K, 0.1, 0.9, o); latch(K, 0.11, 0.45, 1600, o); }),
+  P('b', '静かに「カチャン」', 2, '音を立てずに閉まり、ラッチだけが「カチャン」と掛かる', (K) => { knock(K, 0.1, { f: 110, d: 0.06, vol: 0.25, nf: 800, nv: 0.1 }); latch(K, 0.12, 0.5, 1700); }),
+  P('c', '背後で閉まる(こもる)', 2, '少し離れた背後で扉が閉まり、壁越しにこもって響く', (K) => { const o = K.split(K.muf(700, 1), K.verb(1.4, 0.5, 0.6), 0.6); doorHit(K, 0.1, 0.9, o); latch(K, 0.11, 0.4, 1500, o); }),
 ]);
-scene('x312_gasp', '312 プール', '浮上の息継ぎ', '底の鍵を取って浮上し、息を吸う(プールサイドの管理人は見ているだけ)。', 'spaces/x312.js sfx(gasp)', 'x312_surface_gasp_01', [
-  P('a', '大きく吸う', 2.5, '水面を割って「ハァッ」と大きく吸い、吐く', (K) => { K.nz(0.05, 0.2, { f: 1200, vol: 0.3 }); K.nz(0.15, 0.6, { color: 'pink', f: 1500, f2: 2200, q: 1, vol: 0.6, env: 'swell' }); K.tn(0.15, 0.5, { type: 'sawtooth', f: 180, vol: 0.04, env: 'swell', lpf: 900 }); K.nz(0.9, 0.6, { color: 'pink', f: 900, q: 1, vol: 0.35, env: 'swell' }); }),
-  P('b', '咳き込む', 2.5, '吸った直後に水を飲んで咳き込む', (K) => { K.nz(0.05, 0.4, { color: 'pink', f: 1600, q: 1, vol: 0.5, env: 'swell' }); for (const t of [0.8, 1.1, 1.45]) K.voice(t, 0.18, { f0: 140, form: [[600, 3, 1], [1700, 5, 0.6]], drive: 6, breath: 0.4, vol: 0.4, a: 0.01, rel: 0.1 }); }),
-  P('c', '震える息', 2.5, '吸った後、震えながら吐く。寒さと恐怖', (K) => { K.nz(0.05, 0.5, { color: 'pink', f: 1500, q: 1, vol: 0.5, env: 'swell' }); K.nz(0.7, 1.5, { color: 'pink', f: 900, f2: 600, q: 1, vol: 0.4, env: 'swell', to: K.shape(0.7, 1.5, 1, (u) => 0.5 + 0.5 * Math.sin(u * 2 * Math.PI * 10), K.out) }); }),
+scene('x312_door_locked', '312 無限の自室', '扉が開かない', 'R5 の奥・入り直した時の奥の扉で E(開かない)。', X312C, 'story の rattle', [
+  P('a', '「ガチッ」と止まる', 1.5, 'ノブは回るがボルトが受けに当たって「ガチッ」と止まる', (K) => { K.grains(0.05, 0.08, { rate: 200, len: 0.002, f: 2400, vol: 0.12 }); K.modal(0.15, [[1300, 0.05, 1], [2100, 0.03, 0.5]], 0.35, K.out, 0.6); knock(K, 0.15, { f: 140, d: 0.05, vol: 0.4, nf: 1200, nv: 0.2 }); }),
+  P('b', '枠で 2 回鳴る', 1.5, '引いても開かず、扉が枠の中で 2 回「ガタン」と鳴る', (K) => { doorHit(K, 0.1, 0.55); latch(K, 0.1, 0.25, 1500); doorHit(K, 0.42, 0.45); }),
+  P('c', '重い手応え', 1.5, '鍵の掛かった重い扉。ノブがわずかに動いて鈍い「ゴッ」で止まる', (K) => { K.creak(0.05, 0.12, { rate: 250, f: 1800, q: 3, vol: 0.08 }); knock(K, 0.18, { f: 90, d: 0.1, vol: 0.55, nf: 600, nv: 0.15 }); K.modal(0.18, [[1100, 0.04, 1]], 0.15); }),
 ]);
-scene('x312_drown', '312 プール', '溺れる', '息ゲージが尽きる(水中で死亡)。', 'spaces/x312.js sfx(drown)', 'x312_drown_01', [
-  P('a', '水中でもがく', 3.5, '大量の泡ともがく音、こもった叫び', (K) => { const o = K.muf(500); bubbles(K, 0.1, 1.5, 40, 0.4, o); for (const t of [0.2, 0.6, 1.0]) K.tn(t, 0.2, { f: 70, vol: 0.3, to: o }); K.voice(0.3, 1.0, { f0: 200, form: [[600, 3, 1], [1000, 4, 0.5]], drive: 3, vol: 0.3, to: o }); }),
-  P('b', '息が尽きる', 3.5, '心拍が遅くなり、泡がまばらになって止む', (K) => { const o = K.muf(600); bubbles(K, 0.1, 1.2, 12, 0.3, o); heart(K, 0.3, 0.6, o); heart(K, 1.4, 0.4, o); heart(K, 2.6, 0.2, o); K.tn(0, 3.4, { f: 40, vol: 0.2, env: 'swell' }); }),
-  P('c', '最後の大きな泡', 3.5, 'こもった短い叫びと大きな泡のかたまり→静寂', (K) => { const o = K.muf(400); K.voice(0.2, 0.8, { f0: 160, form: [[500, 3, 1], [900, 4, 0.5]], drive: 4, vol: 0.4, to: o }); bubbles(K, 0.9, 0.8, 50, 0.45, K.muf(800)); }),
+scene('x312_key_slam', '312 無限の自室', '鍵を取ると玄関の扉が閉まる', 'R5 の机で 105 の鍵を取った瞬間、背後で玄関の扉が閉まる。', X312C, '低いノイズ＋40Hz のうなり', [
+  P('a', '遠くで「バーン」', 3, '部屋の向こう(玄関)で扉が叩きつけられ、廊下に響く', (K) => { const o = K.split(K.muf(1500, 1), K.verb(1.8, 0.55, 0.6), 0.6); doorHit(K, 0.1, 1.0, o); boom(K, 0.1, { vol: 0.4, f: 70, f2: 35, d: 0.5, crack: 0.3, to: o }); latch(K, 0.12, 0.4, 1500, o); }),
+  P('b', '部屋ごと揺れる', 3, '扉が閉まる衝撃で部屋全体が低く揺れ、棚の物がかすかに鳴る', (K) => { const o = K.split(K.out, K.verb(1.2, 0.4, 0.6), 0.5); doorHit(K, 0.1, 0.9, K.muf(1200, 1, o)); boom(K, 0.1, { vol: 0.7, f: 50, f2: 25, d: 1.0, crack: 0.2, to: o }); for (let i = 0; i < 5; i++) K.modal(0.15 + K.rnd(0, 0.3), [[K.rnd(1500, 3500), 0.04, 1]], 0.04, o, 0.2); }),
+  P('c', '閉まる→鍵が掛かる', 3, '玄関の扉が閉まり、少しして外から鍵が掛かる「カチャン」', (K) => { const o = K.split(K.muf(1800, 1), K.verb(1.2, 0.4, 0.6), 0.5); doorHit(K, 0.1, 0.85, o); latch(K, 0.11, 0.4, 1600, o); K.modal(0.85, [[1900, 0.05, 1], [2800, 0.04, 0.5]], 0.3, o, 0.5); knock(K, 0.86, { f: 300, d: 0.03, vol: 0.2, nf: 2000, nv: 0.15, to: o }); }),
+]);
+scene('x312_watcher_lookup', '312 無限の自室', '管理人が顔を上げる', 'R5 でベッド脇に座った管理人に懐中電灯を当てると、顔を上げてこちらを見る。', X312C, '三角波 180→150Hz＋息', [
+  P('a', '衣擦れと首の鳴り', 2.5, '服が擦れる音と、首の骨がかすかに鳴る小さな音。ゆっくり息を吐く', (K) => { K.nz(0.1, 0.5, { color: 'pink', f: 2200, q: 0.6, vol: 0.18, env: 'swell' }); K.modal(0.45, [[900, 0.03, 1], [1600, 0.02, 0.4]], 0.08, K.out, 0.3); exhale(K, 0.9, 1.2, 0.2, K.out, 650); }),
+  P('b', '低く息を吸う', 2.5, '顔を上げながら、鼻から低くゆっくり息を吸う', (K) => { inhale(K, 0.2, 1.2, 0.3, K.out, 700); }),
+  P('c', '静寂に心拍が一つ', 2.5, '何も鳴らない中で、自分の心拍が一度だけ', (K) => { K.bed(2.5, { color: 'brown', f: 70, vol: 0.03 }); heart(K, 0.8, 0.6); }, 'quiet'),
+]);
+scene('x312_room_shift', '312 無限の自室', '振り返った時の小さな気配', '通ってきた扉が移った後に振り返った時の小さな気配(案)。', X312C, 'なし', [
+  P('a', '家鳴り一つ', 3, '部屋のどこかで木が一度だけ軋む', (K) => { houseCreak(K, 0.5, 0.35); }),
+  P('b', '遠くで扉が閉まる', 3, 'ずっと遠くの部屋で、扉がそっと閉まる音', (K) => { const o = K.split(K.muf(500, 1), K.verb(2.0, 0.6, 0.6), 0.7); knock(K, 0.3, { f: 100, d: 0.08, vol: 0.4, nf: 600, nv: 0.1, to: o }); latch(K, 0.31, 0.25, 1400, o); }),
+  P('c', '耳がつまる', 3, '気圧が変わったように耳が一瞬つまり、戻る', (K) => { K.tn(0.1, 2.6, { f: 28, vol: 0.5, env: 'swell', p: 0.6 }); K.bed(2.8, { color: 'brown', f: 60, vol: 0.25, lfo: [0.3, 0.8] }); }, 'quiet'),
+]);
+scene('x312_bed_creak', '312 無限の自室', 'ベッドの軋み', 'R5 で管理人が座っているベッドの軋み(近づくと)(案)。', X312C, 'なし', [
+  P('a', 'スプリングの軋み', 2.5, 'マットレスのばねが体重で「ギシ」と鳴り、小さく震える', (K) => { K.creak(0.2, 0.4, { rate: 60, rate2: 30, f: 900, q: 6, vol: 0.3 }); K.modal(0.25, [[440, 0.25, 1], [910, 0.15, 0.4]], 0.06, K.out, 0); }),
+  P('b', '木枠の軋み', 2.5, 'ベッドの木の枠が低くゆっくり軋む', (K) => { K.creak(0.2, 0.8, { rate: 30, rate2: 15, f: 380, q: 4, vol: 0.4 }); }),
+  P('c', '体重を移す軋みと布擦れ', 2.5, '座り直すように体重が移り、軋みと掛け布団の擦れる音', (K) => { K.creak(0.2, 0.5, { rate: 45, rate2: 25, f: 500, q: 5, vol: 0.3 }); K.nz(0.3, 0.8, { color: 'pink', f: 2500, q: 0.6, vol: 0.15, env: 'swell' }); }),
 ]);
 
 // ---------------------------------------------------------------- 6. 105 長い廊下(異世界)
@@ -1044,11 +913,7 @@ scene('x105_scream', '105 長い廊下', '遠い悲鳴(追跡の始まり)', '10
     K.vox(0.1, 'mgr_scream_03', { from: 0.7, loop: [1.0, 1.8], hold: 2.4, rate: 1.4, cents: (u) => 200 * u, jit: 60, vib: 6, vibd: 25, drive: 3, rasp: 1.2, raspF: 2400, hp: 250, lp: 3500, vol: 0.85, to: o });
     K.nz(0.2, 2.2, { color: 'pink', f: 1800, q: 0.7, vol: 0.06, env: 'swell', to: o });
   }),
-  PV('c', '声を遠く反響・はるか奥', 5.5, 'ずっと奥で短く一声、間を置いてもう一声。ほとんど残響だけが届く(仮声)', ['mgr_scream_01', 'mgr_scream_02'], (K) => {
-    const v = K.verb(4.0, 1.0, 0.7), e = K.echo(0.5, 0.5, 1500, K.out), o = K.split(K.split(K.gain(0.3, K.out), v, 1), e, 0.6);
-    K.vox(0.1, 'mgr_scream_01', { len: 1.0, rate: 1.25, cents: (u) => 150 * u, jit: 60, drive: 4, hp: 250, lp: 900, vol: 0.5, to: o });
-    K.vox(1.8, 'mgr_scream_02', { loop: [0.4, 1.2], hold: 1.6, rate: 1.3, cents: (u) => 250 * Math.sin(Math.PI * u), jit: 70, drive: 4, hp: 250, lp: 1500, vol: 0.8, to: o });
-  }),
+  PV('c', '声を遠く反響・はるか奥', 5.5, 'ずっと奥で短く一声、間を置いてもう一声。ほとんど残響だけが届く。P4b: メモ「もっと機械音感をなくしたい」で歪みを弱め、息の混じった喉のかすれを主に、声を 2 本ずらして重ね、音程の揺れを遅いうねりに(加工は src/audio_voice.js)(仮声)', VOICE.x105_scream.takes[0], (K) => VOICE.x105_scream.fn(K, VOICE.x105_scream.takes[0])),
 ]);
 scene('x105_lamp_off', '105 長い廊下', '背後の灯りが消える', '105 の追跡中、背後から灯りが一つずつ消える。705 の天窓の灯りにも同系の音。', 'spaces/x105.js sound(灯りの消灯ごと)', 'x105_lamp_off_01', [
   P('a', '安定器の「バチッ」', 1.5, '小さな放電音と同時にうなりが途切れる', (K) => { K.tn(0, 0.3, { type: 'sawtooth', f: 100, vol: 0.08, env: 'flat', lpf: 900 }); K.nz(0.3, 0.08, { f: 2400, q: 2, vol: 0.5 }); knock(K, 0.3, { f: 300, d: 0.03, vol: 0.2, nf: 3000 }); }),
@@ -1165,10 +1030,11 @@ scene('ending_gate', '脱走・エンディング', '門を抜けるエンディ
     const far = K.split(K.muf(2000, 0.7), K.verb(2.0, 0.7, 0.6), 1);
     K.creak(4.4, 0.8, { rate: 25, f: 380, f2: 820, q: 6, vol: 0.25, to: far }); steelPanel(K, 5.3, { vol: 0.5, base: 140, d: 1.2, to: far }); K.modal(5.31, [[1400, 0.1, 1], [2300, 0.08, 0.5]], 0.3, far, 0.5);
   }),
-  P('c', '車内のこもった走行音→静寂', 8, '車内から聞く低くこもった走行音。門の段差で車体が一度「ドン」と揺れ、音がゆっくり引いて夜風だけが残る', (K) => {
+  P('c', '車内のこもった走行音→静寂', 8, '車内から聞く低くこもった走行音。門の段差で車体が一度「ドン」と揺れ、音がゆっくり引いて夜風だけが残る。P4b: メモ「ジャリジャリ感をなくして」でエンジンを点火の粒の無い滑らかなうなりに替え、タイヤの音を低く丸め、段差の軋みを外した', (K) => {
     const g = K.shape(0, 6.5, 1, (u) => (u < 0.6 ? Math.min(1, u * 8) : Math.pow((1 - u) / 0.4, 1.3)), K.muf(260, 1));
-    engine(K, 0, 6.5, (u) => 1300 + 200 * u, { cyl: 4, f: 220, vol: 0.6, to: g }); tireRoll(K, 0, 6.5, { vol: 0.5, f: 200, to: g });
-    K.tn(3.5, 0.3, { f: 55, f2: 40, vol: 0.6 }); K.nz(3.5, 0.15, { type: 'lowpass', f: 400, vol: 0.3 }); K.creak(3.55, 0.3, { rate: 40, f: 500, q: 4, vol: 0.08 });
+    smoothEngine(K, 0, 6.5, (u) => 1300 + 200 * u, { cyl: 4, f: 220, vol: 0.6, to: g });
+    K.bed(6.5, { color: 'brown', type: 'lowpass', f: 140, vol: 0.35, fade: 0.4, to: g });      // タイヤの低いうなり(粒なし)
+    K.tn(3.5, 0.3, { f: 55, f2: 40, vol: 0.6 }); K.nz(3.5, 0.15, { color: 'brown', type: 'lowpass', f: 300, vol: 0.3 });
     K.bed(3.5, { t: 4.5, color: 'pink', f: 450, vol: 0.06, lfo: [0.2, 0.7], fade: 1.2 });
   }),
 ]);
@@ -1180,7 +1046,59 @@ export const ROUND2 = ['pl_flashlight', 'door_wood', 'pl_step_corridor', 'door_l
   'enemy_breath_close', 'enemy_breath_door', 'enemy_handle', 'room_door_rattle', 'enemy_door_smash', 'enemy_scream', 'enemy_hit', 'locker_open_slow',
   'locker_burst', 'key_unlock', 'x105_scream', 'ending_gate'];
 for (const id of ROUND2) if (!REDONE[id]) REDONE[id] = 'P4a-3 2 周目';
-for (const sc of S) { if (REDONE[sc.id]) sc.redone = REDONE[sc.id]; if (ROUND2.includes(sc.id)) sc.round = 2; }
+// P4b(3 周目・2026-11-02): 2 周目の選択で「作り直し」6 場面と「なし＋メモ」3 場面の候補を新しくし(旧候補は消した。履歴は docs/p4a/sounds.md)、
+//  新 312(無限の自室)の場面を足した。from = 2 周目の答え、note = その時のメモ(試聴盤は pick がこの答えのままなら「3 周目・選んでください」と出す)
+export const ROUND3 = {
+  pl_flashlight: { from: 'redo', note: 'カチッという音' },
+  door_wood: { from: 'redo', note: 'がちゃっというような単純な音でいい' },
+  enemy_presence: { from: 'none', note: 'なにかぼそぼそ呟いてる' },
+  enemy_step_walk: { from: 'redo', note: '金属音感をなくして' },
+  enemy_breath_close: { from: 'redo', note: 'みいつけたで、ただまだ機械音感がする' },
+  room_door_rattle: { from: 'redo', note: '機械音感をなくして' },
+  enemy_scream: { from: 'redo', note: '機械音感をなくして' },
+  locker_open_slow: { from: 'none', note: 'キイという音がいい' },
+  locker_burst: { from: 'none', note: 'もっと驚かせる音で' },
+  amb_x312_room_loop: { from: 'new' }, x312_clock_tick: { from: 'new' }, x312_door_open: { from: 'new' }, x312_door_close: { from: 'new' },
+  x312_door_locked: { from: 'new' }, x312_key_slam: { from: 'new' }, x312_watcher_lookup: { from: 'new' }, x312_room_shift: { from: 'new' }, x312_bed_creak: { from: 'new' },
+};
+for (const id of Object.keys(ROUND3)) REDONE[id] = 'P4b 3 周目';
+// P4b: 採用のままメモの方向へ調整した候補(場面 → 説明)。ゲームの wav はこの調整後の音
+export const ADJUSTED = {
+  room_fall: 'A を調整(パリーン！と割れる)', enemy_step_run: 'C を調整(もっと大きくドタバタ)', enemy_breath_door: 'B に笑い・台詞を 2 本追加',
+  enemy_door_smash: 'C を調整(爆発のように)', enemy_hit: 'A を調整(もっと重く)', x105_scream: 'C を調整(機械音感をなくす)', ending_gate: 'C を調整(ジャリジャリ感をなくす)',
+};
+
+// ================================================================ ゲーム用の書き出し(P4b。tools/build_audio.sh が使う)
+// 採用候補(sound_choice.json の pick)を assets/audio/<場面 ID>.wav に書く時の切り方。ここに無い採用場面は候補をそのまま 1 本の効果音として書く。
+//  loop   = 環境音のループ(頭と尻を等パワーで重ねて継ぎ目を消す。xfade 秒)
+//  sprite = 1 歩ずつ鳴らす足音: 同じ形の n 通り(毎回ゆらす)を slot 秒おきに並べた 1 本。ゲームは鳴らすたびに 1 区画を選ぶ
+//  segs   = 1 本の中の区間に名前を付ける(ゲームは名前で区間だけ鳴らす)
+//  voice  = 声の場面。wav に焼かず、ゲームが鳴らす時に素材(assets/audio/tts)へ src/audio_voice.js の加工を掛ける
+export const GAME = {
+  sr: 22050,
+  scenes: {
+    pl_step_room: { sprite: { n: 4, slot: 0.4 }, step: (K, t, i) => {
+      const acc = i % 2 ? 0.82 : 1;
+      K.tn(t, 0.07, { f: 120 * K.rnd(0.9, 1.1), f2: 80, vol: 0.4 * acc, lpf: 600 }); K.nz(t, 0.04, { type: 'lowpass', f: 600 * K.rnd(0.9, 1.1), vol: 0.15 * acc });
+    } },
+    enemy_step_run: { sprite: { n: 4, slot: 0.55 }, step: (K, t, i) => runStomp(K, t, i % 2 ? 0.92 : 1.05, K.split(K.out, K.verb(0.5, 0.18, 0.5), 0.4), i === 2) },
+    pl_closet: { segs: { open: [0, 0.75], close: [1.7, 3.0] } },
+    // 落ちる物: 割れ物(花瓶・マグ・コップ・瓶)は採用 A(パリーン)。本・ファイルと缶は割れないので、A と同じ残響の作りで派生させた区間を同じ 1 本に並べる(sounds.md の申し送り)
+    room_fall: { parts: [['glass', null], ['books', 1.3, (K) => {
+      const o = K.split(K.out, K.verb(0.8, 0.28, 0.4), 0.45);
+      knock(K, 0.05, { f: 110, d: 0.1, vol: 0.7, nf: 900, nv: 0.35, to: o }); K.nz(0.05, 0.06, { color: 'pink', type: 'lowpass', f: 1800, vol: 0.5, to: o });
+      paper(K, 0.08, 0.3, 0.22, 1, o); knock(K, 0.21, { f: 130, d: 0.07, vol: 0.4, nf: 1100, nv: 0.25, to: o }); knock(K, 0.42, { f: 150, d: 0.05, vol: 0.18, nf: 1200, nv: 0.1, to: o });
+    }], ['cans', 1.8, (K) => {
+      const o = K.split(K.out, K.verb(0.8, 0.28, 0.4), 0.45);
+      for (const [t, v] of [[0.05, 1], [0.21, 0.6], [0.33, 0.45], [0.5, 0.3], [0.63, 0.2], [0.72, 0.12]]) { const f = K.rnd(1900, 2600); K.modal(t, [[f, 0.07, 1], [f * 2.7, 0.04, 0.5], [f * 0.55, 0.06, 0.4]], 0.35 * v, o, 0.6); knock(K, t, { f: 300, d: 0.02, vol: 0.12 * v, nf: 2500, nv: 0.1, to: o }); }
+      K.grains(0.6, 0.9, { rate: 30, len: 0.004, f: 2200, vol: 0.08, p: 1.5, to: o });
+    }]], types: { vase: 'glass', mug: 'glass', cup: 'glass', bottle: 'glass', books: 'books', binders: 'books', cans: 'cans' } },
+    amb_corridor: { loop: true, xfade: 2 }, ev_motor: { loop: true, xfade: 1.5 }, amb_x105: { loop: true, xfade: 2 },
+    amb_outdoor: { loop: true, xfade: 2 }, amb_roof: { loop: true, xfade: 2 }, amb_b1: { loop: true, xfade: 2 },
+    enemy_breath_door: { voice: true }, x105_scream: { voice: true },
+  },
+};
+for (const sc of S) { if (REDONE[sc.id]) sc.redone = REDONE[sc.id]; if (ROUND2.includes(sc.id)) sc.round = 2; if (ROUND3[sc.id]) { sc.round = 3; sc.r3 = ROUND3[sc.id]; } if (ADJUSTED[sc.id]) sc.adjusted = ADJUSTED[sc.id]; }
 
 // ================================================================ 書き出し
 for (const sc of S) for (const c of sc.cands) {

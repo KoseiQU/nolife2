@@ -40,6 +40,8 @@
   .nm code { display: block; color: var(--dim); font-weight: 400; font-size: 10.5px; }
   .again-tag { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; color: #1a120b; background: var(--redo); border-radius: 3px; padding: 0 6px; }
   .redone-tag { display: inline-block; margin-top: 3px; font-size: 10.5px; color: var(--redo); }
+  .adj-tag { display: inline-block; margin-top: 3px; font-size: 10.5px; color: var(--accent); }
+  .open-tag { display: inline-block; margin-top: 3px; font-size: 11px; font-weight: 600; color: #0d0e10; background: var(--none); border-radius: 3px; padding: 0 6px; }
   .cand { display: flex; gap: 6px; align-items: center; min-width: 0; padding: 3px 4px; border-radius: 6px; border: 1px solid transparent; }
   .cand.sel { background: var(--sel); border-color: var(--sel-line); }
   .cand .lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font-size: 12px; cursor: help; }
@@ -83,7 +85,7 @@
   <button id="stop" type="button" style="padding:4px 10px;font-size:12px">■ 停止</button>
   <span class="save" id="save">読み込み中…</span>
 </div></div>
-<p class="round2" id="round2"><span>2 周目：作り直し 20 場面を再選択してください(左に橙の線と「2 周目・再選択してください」の札がある行。「未選択だけ表示」で絞れます)</span></p>
+<p class="round2" id="round2"><span>3 周目：作り直し 6 場面・「なし＋メモ」3 場面の新しい候補と、新しい 312(無限の自室)の 9 場面を選んでください(左に橙の線と「3 周目」の札がある行。「未選択だけ表示」で絞れます)。採用済みの場面はゲームに入りました(「調整済み」はメモの方向へ直した音)</span></p>
 <p class="help">▶ で試聴(もう一度押すと止まる)。候補名にマウスを乗せると説明が出ます。右の 5 つから 1 つ押すと選択になり、<b>自動で保存</b>されます(A・B・C=その候補を採用／なし=その場面は無音でよい／作り直し=メモ欄の方向で作り直す)。メモ欄も自動保存です。</p>
 <main><table id="tbl">
   <colgroup><col class="c-name"><col class="c-cand"><col class="c-cand"><col class="c-cand"><col class="c-pick"><col class="c-memo"></colgroup>
@@ -162,8 +164,13 @@ function setNote(id, t) {
   tidy(id); scheduleSave();
 }
 function tidy(id) { const e = doc.choices[id]; if (!e) return; for (const k of Object.keys(e)) if (e[k] === undefined) delete e[k]; if (!Object.keys(e).length) delete doc.choices[id]; }
-// 作り直した場面で pick が redo のまま = ユーザーが新しい候補をまだ選んでいない
-const needsAgain = (s) => !!s.redone && (doc.choices[s.id] || {}).pick === 'redo';
+// 作り直した場面で pick が redo のまま = ユーザーが新しい候補をまだ選んでいない。
+// P4b 3 周目: 新しい場面(312)は未選択の間、「なし＋メモ」から作り直した場面は pick が none でメモが 2 周目のままの間も「選んでください」
+const needsAgain = (s) => {
+  const e = doc.choices[s.id] || {};
+  if (s.round === 3) return s.r3.from === 'new' ? !e.pick : e.pick === 'redo' || (s.r3.from === 'none' && e.pick === 'none' && (e.note || '') === s.r3.note);
+  return !!s.redone && e.pick === 'redo';
+};
 const isDone = (s) => { const p = (doc.choices[s.id] || {}).pick; return !!p && !needsAgain(s); };
 function paint(id) {
   const s = SCENES.find((x) => x.id === id), tr = rows[id], e = doc.choices[id] || {};
@@ -171,7 +178,10 @@ function paint(id) {
   for (const b of tr.querySelectorAll('.picks button')) b.classList.toggle('on', b.dataset.v === e.pick);
   for (const c of tr.querySelectorAll('.cand')) c.classList.toggle('sel', c.dataset.c === e.pick);
   const m = $('.memo', tr); if (document.activeElement !== m) m.value = e.note || '';
-  $('.tags', tr).innerHTML = needsAgain(s) ? `<span class="again-tag">${s.round === 2 ? '2 周目・再選択してください' : '作り直し済み・再選択してください'}</span>`
+  const againLabel = s.round === 3 ? (s.r3.from === 'new' ? '3 周目・新しい場面(312)' : '3 周目・選んでください') : s.round === 2 ? '2 周目・再選択してください' : '作り直し済み・再選択してください';
+  $('.tags', tr).innerHTML = needsAgain(s) ? `<span class="again-tag">${againLabel}</span>`
+    : !e.pick ? '<span class="open-tag">未選択</span>'
+    : s.adjusted && ['A', 'B', 'C'].includes(e.pick) ? `<span class="adj-tag">採用・P4b で調整済み: ${esc(s.adjusted)}</span>`
     : s.redone ? `<span class="redone-tag">${esc(s.redone)}</span>` : '';
 }
 function progress() {
