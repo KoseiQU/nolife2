@@ -142,6 +142,30 @@
     "key_unlock": {
       "pick": "none"
     },
+    "x312_clock_tick": {
+      "pick": "none"
+    },
+    "x312_door_open": {
+      "pick": "none"
+    },
+    "x312_door_close": {
+      "pick": "none"
+    },
+    "x312_door_locked": {
+      "pick": "none"
+    },
+    "x312_key_slam": {
+      "pick": "none"
+    },
+    "x312_watcher_lookup": {
+      "pick": "none"
+    },
+    "x312_room_shift": {
+      "pick": "none"
+    },
+    "x312_bed_creak": {
+      "pick": "none"
+    },
     "amb_x105": {
       "pick": "C"
     },
@@ -193,6 +217,9 @@
     },
     "amb_maze": {
       "pick": "none"
+    },
+    "xb1_loop_notice": {
+      "pick": "C"
     },
     "space_release": {
       "pick": "none"
