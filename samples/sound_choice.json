@@ -142,6 +142,9 @@
     "key_unlock": {
       "pick": "none"
     },
+    "amb_x312_room_loop": {
+      "pick": "none"
+    },
     "x312_clock_tick": {
       "pick": "none"
     },

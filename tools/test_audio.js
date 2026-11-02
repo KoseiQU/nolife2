@@ -1,7 +1,7 @@
-// test_audio.js — P4b 音の本実装(P4c で 3 周目を反映)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=audio で自動実行。結果: window.__N2.testResult
+// test_audio.js — P4b 音の本実装(P4c で 3 周目、P4d で最終選択を反映)の決定的テスト(ブラウザ内)。http://127.0.0.1:8001/index.html?test=audio で自動実行。結果: window.__N2.testResult
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。AudioContext が止まっていても(ユーザー操作なし)、
 // AudioBank は「鳴らそうとした場面」を count / log に残すので、ゲームの出来事 → 再生 API の接続を確かめられる。
-//  0) 読み込み: manifest の採用 21 場面の wav がすべて読めて長さが合う・声の場面 2 つ(素材＋加工)の音量合わせができる・なし 39／3 周目 9(新 312)／未選択 1 の振り分け
+//  0) 読み込み: manifest の採用 22 場面の wav がすべて読めて長さが合う・声の場面 2 つ(素材＋加工)の音量合わせができる・なし 48(P4d で新 312 の 9 場面を加えた)／3 周目 0／未選択 0 の振り分け
 //  1) なし = 無音: 開かない扉・取っ手・空室の扉・鍵を使う・車のドア・偽の鍵・窓・ロッカーの予兆・EV の扉・705 の空気・B1 の扉の音は AudioBank に行かない(記録だけ)。
 //     P4c: 3 周目でなしになった 叫び(scream)・目の前の息(breath)・ガタガタ扉(slam)・ロッカーの軋み(lockerCreak)も同じ。合成の仮音が残っていない
 //  2) 居室: 自分の足音(pl_step_room)・クローゼットの開け閉め(pl_closet の open/close 区間)・落ちる物(room_fall の割れ物/本の区間)
@@ -11,14 +11,18 @@
 //  6) 物語: 221 の電話(story_221_lure)・メモ(pickup_paper)・鍵(pickup_key)
 //  7) 105: 空気(amb_x105)・追跡の始まりの悲鳴(x105_scream)
 //  8) 705: 鍵で灯りが消える(x705_lights_off)
+//  8b) P4d: B1 のトンネルで標識灯を 3 回通って気づく瞬間(xb1_loop_notice C。1 回だけ。仮音は無い)
 //  9) エンディング: エンジン(car_engine)→ 門を抜ける(ending_gate)
-//  10) まとめ: 採用 23 場面すべてが 1 回以上呼ばれ、採用以外の場面(なしの 39 場面を含む)は 1 回も呼ばれていない
+//  10) まとめ: 採用 24 場面(wav 22＋声 2)すべてが 1 回以上呼ばれ、採用以外の場面(なしの 48 場面を含む)は 1 回も呼ばれていない
 const DT = 1 / 60;
 const ADOPTED = ['pl_step_room', 'amb_corridor', 'pl_closet', 'room_fall', 'ev_chime', 'ev_motor', 'enemy_step_run', 'enemy_breath_door', 'enemy_door_smash', 'enemy_hit',
   'death', 'story_221_lure', 'pickup_key', 'pickup_paper', 'amb_x105', 'x105_scream', 'amb_outdoor', 'amb_roof', 'x705_lights_off', 'amb_b1', 'car_engine', 'ending_gate',
-  'enemy_step_walk'];   // P4c: 3 周目 A
-// P4c: 3 周目でなしになった 8 場面(room_door_rattle は演出ごと廃止 = なし扱い)
-const R3_NONE = ['pl_flashlight', 'door_wood', 'enemy_presence', 'enemy_breath_close', 'room_door_rattle', 'enemy_scream', 'locker_open_slow', 'locker_burst'];
+  'enemy_step_walk',   // P4c: 3 周目 A
+  'xb1_loop_notice'];   // P4d: B1 の標識灯 C
+// P4c: 3 周目でなしになった 8 場面(room_door_rattle は演出ごと廃止 = なし扱い)＋ P4d: 新 312 の 9 場面(最終選択でなし。amb_x312_room_loop は最終選択の直後に未選択 → なしに変わった)
+const R3_NONE = ['pl_flashlight', 'door_wood', 'enemy_presence', 'enemy_breath_close', 'room_door_rattle', 'enemy_scream', 'locker_open_slow', 'locker_burst',
+  'x312_clock_tick', 'x312_door_open', 'x312_door_close', 'x312_door_locked', 'x312_key_slam', 'x312_watcher_lookup', 'x312_room_shift', 'x312_bed_creak', 'amb_x312_room_loop'];
+const UNSELECTED = [];   // P4d: 未選択は無い(amb_x312_room_loop は最終選択の後に「なし」になった)
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
@@ -80,11 +84,11 @@ export async function run(N) {
     const lens = sc.map((id) => ({ id, ok: B.bufs.has(id) && Math.abs(B.bufs.get(id).duration - M.scenes[id].dur) < 0.02 }));
     const vg = Object.fromEntries(vo.map((id) => [id, (B.voiceGain[id] || []).map((g) => +g.toFixed(2))]));
     const statusOK = ADOPTED.every((id) => ['wav', 'voice'].includes(B.status(id)));
-    const r3None = R3_NONE.every((id) => B.status(id) === 'none'), r3New = M.round3.every((id) => /^(amb_)?x312_/.test(id));
-    const pass = B.ready && !B.error && sc.length === 21 && vo.length === 2 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
-      && statusOK && r3None && r3New && M.none.length === 39 && M.round3.length === 9 && M.unselected.length === 1 && M.unselected[0] === 'xb1_loop_notice'
+    const r3None = R3_NONE.every((id) => B.status(id) === 'none'), unsel = M.unselected.join() === UNSELECTED.join() && UNSELECTED.every((id) => B.status(id) === 'unselected');
+    const pass = B.ready && !B.error && sc.length === 22 && vo.length === 2 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
+      && statusOK && r3None && unsel && M.none.length === 48 && M.round3.length === 0
       && sc.concat(vo).sort().join() === [...ADOPTED].sort().join();
-    return { pass, wav: sc.length, voice: vo, voiceGain: vg, badLength: lens.filter((l) => !l.ok).map((l) => l.id), none: M.none.length, round3: M.round3, round3NoneOK: r3None, unselected: M.unselected,
+    return { pass, wav: sc.length, voice: vo, voiceGain: vg, badLength: lens.filter((l) => !l.ok).map((l) => l.id), none: M.none.length, round3: M.round3, noneListOK: r3None, unselected: M.unselected, unselectedOK: unsel,
       totalMB: +(M.totalBytes / 1048576).toFixed(2), ctx: N.enemyAudio.ctx.state };
   });
 
@@ -283,6 +287,37 @@ export async function run(N) {
     return { pass, level: lv, lightsOff: lights, loopsIn705: amb705 };
   });
 
+  // 8b) P4d: B1 のトンネルで標識灯を 3 回通って気づく瞬間(xb1_loop_notice C)
+  await T('8b_xb1_loop_notice', async () => {
+    S.applyStage(10); quiet(); resetKeys();
+    const WB1 = (u, v) => [520 + u, v];
+    const bs = N.building.basement;
+    await tp('B1', bs.spawn[0], bs.spawn[1], Math.PI / 2);
+    walkTo(8.5, 1.45, { max: 200 });
+    const d = N.doorApi.get('B1DOOR');
+    face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
+    tap('KeyE'); N.pump(DT, 60, false);
+    const n = FN[d.facing];
+    walkTo(d.pos[0] + n[0] * 0.6, d.pos[1] + n[1] * 0.6, { max: 240, tol: 0.1 });
+    waitTrans();
+    const lv = N.level, D = SP.debug('XB1');
+    for (const [u, v] of [[-3.1, 5.9], [-1.5, 6.0], [0, 6.2]]) walkTo(...WB1(u, v), { max: 600 });
+    const n0 = cnt('xb1_loop_notice');
+    key('KeyW', true);
+    for (let i = 0; i < 3600 && !D.st.armed; i++) { const p = N.player.pos; face(p.x + (520 - p.x) * 0.2, p.z + 5, 0); N.pump(DT, 1, false); }
+    key('KeyW', false); N.pump(DT, 2, false);
+    const atNotice = { passes: D.st.passes, armed: D.st.armed, notice: cnt('xb1_loop_notice') - n0 };
+    const rec = B.log.filter((l) => l.id === 'xb1_loop_notice').pop() || {};
+    // 気づいた後は鳴らない(同じ場面を重ねて鳴らさない)
+    key('KeyW', true);
+    for (let i = 0; i < 360; i++) { const p = N.player.pos; face(p.x + (520 - p.x) * 0.2, p.z + 5, 0); N.pump(DT, 1, false); }
+    key('KeyW', false); N.pump(DT, 2, false);
+    const later = cnt('xb1_loop_notice') - n0;
+    SP.show(null); S.applyStage(1); quiet();
+    await tp(4, 6.9, 15.0, Math.PI);
+    return { pass: lv === 'XB1' && atNotice.passes === 3 && atNotice.armed && atNotice.notice === 1 && rec.kind === 'play' && later === 1, level: lv, atNotice, kind: rec.kind, countAfterMoreWalk: later };
+  });
+
   // 9) エンディング: エンジン → 門
   await T('9_ending_engine_gate', async () => {
     S.applyStage(11); quiet();
@@ -304,7 +339,7 @@ export async function run(N) {
     const called = Object.keys(B.count);
     const missing = ADOPTED.filter((id) => !(B.count[id] > 0));
     const extra = called.filter((id) => !ADOPTED.includes(id));
-    const noneCalled = R3_NONE.filter((id) => B.count[id] > 0);
+    const noneCalled = R3_NONE.concat(UNSELECTED).filter((id) => B.count[id] > 0);
     return { pass: missing.length === 0 && extra.length === 0 && noneCalled.length === 0, missing, extra, r3NoneCalled: noneCalled, counts: Object.fromEntries(ADOPTED.map((id) => [id, B.count[id] || 0])) };
   });
 

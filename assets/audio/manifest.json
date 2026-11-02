@@ -324,6 +324,7 @@
   "locker_open_slow",
   "locker_burst",
   "key_unlock",
+  "amb_x312_room_loop",
   "x312_clock_tick",
   "x312_door_open",
   "x312_door_close",
@@ -346,7 +347,5 @@
   "space_release"
  ],
  "round3": [],
- "unselected": [
-  "amb_x312_room_loop"
- ]
+ "unselected": []
 }

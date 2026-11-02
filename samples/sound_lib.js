@@ -1069,9 +1069,10 @@ export const ROUND3_DONE = {
   enemy_step_walk: 'a',
   pl_flashlight: 'none', door_wood: 'none', enemy_breath_close: 'none', enemy_scream: 'none', enemy_presence: 'none', locker_open_slow: 'none', locker_burst: 'none',
   room_door_rattle: 'none',
-  // P4d(2026-11-02): 新 312 の 8 場面は「なし」、amb_x312_room_loop は未選択のまま(ゲームでは無音 = なし扱い。選ばれたら接続する)
+  // P4d(2026-11-02): 新 312 の 9 場面はすべて「なし」(最終選択では amb_x312_room_loop だけ未選択だったが、その後ユーザーが試聴盤で「なし」を押した)。
+  //  'unselected' = 未選択のまま(ゲームでは無音 = なし扱い。選ばれたら接続する)も書き出しと試聴盤が扱える
   x312_clock_tick: 'none', x312_door_open: 'none', x312_door_close: 'none', x312_door_locked: 'none', x312_key_slam: 'none', x312_watcher_lookup: 'none',
-  x312_room_shift: 'none', x312_bed_creak: 'none', amb_x312_room_loop: 'unselected',
+  x312_room_shift: 'none', x312_bed_creak: 'none', amb_x312_room_loop: 'none',
 };
 // P4d: 3 周目以外でゲームに反映した場面(場面 → 結果)。xb1_loop_notice = 候補 C「耳鳴りと金属の一打」を wav に書いて B1 の標識灯(spaces/xb1.js)へ接続
 export const P4D_DONE = { xb1_loop_notice: 'c' };
