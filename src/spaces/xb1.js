@@ -5,23 +5,29 @@
 //    その後、一度立ち止まるか振り返ると抜ける = 次は先(迷路)へ進める。閉じ込めないよう 6 回通ったら自然に抜ける)
 //   ②歪み(迷路の仕切りは視線を外した間に配置が変わる。見えている壁・近くの壁は動かさない。入口・プレイヤー・作業場がいつも繋がっている時だけ変える)
 //   ③伸びる(キーを取って戻ると、灯りが背後から消えていき、踊り場の扉は 2 周余計に歩くまで開かない = 戻る道は行きより長い)
+//  P6b(§3.9 #13「地下が何をすればいいか分からない」→ 簡潔化。上の①〜③を置き換える):
+//   ①ループは標識灯を 2 回通ると瞬く(気づく)→ 3 回目で自然に抜ける(立ち止まる/振り返る条件は廃止)
+//   ②迷路は固定の一本道(曲がり 3 回。配置は変わらない。最後の曲がりの先、行き止まりの脇が作業場の灯りの点いた入口)
+//   ③戻りは灯りが背後から消えるだけ。踊り場への扉はキーを取るとすぐ少し開く(2 周余計は廃止)
 //  管理人は地下には来ない(enemy_ai の経路も無い)。上の階の足音・遠い悲鳴(音だけ)。
 //  光はすべてシェーダの中の計算(トンネルの周期の灯り・標識灯・迷路の格子の灯り・裸電球。three.js のライトは足さない)＋懐中電灯。
 //  座標: 局所 u = x − 520、v = z。トンネルは u −1〜1 を +v へ。周期の窓 v [−6, 18)(踊り場への扉は v 6 の西の壁、標識灯は v 14)。
 
 import * as THREE from 'three';
 import { SPACE_Y } from '../world.js';
-import { GB, GLSL_NOISE, rng, actx } from './gb.js';
+import { GB, GLSL_NOISE, actx } from './gb.js';
 
 const OX = 520, OZ = 0;
 // 調整値(docs/p5b2b/NOTES.md §4)
 export const XB1 = {
   tun: { w: 2.0, h: 2.6, L: 24, w0: -6, door: 6, sign: 14, lamp0: 3, lampDu: 6, from: -30, to: 50 },   // トンネル(周期 L・窓 [w0, w0+L))
   landing: { u0: -5.0, u1: -1.2, v0: 0, v1: 8, h: 2.6, door: -3.1, bulb: [-3.1, 2.3, 4.2] },
-  loop: { notice: 3, still: 1.2, turn: 0.4, safety: 6, hyst: 6.0 },
-  maze: { u0: -9, v0: 52, nc: 9, nr: 12, cell: 2.0, h: 2.45, wall: 2.05, entry: [4, 0], goal: [7, 11], every: 0.4, near: 2.6, density: 0.4, densityRet: 0.48, maxIn: 34, maxRet: 44, seed: 1001 },
+  loop: { notice: 2, safety: 3, hyst: 6.0 },   // P6b #13: 2 回目に気づく(標識灯が瞬く)・3 回目で抜ける
+  // P6b #13: 迷路は固定の一本道(path = 升 [列, 行] の並び。北 → 東 → 北 → 東 の 3 曲がり、行き止まり (7,11) の北の壁が作業場の入口)
+  maze: { u0: -9, v0: 52, nc: 9, nr: 12, cell: 2.0, h: 2.45, wall: 2.05, entry: [4, 0], goal: [7, 11],
+    path: [[4, 0], [4, 1], [4, 2], [4, 3], [4, 4], [4, 5], [5, 5], [5, 6], [5, 7], [5, 8], [5, 9], [5, 10], [5, 11], [6, 11], [7, 11]] },
   shop: { u0: 3.5, u1: 8.5, v0: 76.2, v1: 82, h: 2.4, door: 6, bulb: [6.0, 2.15, 79.0] },
-  ret: { loops: 2, offBehind: 6.0, offRate: 2.6 },
+  ret: { loops: 0, offBehind: 6.0, offRate: 2.6 },   // P6b #13: 戻りで余計に回る周回 0(踊り場への扉はキーを取るとすぐ開く)
   fog: [0x050607, 0.045],
   sounds: { stepsEvery: [9, 18], stepsEveryRet: [5, 10] },
 };
@@ -373,25 +379,14 @@ function adjacency(st) {
   return adj;
 }
 function bfs(adj, s) { const d = new Int32Array(adj.length).fill(-1); d[s] = 0; const q = [s]; for (let k = 0; k < q.length; k++) for (const n of adj[q[k]]) if (d[n] < 0) { d[n] = d[q[k]] + 1; q.push(n); } return d; }
+// P6b #13: 固定の一本道。道の升どうしの辺は開け、道の升を囲む辺だけ壁にする(道から見えない奥の升の壁は立てない)
 function initMaze(st) {
-  const R = st.R;
-  for (const e of st.edges) e.on = true;
-  // 種のある乱数の深さ優先で全域木 → 行き止まりの 4 割を開ける(遊べる難しさ)
-  const seen = new Uint8Array(MZ.nc * MZ.nr), stack = [MZ.entry.slice()];
-  seen[cid(...MZ.entry)] = 1;
-  const edgeOf = (a, b) => st.edges.find((e) => (e.a[0] === a[0] && e.a[1] === a[1] && e.b[0] === b[0] && e.b[1] === b[1]) || (e.a[0] === b[0] && e.a[1] === b[1] && e.b[0] === a[0] && e.b[1] === a[1]));
-  while (stack.length) {
-    const cur = stack[stack.length - 1];
-    const nb = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => [cur[0] + dx, cur[1] + dy]).filter(([c, r]) => c >= 0 && r >= 0 && c < MZ.nc && r < MZ.nr && !seen[cid(c, r)]);
-    if (!nb.length) { stack.pop(); continue; }
-    const n = nb[(R() * nb.length) | 0];
-    edgeOf(cur, n).on = false; seen[cid(...n)] = 1; stack.push(n);
-  }
-  const adj = adjacency(st);
-  for (let k = 0; k < adj.length; k++) if (adj[k].length === 1 && R() < 0.4) {
-    const c = k % MZ.nc, r = (k / MZ.nc) | 0;
-    const cand = st.edges.filter((e) => e.on && ((e.a[0] === c && e.a[1] === r) || (e.b[0] === c && e.b[1] === r)));
-    if (cand.length) cand[(R() * cand.length) | 0].on = false;
+  const onPath = new Set(MZ.path.map(([c, r]) => cid(c, r)));
+  const link = new Set();
+  for (let i = 0; i + 1 < MZ.path.length; i++) { const a = cid(...MZ.path[i]), b = cid(...MZ.path[i + 1]); link.add(Math.min(a, b) + ':' + Math.max(a, b)); }
+  for (const e of st.edges) {
+    const a = cid(...e.a), b = cid(...e.b);
+    e.on = (onPath.has(a) || onPath.has(b)) && !link.has(Math.min(a, b) + ':' + Math.max(a, b));
   }
 }
 
@@ -463,10 +458,9 @@ function setEdge(ctx, e, on) {
 
 function reset(ctx) {
   const st = ctx.state;
-  Object.assign(st, { t: 0, released: false, passes: 0, lastPassV: null, armed: false, stillT: 0, turnT: 0, travel: 1, prevV: null, teleports: 0, walked: 0,
-    keyTaken: false, keyBefore: false, retLoops: 0, retOpen: false, offZ: 1e4, door: 0.9, doorTarget: 0.9, doorLocked: false, flips: 0, flipT: 0, log: [], noticed: false,
+  Object.assign(st, { t: 0, released: false, passes: 0, lastPassV: null, armed: false, travel: 1, prevV: null, teleports: 0, walked: 0,
+    keyTaken: false, keyBefore: false, retLoops: 0, retOpen: false, offZ: 1e4, door: 0.9, doorTarget: 0.9, doorLocked: false, flips: 0, log: [], noticed: false,
     stepsT: 9 + Math.random() * 6, steps: null, screamed: false, walkIn: 0, walkRet: 0, lastPos: null, edgeLog: [] });
-  st.R = rng(MZ.seed);
   initMaze(st);
   for (const e of st.edges) setEdge(ctx, e, e.on);
   applyRelease(ctx, false);
@@ -505,13 +499,6 @@ export function dispose(ctx) {
 }
 
 // ================================================================ 毎フレーム
-const _frus = new THREE.Frustum(), _pm = new THREE.Matrix4(), _box = new THREE.Box3(), _f = new THREE.Vector3();
-function edgeInView(e) {
-  const m = 0.35, L = MZ.cell / 2 + m, t = 0.1 + m;
-  if (e.vert) { _box.min.set(X(e.u) - t, Y(-0.2), Z(e.v) - L); _box.max.set(X(e.u) + t, Y(MZ.wall + 0.3), Z(e.v) + L); }
-  else { _box.min.set(X(e.u) - L, Y(-0.2), Z(e.v) - t); _box.max.set(X(e.u) + L, Y(MZ.wall + 0.3), Z(e.v) + t); }
-  return _frus.intersectsBox(_box);
-}
 function shift(ctx, dz) {
   const st = ctx.state, pl = ctx.player;
   pl.pos.z += dz; pl.object.position.z += dz;
@@ -521,7 +508,7 @@ function shift(ctx, dz) {
   st.teleports++;
 }
 export function update(dt, ctx) {
-  const st = ctx.state, U = st.U, pl = ctx.player, cam = ctx.camera;
+  const st = ctx.state, U = st.U, pl = ctx.player;
   st.t += dt; U.uTime.value += dt;
   if (ctx.scene.fog) { ctx.scene.fog.color.setHex(XB1.fog[0]); ctx.scene.fog.density = XB1.fog[1]; }
   let u = pl.pos.x - OX, v = pl.pos.z - OZ;
@@ -544,21 +531,12 @@ export function update(dt, ctx) {
         st.passes++; st.lastPassV = v; st.lastPassSign = Math.sign(v - st.prevV);
         st.log.push({ t: st.t, ev: 'pass', n: st.passes, v: +v.toFixed(2) });
         if (st.passes === XB1.loop.notice && !st.released) { st.armed = true; st.noticed = true; sfx(ctx, 'notice'); st.log.push({ t: st.t, ev: 'notice' }); }
-        if (st.passes >= XB1.loop.safety && !st.released) release(ctx, 'safety');
+        if (st.passes >= XB1.loop.safety && !st.released) release(ctx, 'third');   // P6b #13: 3 回目で自然に抜ける
       }
     }
   }
   const dv = v - st.prevV;
   if (Math.abs(dv) > 1e-4) st.travel = Math.sign(dv);
-  // 抜ける: 気づいた後(3 回目)、一度立ち止まる or 振り返る
-  if (st.armed && !st.released && inTun) {
-    const sp = Math.hypot(pl.pos.x - (st.lastPos ? st.lastPos.x : pl.pos.x), pl.pos.z - (st.lastPos ? st.lastPos.z : pl.pos.z)) / Math.max(dt, 1e-4);
-    st.stillT = sp < 0.05 ? st.stillT + dt : 0;
-    cam.getWorldDirection(_f); _f.y = 0; _f.normalize();
-    st.turnT = _f.z * (st.lastPassSign || st.travel) < -0.3 ? st.turnT + dt : 0;   // 標識灯を通った向きと逆を向いた
-    if (st.stillT >= XB1.loop.still) release(ctx, 'still');
-    else if (st.turnT >= XB1.loop.turn) release(ctx, 'turn');
-  }
   U.uSignFl.value += ((st.noticed && !st.released ? 1 : 0) - U.uSignFl.value) * Math.min(1, dt * 3);
   st.prevV = v;
   st.lastPos = { x: pl.pos.x, z: pl.pos.z };
@@ -567,12 +545,7 @@ export function update(dt, ctx) {
   if (st.doorTarget > 0 && dDoor > 3.0 && inTun && !st.keyTaken) { st.doorTarget = 0; st.log.push({ t: st.t, ev: 'door_close' }); sfx(ctx, 'clank'); }
   if (st.keyTaken && !st.retOpen && st.retLoops >= XB1.ret.loops) { st.retOpen = true; st.doorLocked = false; st.doorTarget = 0.55; st.log.push({ t: st.t, ev: 'door_ajar' }); sfx(ctx, 'creak'); }
   if (Math.abs(st.door - st.doorTarget) > 1e-3) setDoor(ctx, st.door + THREE.MathUtils.clamp(st.doorTarget - st.door, -dt * 0.9, dt * 0.9));
-  // ② 迷路: 見ていない・離れた仕切りだけ、繋がりを保って変える
-  const inMaze = st.released && v > MZ.v0 - 4;
-  if (inMaze && !st.keyBefore) {
-    st.flipT -= dt;
-    if (st.flipT <= 0) { st.flipT = MZ.every; flip(ctx, u, v); }
-  }
+  // ② 迷路: P6b #13 で配置の変化は廃止(固定の一本道)
   // 鍵(物語の pickups): 取ったら戻りの演出(灯りが背後から消える・扉は 2 周まで開かない)
   const s = ctx.story;
   if (!st.keyBefore && !st.keyTaken && s && s.taken && s.taken.has('kCar')) {
@@ -594,41 +567,6 @@ function release(ctx, why) {
   st.armed = false;
   st.log.push({ t: st.t, ev: 'release', why, passes: st.passes });
   sfx(ctx, 'release');
-}
-
-function flip(ctx, u, v) {
-  const st = ctx.state, cam = ctx.camera, R = st.R;
-  cam.updateMatrixWorld();
-  _pm.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); _frus.setFromProjectionMatrix(_pm);
-  const pc = [THREE.MathUtils.clamp(Math.floor((u - MZ.u0) / MZ.cell), 0, MZ.nc - 1), THREE.MathUtils.clamp(Math.floor((v - MZ.v0) / MZ.cell), 0, MZ.nr - 1)];
-  const inside = v >= MZ.v0;
-  const on = st.edges.filter((e) => e.on).length, dens = on / st.edges.length;
-  const target = st.keyTaken ? MZ.densityRet : MZ.density;
-  for (let tries = 0; tries < 6; tries++) {
-    const e = st.edges[(R() * st.edges.length) | 0];
-    const add = !e.on;
-    if (add && dens > target + 0.03 && R() < 0.8) continue;
-    if (!add && dens < target - 0.03 && R() < 0.8) continue;
-    // 近くの壁(プレイヤーの 2.6m 以内)と見えている壁は変えない
-    const L = MZ.cell / 2;
-    const du = e.vert ? Math.abs(u - e.u) : Math.max(0, Math.abs(u - e.u) - L), dvv = e.vert ? Math.max(0, Math.abs(v - e.v) - L) : Math.abs(v - e.v);
-    if (Math.hypot(du, dvv) < MZ.near) continue;
-    if (edgeInView(e)) continue;
-    e.on = add;
-    // 入口・作業場・プレイヤーの升がいつも繋がっている(行きは作業場まで、戻りは入口まで長すぎない)
-    const adj = adjacency(st);
-    const dE = bfs(adj, cid(...MZ.entry));
-    const ok = dE[cid(...MZ.goal)] >= 0 && (!inside || dE[cid(...pc)] >= 0);
-    let len = true;
-    if (ok && add && inside) { const dP = bfs(adj, cid(...pc)); const to = st.keyTaken ? dP[cid(...MZ.entry)] : dP[cid(...MZ.goal)]; len = to >= 0 && to <= (st.keyTaken ? MZ.maxRet : MZ.maxIn); }
-    if (!ok || !len) { e.on = !add; continue; }
-    e.on = !add; setEdge(ctx, e, add);
-    st.flips++;
-    st.edgeLog.push({ t: +st.t.toFixed(2), i: e.i, on: add });
-    if (st.edgeLog.length > 400) st.edgeLog.shift();
-    return true;
-  }
-  return false;
 }
 
 // ================================================================ 物語とのつなぎ
@@ -701,6 +639,8 @@ export function debug(ctx) {
     },
     lampsBehind: () => { const pz = ctx.player.pos.z; const offs = []; for (let z = OZ + T.w0 + T.lamp0 - T.L; z < OZ + MZ.v0 + 30; z += T.lampDu) offs.push({ z: +(z - OZ).toFixed(1), off: st.keyTaken && z > st.offZ, ahead: z < pz }); return offs; },
     release: (why = 'debug') => release(ctx, why),
+    // P6b #13: 一本道の曲がりの数(入口から作業場まで)
+    turns: () => { let n = 0; for (let i = 2; i < MZ.path.length; i++) { const a = MZ.path[i - 2], b = MZ.path[i - 1], c = MZ.path[i]; if ((b[0] - a[0]) !== (c[0] - b[0]) || (b[1] - a[1]) !== (c[1] - b[1])) n++; } return n; },
     local: (x, z) => ({ u: x - OX, v: z - OZ }), world: (u, v) => ({ x: X(u), z: Z(v) }),
   };
 }

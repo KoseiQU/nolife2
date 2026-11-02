@@ -12,9 +12,9 @@
 //  705_1) 増える(P5b-2b): 奥へ進むほど柱が増える(見ていない・離れた所にだけ)・机の前では入口の扉が柱の列に隠れる(最初の柱だけなら見えていた)
 //  705_2) 反転: 鍵で灯りが一斉に消え、出口は反対側(南)・管理人はそこから現れる → 西の壁際を回って南の出口 → 7F・管理人も出入り口から追ってくる(追跡中は歪み 1)
 //  705_3) 歪みは見た目だけ: 歪み 0 と 1 で当たりの一覧が同じ・柱に当たって止まる所が同じ
-//  B1_1) ループ: 標識灯を 3 回通ると気づく(その間 z は窓の外へ出ない)・歩き続けると環状のまま・立ち止まると抜けて迷路へ。入り直して振り返る版も抜ける
-//  B1_2) 迷路: 作業場まで歩く間に変わった仕切りは、どれもその瞬間の視野の外・入口と作業場はいつも繋がっている
-//  B1_3) 伸びる: 車のキー(第11段)→ 戻ると背後の灯りが消え(前は点いている)、踊り場の扉は 2 周するまで「開かない」→ 開いた扉から鉄扉 → B1 → 1F で「駐車場の車で逃げろ」。戻り道 > 行き
+//  B1_1) P6b #13 ループ: 前へ歩くだけで、標識灯 2 回目で瞬き(気づく)・3 回目で自然に抜けて迷路の前室へ(その間 z は窓の外へ出ない)。目標「奥の作業場で車のキーを探せ」
+//  B1_2) P6b #13 迷路: 固定の一本道(曲がり 3 回)・歩く間に配置は変わらない・最後の曲がりから作業場の入口が見える(壁を横切らない)・前進だけで作業場へ
+//  B1_3) P6b #13 戻り: 車のキー(第11段・目標「鉄扉へ戻れ」)→ 踊り場への扉はすぐ少し開いている・背後の灯りが消え(前は点いている)・周回なしで鉄扉 → B1 → 1F で「駐車場の車で逃げろ」
 //  W_7) 第7段の窓の内側の管理人: 自動では出ない・force で 409 の窓に出る・見える(遮る物なし)・見た後に目をそらすと消える・近づくと消える・第8段/第6段では出ない
 //  P) 性能(P_perf_vs_4F_corridor): 各空間の代表の視点と 4F の廊下を同じ計り方(1080p・40 フレームの中央値の 5 回の最小。4F は最初と最後)で。描画コール・三角形数
 
@@ -546,98 +546,81 @@ export async function run(N) {
     return false;
   };
 
-  await T('B1_1_loop_three_signs_then_stop_or_turn', async () => {
+  // P6b #13: 入口 → ループ(2 回目で瞬く・3 回目で抜ける)→ 固定の一本道の迷路 → 作業場のキー → 鉄扉 が前進だけで通る
+  await T('B1_1_loop_blink_second_pass_third', async () => {
     const lv = await enterB1();
+    N.pump(DT, 2, false);
     const obj = N.hudState().objective;
     walkPath([WB1(-3.1, 5.9), WB1(-1.5, 6.0), WB1(0, 6.2)], { max: 600 });
-    const doorClosedBehind = [];
-    let maxZ = -1e9, armedAt = null;
-    walkDir(1, 60, () => { maxZ = Math.max(maxZ, N.player.pos.z); if (stB1().armed && armedAt === null) armedAt = { t: stB1().teleports, z: +N.player.pos.z.toFixed(2) }; return stB1().armed; });
-    const atNotice = stB1();
-    // 気づいた後も歩き続けると環状のまま(抜けない)
-    walkDir(1, 6, () => { maxZ = Math.max(maxZ, N.player.pos.z); return false; });
-    const stillLooping = !stB1().released && stB1().teleports > atNotice.teleports;
-    doorClosedBehind.push(stB1().door);
-    // 立ち止まる → 抜ける
-    N.pump(DT, 90, false);
-    const rel = stB1();
-    // 先へ: 標識灯を 4 回目に通って、継ぎ足しの終わり(迷路の前室)へ
-    walkDir(1, 45, () => N.player.pos.z > 53);
-    const reached = N.player.pos.z > 52;
-    const afterWalk = { ...pos(), released: stB1().released };
-    const relEv = rel.log.find((e) => e.ev === 'release');
-    // 振り返る版: 入り直して 3 回通ってから後ろを向く
-    const S2 = (SP.show(null), await enterB1(), walkPath([WB1(-3.1, 5.9), WB1(-1.5, 6.0), WB1(0, 6.2)], { max: 600 }), walkDir(1, 60, () => stB1().armed), stB1());
-    walkDir(-1, 1.0, () => stB1().released);
-    const rel2 = stB1();
-    const relEv2 = rel2.log.find((e) => e.ev === 'release');
-    const pass = lv === 'XB1' && obj === '地下へ' && atNotice.passes === 3 && atNotice.teleports >= 2 && maxZ < 18.01 && stillLooping && rel.released && relEv && relEv.why === 'still' && relEv.passes === 3
-      && reached && S2.armed && rel2.released && relEv2 && relEv2.why === 'turn' && doorClosedBehind[0] < 0.05;
-    return { pass, level: lv, objective: obj, atNotice: { passes: atNotice.passes, teleports: atNotice.teleports }, maxZBeforeRelease: +maxZ.toFixed(2), stillLooping, release: relEv, reachedMaze: reached,
-      afterWalk, turnVariant: relEv2 || null, turnState: { passes: S2.passes, armed: S2.armed, level: N.level, log: rel2.log.slice(-6) }, sideDoorAngleBehind: doorClosedBehind[0] };
+    let maxZ = -1e9, noticeAt = null, flick = 0, back = 0, lastZ = N.player.pos.z;
+    // 前へ歩き続けるだけ(立ち止まらない・振り返らない)
+    walkDir(1, 90, () => {
+      const s = stB1(), z = N.player.pos.z;
+      if (!s.released) maxZ = Math.max(maxZ, z);
+      if (s.passes === 2 && noticeAt === null) noticeAt = { passes: s.passes, released: s.released, teleports: s.teleports };
+      if (DB1().st.U.uSignFl.value > 0.5) flick++;
+      if (z < lastZ - 0.5 && z > lastZ - 20) back++;   // 継ぎ目の戻し(-24m)以外に後ろへ下がっていない
+      lastZ = z;
+      return z > 53;
+    });
+    const s1 = stB1();
+    const rel = s1.log.find((e) => e.ev === 'release') || (DB1().st.log.find((e) => e.ev === 'release'));
+    const pass = lv === 'XB1' && obj === '奥の作業場で車のキーを探せ' && noticeAt && !noticeAt.released && flick > 10 && s1.released && rel && rel.why === 'third' && rel.passes === 3
+      && maxZ < 18.01 && back === 0 && N.player.pos.z > 52;
+    return { pass, level: lv, objective: obj, noticeAt, signFlickerFrames: flick, release: rel, maxZBeforeRelease: +maxZ.toFixed(2), backSteps: back, at: pos() };
   });
 
-  await T('B1_2_maze_changes_only_unseen_walls', async () => {
+  await T('B1_2_maze_fixed_one_path_three_turns', async () => {
     if (N.level !== 'XB1' || !stB1().released) return { pass: false, why: 'needs B1_1' };
+    const M = DB1().XB1.maze;
+    const before = JSON.stringify(DB1().edges().map((e) => e.on));
+    const turns = DB1().turns();
+    const route = DB1().route(0, 52.5, true);
+    // 作業場の入口の灯り: 最後の曲がりの升の中心(目の高さ)から作業場の入口(扉の中心・高さ 1.2)まで、仕切りの壁を横切らない
+    const lastTurn = M.path[M.path.length - 3], cu = M.u0 + (lastTurn[0] + 0.5) * M.cell, cv = M.v0 + (lastTurn[1] + 0.5) * M.cell;
+    const tu = DB1().XB1.shop.door, tv = M.v0 + M.nr * M.cell;
+    const crosses = DB1().edges().filter((e) => e.on).filter((e) => {
+      const L = M.cell / 2, seg = (ax, az, bx, bz, cx, cz, dx, dz) => { const o = (px, pz, qx, qz, rx, rz) => Math.sign((qx - px) * (rz - pz) - (qz - pz) * (rx - px)); return o(ax, az, bx, bz, cx, cz) !== o(ax, az, bx, bz, dx, dz) && o(cx, cz, dx, dz, ax, az) !== o(cx, cz, dx, dz, bx, bz); };
+      return e.vert ? seg(cu, cv, tu, tv - 0.01, e.u, e.v - L, e.u, e.v + L) : seg(cu, cv, tu, tv - 0.01, e.u - L, e.v, e.u + L, e.v);
+    }).length;
+    // 前進だけで作業場へ(道の升を順に)
     walkDir(1, 25, () => N.player.pos.z > 53.2);
-    let prev = DB1().edges().map((e) => e.on), viol = [], disc = 0, changes = 0, frames = 0;
-    const step = () => {
-      frames++;
-      const now = DB1().edges(), F = frustum();
-      now.forEach((e, i) => { if (e.on !== prev[i]) { changes++; const L = 1.0, t = 0.05;
-        const inV = e.vert ? boxIn(F, 520 + e.u - t, -60, e.v - L, 520 + e.u + t, -60 + 2.05, e.v + L) : boxIn(F, 520 + e.u - L, -60, e.v - t, 520 + e.u + L, -60 + 2.05, e.v + t);
-        if (inV) viol.push({ i, t: frames }); } });
-      prev = now.map((e) => e.on);
-      if (!DB1().connected()) disc++;
-    };
-    // 作業場まで: 升ごとに今の迷路で道を引き直して歩く。毎フレーム(歩きの合間の止まったフレームも)変わった壁を視錐台で調べる
-    const pump0 = N.pump;
-    N.pump = function (dt, n = 1, render = true) { for (let i = 0; i < n; i++) { pump0.call(N, dt, 1, false); step(); } if (render) N.render(); return null; };
+    let back = 0, frames = 0; const pump0 = N.pump;
+    N.pump = function (dt, n = 1, render = true) { for (let i = 0; i < n; i++) { pump0.call(N, dt, 1, false); frames++; } if (render) N.render(); return null; };
     let ok = false;
-    try {
-      if (mazeWalk(true)) { walkPath([WB1(6, 75.5), WB1(6, 77.4)], { max: 300 }); ok = N.player.pos.z > 77; }
-      // 見ていない間に入口の方の壁が変わっている(戻る道の見え方が変わる)。少し立ち止まって見回すと変わっていく
-      for (let t = 0; t < 3; t += DT) { face(N.player.pos.x, N.player.pos.z + 5, 0); N.pump(DT, 1, false); }
-    } finally { N.pump = pump0; }
-    const s = stB1();
-    const pass = ok && changes >= 5 && viol.length === 0 && disc === 0 && s.flips >= 5;
-    return { pass, reachedWorkshop: ok, wallChanges: changes, flips: s.flips, changedInView: viol.slice(0, 5), disconnectedFrames: disc, frames };
+    try { if (mazeWalk(true)) { walkPath([WB1(6, 75.5), WB1(6, 77.4)], { max: 300 }); ok = N.player.pos.z > 77; } } finally { N.pump = pump0; }
+    const after = JSON.stringify(DB1().edges().map((e) => e.on));
+    const pass = ok && turns === 3 && route && route.length === M.path.length - 1 && before === after && stB1().flips === 0 && crosses === 0 && DB1().connected();
+    return { pass, reachedWorkshop: ok, turns, routeLen: route && route.length, pathLen: M.path.length, unchanged: before === after, flips: stB1().flips, sightCrossesWalls: crosses, frames, back };
   });
 
-  await T('B1_3_key_return_longer_lights_off_exit_stage11', async () => {
+  await T('B1_3_key_return_forward_door_opens_lights_off_exit_stage11', async () => {
     if (N.level !== 'XB1' || N.player.pos.z < 76.5) return { pass: false, why: 'needs B1_2' };
     const kp = S.pickups.find((q) => q.id === 'kCar');
     walkTo(kp.pos.x, kp.pos.z - 0.8, { max: 300 });
     const hint = pickNow('kCar');
     const st = S.state();
+    N.pump(DT, 2, false);
     const objKey = N.hudState().objective;
-    // 戻る: 迷路の入口 → トンネル → 踊り場の扉(開かない)→ 2 周 → 扉が少し開く → 踊り場 → 鉄扉
-    let lampSample = null, okRoute = true;
-    okRoute = mazeWalk(false);
+    // 戻る: 迷路の入口 → トンネル → 踊り場の扉(もう少し開いている)→ 踊り場 → 鉄扉。周回せずに前進だけ
+    const tele0 = stB1().teleports;
+    let lampSample = null;
+    const okRoute = mazeWalk(false);
     walkTo(...WB1(0, 51.5), { max: 600 });
     walkTo(...WB1(0, 40), { max: 1500 });
     lampSample = DB1().lampsBehind().filter((l) => Math.abs(l.z - (N.player.pos.z)) < 14);
     walkTo(...WB1(-0.4, 6.2), { max: 3000 });
-    face(...WB1(-1.2, 6.0), 0); N.pump(DT, 2, false);
-    const lockedHint = N.hudState().hint; tap('KeyE'); N.pump(DT, 2, false);
-    const lockedToast = N.hudState().toast;
-    // 歩き続ける(−v)。扉が少し開くまで
-    walkDir(-1, 60, () => stB1().retOpen);
     const s2 = stB1();
-    // 開いた扉へ(次の周回の扉)
-    walkDir(-1, 30, () => N.player.pos.z < 6.6 && N.player.pos.z > 5.8);
     walkPath([WB1(-0.5, 6.0), WB1(-1.6, 6.0), WB1(-3.1, 5.0), WB1(-3.1, 0.15)], { max: 900 });
     waitTrans();
     const out = { level: N.level, at: pos() };
     const s3 = stB1();
     await tp(1, 6.9, 7.0, 0);
     const obj11 = N.hudState().objective;
-    const behindOff = lampSample.filter((l) => !l.ahead && l.z > N.player.pos.z);   // 参考
     const offBehind = lampSample.filter((l) => !l.ahead && l.off).length, onAhead = lampSample.filter((l) => l.ahead && !l.off).length, offAhead = lampSample.filter((l) => l.ahead && l.off).length;
-    void behindOff;
-    const pass = hint.includes('拾う') && st.stage === 11 && st.item === 'car' && objKey === '駐車場の車で逃げろ' && okRoute && lockedToast === '開かない' && s2.retLoops >= 2 && s2.retOpen
-      && offBehind >= 1 && onAhead >= 1 && offAhead === 0 && s3.walkRet > s3.walkIn && out.level === 'B1' && obj11 === '駐車場の車で逃げろ';
-    return { pass, pickHint: hint, stage: st.stage, item: st.item, objective: objKey, lockedHint, lockedToast, retLoops: s2.retLoops, doorAjar: s2.retOpen,
+    const pass = hint.includes('拾う') && st.stage === 11 && st.item === 'car' && objKey === '鉄扉へ戻れ' && okRoute && s2.retOpen && !s2.doorLocked && s2.door > 0.3 && s2.retLoops === 0 && s2.teleports === tele0
+      && offBehind >= 1 && onAhead >= 1 && offAhead === 0 && out.level === 'B1' && obj11 === '駐車場の車で逃げろ';
+    return { pass, pickHint: hint, stage: st.stage, item: st.item, objective: objKey, doorAjar: s2.retOpen, doorLocked: s2.doorLocked, door: s2.door, retLoops: s2.retLoops, teleports: s2.teleports - tele0,
       lamps: { offBehind, onAhead, offAhead }, walkIn_m: s3.walkIn, walkRet_m: s3.walkRet, out, objective1F: obj11 };
   });
 
