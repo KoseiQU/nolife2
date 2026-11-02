@@ -672,7 +672,7 @@ const elevator = new Elevator({ building, world, player, camera, listener: enemy
 //  (旧: 2 階以上離れた行き先では出発階が解放され、移動中は何も描かれず画面が暗転していた = docs/p5b3/NOTES.md §1)
 elevator.onRideStart = (to) => world.focus(to, { keep: [playerLevel] });
 // P6b-A(§3.9 #9): プレイヤーのカゴが管理人のいる階へ向かう → 管理人は EV ホールで待ち構える(条件は ai.evRideCheck)
-elevator.onPlayerRide = (to, info) => { if (!TOUR) ai.evRideCheck(to, info); };
+elevator.onPlayerRide = (to, info) => { if (!TOUR && !tutorial.active) ai.evRideCheck(to, info); };   // (呼ばれるのはループが回り始めた後 = tutorial は定義済み)
 // P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
 rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, bank, getLevel: () => playerLevel, flags: FLAGS,
   onNoise: (f) => { if (!TOUR && !(tutorial && tutorial.active)) ai.noiseRoom(f.room, f.x, f.z, f.level); },
