@@ -658,7 +658,7 @@ function useDoor(ctx) {
 // ================================================================ 音(P4b)
 //  水の流れ・滴り = 採用 amb_b1 B「流れる水」のループ。地下(B1・XB1・1F の地下への階段)の空気は main.js の環境音(updateAmbience)がまとめて鳴らす。
 //  踊り場の扉が閉まる音(door_steel)・抜ける音と鍵の低音(space_release)・戻りで扉が開く軋み(door_creak_slow)は「なし」で外した(無音)。
-//  3 回目に気づく音(xb1_loop_notice)は未選択なので仮音のまま。上の足音(enemy_step_walk・3 周目の仮音)と遠い悲鳴(x105_scream 採用 C・声)は enemy_audio をこもらせて
+//  3 回目に気づく音(xb1_loop_notice)は未選択なので仮音のまま。上の足音(enemy_step_walk 3 周目 A・P4c で wav)と遠い悲鳴(x105_scream 採用 C・声)は enemy_audio をこもらせて
 function sound(ctx, dt, inTun) {
   void inTun;
   const st = ctx.state, c = actx(ctx); if (!c) return;

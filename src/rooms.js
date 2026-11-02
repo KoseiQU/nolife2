@@ -508,24 +508,10 @@ export class Rooms {
   //  クローゼット(隠れる・出る・管理人が開ける)= 採用 pl_closet A「折戸のレール」(開ける区間 open・閉める区間 close)、
   //  落ちる物 = 採用 room_fall A「薄いガラス(パリーン！)」(割れ物。本・ファイルと缶は同じ作りの派生区間。manifest の types)。
   //  窓の開閉・室外機の乗り越え(room_window)・ロッカーの中で当たる予兆(locker_tease)は「なし」= 無音(記録だけ)。
-  //  ロッカーがゆっくり開く軋み(locker_open_slow)は 3 周目の選択待ちなので仮音のまま。屋上・バルコニーの風(amb_roof 採用 A)は main.js の環境音が鳴らす
+  //  P4c: ロッカーがゆっくり開く軋み(locker_open_slow)は 3 周目で「なし」→ 仮音を消した(lockerCreak も記録だけ)。屋上・バルコニーの風(amb_roof 採用 A)は main.js の環境音が鳴らす
+  //  P4c: 合成の仮音が無くなったので、ここで持つのは AudioContext だけ(鳴らすのは AudioBank)
   _initAudio() {
-    const ctx = this.listener ? this.listener.context : null;
-    if (!ctx) return;
-    this.ac = ctx;
-    const sr = ctx.sampleRate;
-    const rnd = (seed) => { let s = seed; return () => ((s = (s * 16807) % 2147483647) / 2147483647); };
-    const mk = (sec, fn, seed = 3) => { const b = ctx.createBuffer(1, Math.floor(sr * sec), sr); const d = b.getChannelData(0); const r = rnd(seed); for (let i = 0; i < d.length; i++) d[i] = fn(i / sr, r); return b; };
-    this.bufs = {
-      // P5b-1b(仮音。3 周目の選択待ち locker_open_slow): スチールロッカーの扉がゆっくり開く軋み
-      lockerCreak: mk(1.5, (t, r) => (Math.sin(2 * Math.PI * (210 + 70 * Math.sin(t * 3.1) + 25 * Math.sin(t * 17)) * t) * 0.16 + Math.sin(2 * Math.PI * 640 * t) * 0.03 * Math.sin(t * 11) + (r() - 0.5) * 0.04) * Math.min(1, t * 6) * Math.max(0, 1 - t / 1.5), 31),
-    };
-    this.pool = Array.from({ length: 2 }, () => {
-      const a = new THREE.PositionalAudio(this.listener);
-      a.setRefDistance(1.2); a.setRolloffFactor(1.2);
-      return a;
-    });
-    this.poolIdx = 0;
+    this.ac = this.listener ? this.listener.context : null;
   }
   _sfx(name, pos, vol = null) {
     this.log('sfx', { name });
@@ -536,14 +522,7 @@ export class Rooms {
       if (B) B.play('room_fall', { pos, seg, vol: vol ?? 1, ref: 1.2, rolloff: 1.2 });
       return;
     }
-    if (name !== 'lockerCreak') return;   // slide・climb(room_window)・lockerRattle(locker_tease)は「なし」
-    if (!this.ac || this.ac.state !== 'running' || !this.bufs[name]) return;
-    const a = this.pool[this.poolIdx++ % this.pool.length];
-    if (a.isPlaying) a.stop();
-    if (!a.parent) this.scene.add(a);
-    a.position.copy(pos); a.updateMatrixWorld();
-    a.setBuffer(this.bufs[name]); a.setVolume(vol ?? 0.6);
-    try { a.play(); } catch (e) { /* suspended */ }
+    // slide・climb(room_window)・lockerRattle(locker_tease)・lockerCreak(locker_open_slow。P4c)は「なし」= 記録だけ
   }
 
   // P4b: 風の音は main.js の環境音(amb_roof)へ移した。ここは場所の記録だけ(where = 'roofA' | 'balcony' | null)
