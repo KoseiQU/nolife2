@@ -16,13 +16,18 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 export const ENEMY = {
   url: './build/enemy/07_rigged.glb',
   hammerUrl: './build/enemy/hammer.glb',
-  // meta.json(P2a)のハンマーのオフセット(mixamorig:RightHand のローカル)
-  hammerPos: [0.006118, 0.098233, 0.025449],
+  // meta.json のハンマーのオフセット(mixamorig:RightHand のローカル)。P5b-5: 握りの点を「握った指の輪の中心」に移した
+  // (P2a は掌の中央から 2.5cm 掌側=拳より約 2cm 手首寄りで、指が柄を包めなかった。向き hammerQuat は不変)
+  hammerPos: [0.01063, 0.119308, 0.023517],
   hammerQuat: [0.005073, 0.000799, 0.778998, 0.627005],
   // P2d(§3.4.1 ハンマーの持ち方): P2a の向きは柄が小指側から出て頭が後ろ下に垂れていた。
   // ハンマー自身の X 軸(頭の長さ方向)まわりに 180° 回し、柄を親指側へ・頭を前(振り上げで上)にする
   hammerFlipAxis: [1, 0, 0],
   fade: 0.3,                       // 既定のクロスフェード秒
+  // P5b-5: 懐中電灯の握り(meta.json flashlight_grip: mixamorig:LeftHand のローカル、左手の指の輪の中心)。
+  // 本体(全長 15cm、group の z=-0.115〜0.035)を z=-gripAlong の所で握る = group の原点は握りの点から光の向きへ gripAlong
+  flashlightGrip: [-0.010121, 0.123396, 0.025581],
+  flashlightGripAlong: 0.06,
   flashlight: {
     angle: THREE.MathUtils.degToRad(25),
     penumbra: 0.75,                // 縁を広くぼかす(壁・天井に輪郭の帯を作らない)
@@ -301,7 +306,8 @@ export class Enemy {
 
   _updateFlashlight(dt) {
     const fl = this.flashlight;
-    const hand = this.bones.lhand.getWorldPosition(_v1);
+    this.bones.lhand.updateWorldMatrix(true, false);
+    const hand = _v1.fromArray(ENEMY.flashlightGrip).applyMatrix4(this.bones.lhand.matrixWorld);   // 左手の握りの点
     const fwd = this.forward(_v2);
     let want;
     if (this.aimPoint) {
@@ -322,7 +328,7 @@ export class Enemy {
     // 世界での姿勢 = 手の位置・_dir 方向(+Z)。親(左手)の逆行列でローカル行列に直す
     const m = _m1.lookAt(_v6.set(0, 0, 0), _v7.copy(this._dir).negate(), _up);   // lookAt は -Z を向けるので反転
     _q1.setFromRotationMatrix(m);
-    const world = _m2.compose(hand, _q1, _one);
+    const world = _m2.compose(_v8.copy(hand).addScaledVector(this._dir, ENEMY.flashlightGripAlong), _q1, _one);
     const parentInv = _m3.copy(this.bones.lhand.matrixWorld).invert();
     fl.group.matrix.multiplyMatrices(parentInv, world);
     fl.group.matrixWorldNeedsUpdate = true;
@@ -388,7 +394,7 @@ export class Enemy {
     const fl = this.flashlight;
     // カメラが光の円錐の中にいる(=こちらを照らしている)ときは筋を薄く(内側から見ると面全体が光って白く濁るため)
     {
-      const o = this.bones.lhand.getWorldPosition(_v3);
+      const o = _v3.setFromMatrixPosition(fl.group.matrixWorld);
       const toCam = _v4.copy(camera.position).sub(o);
       const along = toCam.dot(this._dir);
       const cosA = along / Math.max(1e-4, toCam.length());
@@ -451,7 +457,7 @@ const ONE_SHOT = new Set(['door_open_in', 'attack_downward', 'attack_bash', 'rea
 
 // ------------------------------------------------------------ helpers
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
-const _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3(), _v7 = new THREE.Vector3();
+const _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3(), _v7 = new THREE.Vector3(), _v8 = new THREE.Vector3();
 const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4();
 const _q1 = new THREE.Quaternion();
 const _up = new THREE.Vector3(0, 1, 0);
