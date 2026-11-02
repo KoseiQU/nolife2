@@ -45,3 +45,7 @@ DESIGN.md §3.5 の「台詞は `docs/lines.md` に集約し、ファイル名�
 - **録音は 1 コマンドで取り込む**:iPhone のボイスメモなどで録った m4a / wav / aiff を `assets/audio/rec_in/` に、ファイル名の先頭を台詞 ID にして置く(例 `mgr_line_found_01.m4a`、`mgr_line_found_01 取り直し.m4a`、`mgr_scream_01_take2.wav`)。リポジトリの直下で `bash tools/import_rec.sh`。macOS 付属の `afconvert` でモノラル 22.05kHz 16bit の wav にし、前後の無音を詰めて `assets/audio/tts/<ID>.wav` へ上書きする。ID がこの表に無いファイルは警告して飛ばす。ゲームを再読み込み(Cmd+Shift+R)すれば鳴る。録り方と優先順は `docs/recording_guide.md`。
 - **仮声との関係(KEEP)**:取り込んだ ID は `assets/audio/tts/recorded.txt` に追記される。`tools/make_tts.sh` はこの一覧の ID を**仮声で上書きしない**(従来の `KEEP="ID …"` と併用できる)。仮声に戻したい時だけ `FORCE=1 bash tools/make_tts.sh <ID>`。`rec_in/` は gitignore(元ファイルはコミットしない)。変換後の `tts/<ID>.wav` と `recorded.txt` はコミットする。
 - 台詞の言い回しを変えた時は、この表の「台詞」の欄を直す(ID は変えない)。
+
+## P4e-1: 録音済みの ID は加工が「録音プロファイル」に切り替わる(2026-11-02)
+- `assets/audio/tts/recorded.txt` にある ID(`tools/import_rec.sh` で取り込んだ録音)は、仮声用の加工(低く遅く・かすれ・揺らぎ・長さで切る)を使わず、録音プロファイルで鳴る。既定は **B 軽い加工**(再生速度 0.9・かすれ/揺らぎなし・最後まで切らない)＋場面の空間処理(扉越し・目の前など)。取り込んだ後に何もしなくてよい(build も不要、再読み込みだけ)。
+- 聞こえ方は試聴盤 `samples/sound.html` の「録音の聞こえ方」で録音ごとに A 素のまま/B 軽い加工/C 強い加工 から選べる(`samples/sound_choice.json` の `rec_fx`)。数値と場面の対応は `src/audio_voice.js` と `docs/p4e1/NOTES.md`。
