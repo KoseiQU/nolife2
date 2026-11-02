@@ -1,7 +1,7 @@
 {
- "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。P4c で反映済みの場面は scenes か none へ)、unselected = 未選択(仮音のまま)",
+ "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。反映済みの場面は scenes か none か unselected へ。P4d で空)、unselected = 未選択(ゲームでは無音 = なし扱い。P4d 時点は amb_x312_room_loop)",
  "sr": 22050,
- "totalBytes": 4140878,
+ "totalBytes": 4286452,
  "scenes": {
   "pl_step_room": {
    "file": "pl_step_room.wav",
@@ -253,6 +253,16 @@
    "rmsDb": -26,
    "loop": true
   },
+  "xb1_loop_notice": {
+   "file": "xb1_loop_notice.wav",
+   "cand": "c",
+   "kind": "sfx",
+   "dur": 3.3,
+   "sr": 22050,
+   "bytes": 145574,
+   "peakDb": -6,
+   "rmsDb": -23.5
+  },
   "car_engine": {
    "file": "car_engine.wav",
    "cand": "b",
@@ -314,6 +324,14 @@
   "locker_open_slow",
   "locker_burst",
   "key_unlock",
+  "x312_clock_tick",
+  "x312_door_open",
+  "x312_door_close",
+  "x312_door_locked",
+  "x312_key_slam",
+  "x312_watcher_lookup",
+  "x312_room_shift",
+  "x312_bed_creak",
   "x105_lamp_off",
   "space_warp",
   "decoy_key",
@@ -327,18 +345,8 @@
   "amb_maze",
   "space_release"
  ],
- "round3": [
-  "amb_x312_room_loop",
-  "x312_clock_tick",
-  "x312_door_open",
-  "x312_door_close",
-  "x312_door_locked",
-  "x312_key_slam",
-  "x312_watcher_lookup",
-  "x312_room_shift",
-  "x312_bed_creak"
- ],
+ "round3": [],
  "unselected": [
-  "xb1_loop_notice"
+  "amb_x312_room_loop"
  ]
 }

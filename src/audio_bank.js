@@ -13,7 +13,7 @@ export const AUDIO = {
     pl_step_room: 0.35, pl_closet: 0.6, room_fall: 1.0, ev_chime: 0.9, ev_motor: 1.0,
     enemy_step_walk: 1.0, enemy_step_run: 1.3, enemy_breath_door: 2.5, enemy_door_smash: 1.0, enemy_hit: 1.0, death: 0.9,
     story_221_lure: 0.7, pickup_key: 0.6, pickup_paper: 0.6, x105_scream: 1.0, x705_lights_off: 0.9,
-    car_engine: 0.8, ending_gate: 0.9,
+    car_engine: 0.8, ending_gate: 0.9, xb1_loop_notice: 0.8,
     amb_corridor: 0.5, amb_outdoor: 0.8, amb_roof: 1.0, amb_b1: 0.9, amb_x105: 0.7,
   },
   ref: 1.4, rolloff: 1.3, maxDistance: 40,   // 位置音の既定(ENEMY_AUDIO と同じ)

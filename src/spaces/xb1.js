@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { SPACE_Y } from '../world.js';
-import { GB, GLSL_NOISE, rng, actx, tone } from './gb.js';
+import { GB, GLSL_NOISE, rng, actx } from './gb.js';
 
 const OX = 520, OZ = 0;
 // 調整値(docs/p5b2b/NOTES.md §4)
@@ -658,7 +658,7 @@ function useDoor(ctx) {
 // ================================================================ 音(P4b)
 //  水の流れ・滴り = 採用 amb_b1 B「流れる水」のループ。地下(B1・XB1・1F の地下への階段)の空気は main.js の環境音(updateAmbience)がまとめて鳴らす。
 //  踊り場の扉が閉まる音(door_steel)・抜ける音と鍵の低音(space_release)・戻りで扉が開く軋み(door_creak_slow)は「なし」で外した(無音)。
-//  3 回目に気づく音(xb1_loop_notice)は未選択なので仮音のまま。上の足音(enemy_step_walk 3 周目 A・P4c で wav)と遠い悲鳴(x105_scream 採用 C・声)は enemy_audio をこもらせて
+//  3 回目に気づく音 = 採用 xb1_loop_notice C「耳鳴りと金属の一打」(P4d。src/audio_bank.js)。上の足音(enemy_step_walk 3 周目 A・P4c で wav)と遠い悲鳴(x105_scream 採用 C・声)は enemy_audio をこもらせて
 function sound(ctx, dt, inTun) {
   void inTun;
   const st = ctx.state, c = actx(ctx); if (!c) return;
@@ -677,7 +677,8 @@ function sound(ctx, dt, inTun) {
 function stopSound(ctx) { void ctx; }
 function sfx(ctx, name) {
   const st = ctx.state; st.sfx = st.sfx || []; st.sfx.push(name);
-  if (name === 'notice') { tone(ctx, 55, 52, 2.4, 0.09, 'sawtooth'); tone(ctx, 82, 80, 2.0, 0.04, 'sine', 0.3); }   // xb1_loop_notice_01(未選択 = 仮音のまま)
+  const bank = ctx.audio && ctx.audio.bank;
+  if (name === 'notice' && bank) bank.play('xb1_loop_notice');   // 標識灯の 3 回目(耳元。仮音の低いうなりは廃止)
 }
 
 // テスト・スクショ用
