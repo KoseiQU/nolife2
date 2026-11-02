@@ -81,31 +81,205 @@ def bone_of(path):
     return path.split('"')[1] if path.startswith('pose.bones["') else None
 
 
-GRIP_DEG = dict(Index=(50, 75, 50), Middle=(55, 80, 50), Ring=(60, 80, 50), Pinky=(65, 80, 50), Thumb=(15, 30, 25))
+# 手の固定ポーズ(P5b-5、§3.4.1 手の形)。Mixamo の指アニメは使わず、両手とも全アクションに同じ姿勢を焼く。
+#   レスト(MakeHuman の A ポーズ)は指が扇状に開いている(手の軸に対し 人差し指 +4°・中指 -9°・薬指 -20°・小指 -29°)。
+#   ①握りの軸 = 人差し指と小指の付け根を結ぶ線(柄・懐中電灯の向き)。握りの点 = 中指の付け根から
+#     grip_uv(cm: u=軸に直交する掌の面内で指先側 +、v=掌側 +)。ここを円柱(半径 R=物の半径＋指の厚みの半分)の中心にする
+#   ②開きを閉じる: 各指の 1〜3 節を掌の法線まわりに回し、軸に直交する向き t0 から spread(度、人差し指側 +)へ揃える
+#     (spread は外へわずかに開く向きにして、指先が中心へ窄まらないようにする)
+#   ③曲げ: 曲げ軸 = 揃えた向き t × 掌の法線 n(正で掌側)。MCP=θ1・PIP=θ2・DIP=dip×θ2 とし、θ1/θ2 を 1° 刻みで探して
+#     PIP・DIP・指先・各節の中点が円柱から R の距離に並ぶ(めり込みは重く罰する)ものを選ぶ
+#   ④親指: 付け根の節の向き(手の座標で方位・仰角)と、残り 2 節の曲げ(IP=0.8×MP)を探し、指先を「人差し指の中節の外側」
+#     へ届かせる(円柱・人差し指へのめり込みは罰。付け根の節はレストの向きから大きく離れないように)
+HAND_POSE = {
+    # 右手: ハンマーの柄(楕円 1.65×1.22cm)を全指で包む握り。柄は拳の中を通る
+    'Right': dict(grip_uv=(-1.2, 2.3), R=2.55, spread=dict(Index=3, Middle=0, Ring=-3, Pinky=-6), dip=0.65),
+    # 左手: 懐中電灯の本体(半径 1.6cm)を包む緩い握り
+    'Left': dict(grip_uv=(-1.0, 2.8), R=2.95, spread=dict(Index=3, Middle=0, Ring=-3, Pinky=-6), dip=0.6),
+}
+FINGERS = ('Index', 'Middle', 'Ring', 'Pinky')
 
 
-def apply_grip(arm, acts, palm_n_world):
-    """右手の指をハンマーを握る形に固定する(全アクションの右手指の回転キーを定数で上書き)。
-    曲げ軸は「骨の向き × 掌の法線」(指先を掌側へ倒す向き)を骨ローカルへ写したもの。"""
-    pn = (arm.matrix_world.to_3x3().inverted() @ palm_n_world).normalized()
-    pose = {}
-    for f, degs in GRIP_DEG.items():
-        for j, d in enumerate(degs, 1):
-            b = arm.data.bones.get(f'mixamorig:RightHand{f}{j}')
-            if b is None:
+def _signed(a, b, axis):
+    """axis まわりに a から b への符号付き角(rad)。a, b は axis に直交する前提。"""
+    return math.atan2(axis.dot(a.cross(b)), a.dot(b))
+
+
+def hand_pose(arm, side, spec):
+    """side('Right'|'Left')の指の固定ポーズを計算する(アーマチュア空間・レスト基準)。
+    返り値: dict(pose={骨名: 局所クォータニオン}, axis=握りの軸(小指→人差し指), grip=握りの点, frame=(x, y, n),
+                joints={指: [付け根, 2, 3, 指先]}(ポーズ後), radius={指: 各関節の軸からの距離 cm}, angles={指: 度})。
+    局所回転は L_j = R_j⁻¹ · D_{j-1}⁻¹ · D_j · R_j(R_j=骨のレスト姿勢、D_j=その節のアーマチュア空間での回転、D_0=I)。"""
+    bones = arm.data.bones
+    nm = lambda s: f'mixamorig:{side}{s}'   # noqa: E731
+    H = bones[nm('Hand')].head_local
+    head = lambda f, j: bones[nm(f'Hand{f}{j}')].head_local   # noqa: E731
+    across = (head('Index', 1) - head('Pinky', 1)).normalized()
+    fdir = (head('Middle', 1) - H).normalized()
+    n = across.cross(fdir).normalized()
+    if (head('Thumb', 3) - H).dot(n) < 0:                            # 掌側 = 親指のある側(左右で外積の向きが逆)
+        n = -n
+    y = (fdir - n * fdir.dot(n)).normalized()
+    x = (across - y * across.dot(y) - n * across.dot(n)).normalized()  # 人差し指側
+    t0 = n.cross(across).normalized()                                # 掌の面内で握りの軸に直交
+    if t0.dot(y) < 0:
+        t0 = -t0
+    e2 = across.cross(t0).normalized()
+    if e2.dot(n) < 0:
+        e2 = -e2
+    gu, gv = spec['grip_uv']
+    grip = head('Middle', 1) + t0 * (gu / 100) + e2 * (gv / 100)
+    R = spec['R'] / 100
+    def dax(p):
+        q = p - grip
+        return (q - across * q.dot(across)).length
+    def finger_chain(f, spread, th1, th2, th3):
+        t = (Quaternion(n, math.radians(spread)) @ t0).normalized()
+        a = t.cross(n).normalized()
+        Ds, acc, P = [], 0.0, [head(f, 1)]
+        for j, th in enumerate((th1, th2, th3), 1):
+            seg = head(f, j + 1) - head(f, j)
+            s_ = seg.normalized()
+            sp = (s_ - n * s_.dot(n)).normalized()
+            Rs = Quaternion(n, _signed(sp, t, n)).to_matrix()
+            s2 = Rs @ s_
+            cur = _signed(t, (s2 - a * s2.dot(a)).normalized(), a)
+            acc += math.radians(th)
+            D = Quaternion(a, acc - cur).to_matrix() @ Rs
+            Ds.append(D); P.append(P[-1] + D @ seg)
+        return Ds, P
+    def finger_cost(P, r):
+        pts = [P[1], P[2], P[3], (P[0] + P[1]) / 2, (P[1] + P[2]) / 2, (P[2] + P[3]) / 2]
+        c = 0.0
+        for i, p in enumerate(pts):
+            d = dax(p)
+            if i == 3 and d > r:                                    # 基節の中点は離れていてよい(付け根の位置で決まる)
                 continue
-            m3 = b.matrix_local.to_3x3()
-            ydir = (m3 @ Vector((0, 1, 0))).normalized()
-            ax = (m3.inverted() @ ydir.cross(pn)).normalized()
-            pose[b.name] = Quaternion(ax, math.radians(d))
+            c += (d - r) ** 2 + 20 * max(0.0, r - 0.002 - d) ** 2
+        return c
+    pose, joints, angles = {}, {}, {}
+    def put(f, Ds, P):
+        prev = Matrix.Identity(3)
+        for j, D in enumerate(Ds, 1):
+            b = bones[nm(f'Hand{f}{j}')]
+            Rj = b.matrix_local.to_3x3()
+            pose[b.name] = (Rj.inverted() @ prev.inverted() @ D @ Rj).to_quaternion().normalized()
+            prev = D
+        b4 = bones.get(nm(f'Hand{f}4'))
+        if b4 is not None:
+            pose[b4.name] = Quaternion()
+        joints[f] = P
+    for f in FINGERS:
+        sp = spec['spread'][f]
+        rf = R - (0.002 if f == 'Pinky' else 0.0)                   # 小指は細い
+        best = None
+        for th1 in range(0, 101, 2):
+            for th2 in range(0, 111, 2):
+                _, P = finger_chain(f, sp, th1, th2, th2 * spec['dip'])
+                c = finger_cost(P, rf)
+                if best is None or c < best[0]:
+                    best = (c, th1, th2)
+        _, b1, b2 = best
+        for th1 in range(b1 - 2, b1 + 3):                         # 1° 刻みで詰める
+            for th2 in range(b2 - 2, b2 + 3):
+                _, P = finger_chain(f, sp, th1, th2, th2 * spec['dip'])
+                c = finger_cost(P, rf)
+                if c < best[0]:
+                    best = (c, th1, th2)
+        _, th1, th2 = best
+        Ds, P = finger_chain(f, sp, th1, th2, th2 * spec['dip'])
+        put(f, Ds, P)
+        angles[f] = dict(spread=sp, MCP=th1, PIP=th2, DIP=round(th2 * spec['dip'], 1))
+    # 親指: 指先の目標 = 中指の末節の中点から、軸と反対向き(拳の外側)へ指の厚み 2cm。握ると末節は柄の掌と反対側
+    # (拳の正面)に来るので、親指は柄の人差し指側の端を回り込み、その上を小指側へ横切る(末節の向き ≒ 軸の小指側)
+    Pm = joints['Middle']
+    mid3 = (Pm[2] + Pm[3]) / 2
+    q = mid3 - grip; rdir = (q - across * q.dot(across)).normalized()
+    target = mid3 + rdir * spec.get('th_out', 0.02)
+    C1 = head('Thumb', 1)
+    L = [(head('Thumb', j + 1) - head('Thumb', j)).length for j in (1, 2, 3)]
+    rest1 = (head('Thumb', 2) - C1).normalized()
+    to_l = lambda v: Vector((v.dot(x), v.dot(y), v.dot(n)))   # noqa: E731
+    r_az = math.degrees(math.atan2(to_l(rest1).x, to_l(rest1).y)); r_el = math.degrees(math.asin(max(-1, min(1, to_l(rest1).z))))
+    def thumb_chain(az, el, phi):
+        az_, el_ = math.radians(az), math.radians(el)
+        d1 = (x * (math.sin(az_) * math.cos(el_)) + y * (math.cos(az_) * math.cos(el_)) + n * math.sin(el_)).normalized()
+        P1 = C1 + d1 * L[0]
+        bax = d1.cross(target - P1)
+        if bax.length < 1e-6:
+            return None
+        bax.normalize()
+        d2 = Quaternion(bax, math.radians(phi)) @ d1
+        d3 = Quaternion(bax, math.radians(phi * 1.8)) @ d1
+        return [C1, P1, P1 + d2 * L[1], P1 + d2 * L[1] + d3 * L[2]]
+    def thumb_cost(P, az, el):
+        c = (P[3] - target).length ** 2 * 1e4
+        c += 20 * (1 - (P[3] - P[2]).normalized().dot(-across))       # 末節は小指側へ向ける
+        for p in (P[2], P[3], (P[1] + P[2]) / 2, (P[2] + P[3]) / 2):
+            c += 200 * max(0.0, R - dax(p)) ** 2 * 1e4
+            for f in ('Index', 'Middle'):
+                for k in range(3):
+                    a_, b_ = joints[f][k], joints[f][k + 1]
+                    ab = b_ - a_; tt = max(0.0, min(1.0, (p - a_).dot(ab) / ab.dot(ab)))
+                    dd = (a_ + ab * tt - p).length
+                    c += 200 * max(0.0, 0.019 - dd) ** 2 * 1e4
+        c += 0.002 * ((az - r_az) ** 2 + (el - r_el) ** 2)
+        return c
+    best = None
+    for az in range(int(r_az) - 40, int(r_az) + 41, 4):
+        for el in range(int(r_el) - 10, int(r_el) + 71, 4):
+            for phi in range(0, 91, 5):
+                P = thumb_chain(az, el, phi)
+                if P is None:
+                    continue
+                c = thumb_cost(P, az, el)
+                if best is None or c < best[0]:
+                    best = (c, az, el, phi)
+    _, az, el, phi = best
+    for daz in (-2, -1, 0, 1, 2):
+        for de in (-2, -1, 0, 1, 2):
+            for dp in (-2, -1, 0, 1, 2):
+                P = thumb_chain(az + daz, el + de, phi + dp)
+                if P is not None:
+                    c = thumb_cost(P, az + daz, el + de)
+                    if c < best[0]:
+                        best = (c, az + daz, el + de, phi + dp)
+    _, az, el, phi = best
+    P = thumb_chain(az, el, phi)
+    Ds = []
+    for j in (1, 2, 3):
+        s_ = (head('Thumb', j + 1) - head('Thumb', j)).normalized()
+        Ds.append(s_.rotation_difference((P[j] - P[j - 1]).normalized()).to_matrix())
+    put('Thumb', Ds, P)
+    angles['Thumb'] = dict(az=az, el=el, rest_az=round(r_az, 1), rest_el=round(r_el, 1), MP=phi, IP=round(phi * 0.8, 1),
+                           tip_err_cm=round((P[3] - target).length * 100, 2))
+    radius = {f: [round(dax(p) * 100, 2) for p in joints[f][1:]] for f in joints}
+    def seg_gap(fa, fb):
+        best_ = 9.0
+        for i in range(3):
+            for k in range(3):
+                for tt in (0, 0.25, 0.5, 0.75, 1):
+                    p = joints[fa][i].lerp(joints[fa][i + 1], tt)
+                    a_, b_ = joints[fb][k], joints[fb][k + 1]
+                    ab = b_ - a_; u_ = max(0.0, min(1.0, (p - a_).dot(ab) / ab.dot(ab)))
+                    best_ = min(best_, (a_ + ab * u_ - p).length)
+        return round(best_ * 100, 2)
+    gaps = {f'{a_}-{b_}': seg_gap(a_, b_) for a_, b_ in (('Index', 'Middle'), ('Middle', 'Ring'), ('Ring', 'Pinky'), ('Thumb', 'Index'), ('Thumb', 'Middle'))}
+    return dict(pose=pose, axis=across, grip=grip, frame=(x, y, n), joints=joints, radius=radius, angles=angles, gaps=gaps,
+                grip_uv_cm=(gu, gv))
+
+
+def bake_hand_pose(arm, acts, pose):
+    """全アクションの指の回転キーを固定ポーズの定数で上書き(既存の指キーは消す)。"""
     for act in acts:
         bags = [cb for layer in getattr(act, 'layers', []) for st in layer.strips for cb in getattr(st, 'channelbags', [])]
         f0, f1 = act.frame_range
         for bag in bags:
             for bn, q in pose.items():
-                dp = f'pose.bones["{bn}"].rotation_quaternion'
-                for fc in [fc for fc in bag.fcurves if fc.data_path == dp]:
+                for fc in [fc for fc in bag.fcurves if fc.data_path.startswith(f'pose.bones["{bn}"].')
+                           and fc.data_path.endswith(('rotation_quaternion', 'rotation_euler'))]:
                     bag.fcurves.remove(fc)
+                dp = f'pose.bones["{bn}"].rotation_quaternion'
                 for i in range(4):
                     fc = bag.fcurves.new(dp, index=i)
                     fc.group = bag.groups.get(bn) or bag.groups.new(bn)
@@ -114,6 +288,28 @@ def apply_grip(arm, acts, palm_n_world):
     for bn in pose:
         arm.pose.bones[bn].rotation_mode = 'QUATERNION'
     return len(pose)
+
+
+def hammer_matrix(arm, grip):
+    """ハンマーの姿勢(レスト・Blender のワールド)。Mh は hammer.glb の生の座標(+Y=柄尻→頭、+X=頭の長さ方向)に掛かる行列
+    (meta のオフセットはこれから出す)。off_m は .blend で RightHand の子にした、Blender に読み込んだハンマー用の局所行列。"""
+    MW = arm.matrix_world
+    H = lambda n: MW @ arm.data.bones[n].head_local   # noqa: E731
+    hand, mid, idx, pin = H(HAND), H('mixamorig:RightHandMiddle1'), H('mixamorig:RightHandIndex1'), H('mixamorig:RightHandPinky1')
+    across = (idx - pin).normalized()                 # 小指の付け根 → 人差し指の付け根
+    fdir = (mid - hand).normalized()                  # 指先方向
+    ydir = -across                                    # 実測: 拳の親指・人差し指側が上に来る持ち方では、頭はこちら側
+    xdir = (fdir - ydir * fdir.dot(ydir)).normalized()
+    zdir = xdir.cross(ydir)
+    Mh = Matrix((xdir, ydir, zdir)).transposed().to_4x4(); Mh.translation = grip
+    bone_rest = MW @ arm.data.bones[HAND].matrix_local
+    # .blend はゲームと同じ向きにする: Blender に読み込んだメッシュ(読込で (x,y,z)→(x,-z,y))には K⁻¹ を、
+    # ゲームの hammerFlipAxis(自身の X 軸まわり 180°)には Fx を挟む。P2a までの .blend はこの 2 つが無く、柄が掌の法線方向だった
+    Kinv = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
+    Fx = Matrix.Diagonal((1, -1, -1, 1))
+    L = arm.data.bones[HAND].length
+    off_m = Matrix.Translation((0, -L, 0)) @ bone_rest.inverted() @ Mh @ Fx @ Kinv
+    return Mh, off_m
 
 
 def main():
@@ -275,7 +471,13 @@ def main():
                 actions={a.name: dict(frames=[int(a.frame_range[0]), int(a.frame_range[1])], fps=30,
                                       seconds=round((a.frame_range[1] - a.frame_range[0]) / 30, 3)) for a in acts},
                 shape_keys=[k_ for k_ in keys if k_ != 'Basis'])
+    # 6a) 手の固定ポーズ(P5b-5)。右の輪の中心=ハンマーの握り、左の輪の中心=懐中電灯の握り
+    arm.data.pose_position = 'REST'; bpy.context.view_layer.update()
+    hands = {sd: hand_pose(arm, sd, HAND_POSE[sd]) for sd in ('Right', 'Left')}
+    for sd, hp in hands.items():
+        log(f'{sd}: 角度 {hp["angles"]} / 軸からの距離 cm {hp["radius"]} / 隣の指との最短 cm {hp["gaps"]}')
     hammer = None
+    MW = arm.matrix_world
     if ARGS['hammer'] and os.path.exists(P(ARGS['hammer'])):
         b_o = set(bpy.data.objects)
         bpy.ops.import_scene.gltf(filepath=P(ARGS['hammer']))
@@ -287,32 +489,25 @@ def main():
         hammer.parent = None
         hammer.matrix_world = Matrix.Identity(4)
         hammer.name = 'N2E_hammer'
-        arm.data.pose_position = 'REST'; bpy.context.view_layer.update()
-        H = lambda n: arm.matrix_world @ arm.data.bones[n].head_local
-        hand, mid, idx, pin = H(HAND), H('mixamorig:RightHandMiddle1'), H('mixamorig:RightHandIndex1'), H('mixamorig:RightHandPinky1')
-        across = (idx - pin).normalized()                 # 小指の付け根 → 人差し指の付け根
-        fdir = (mid - hand).normalized()                  # 指先方向
-        palm_n = across.cross(fdir).normalized()
-        if palm_n.z > 0:                                  # A ポーズでは掌は下(-Z)を向く
-            palm_n = -palm_n
-        grip = hand.lerp(mid, 0.75) + palm_n * 0.025      # 掌の中央から指の内側へ = 握った拳の中
-        ydir = -across                                    # 実測: 拳の親指・人差し指側が上に来る持ち方では、頭はこちら側
-        xdir = (fdir - ydir * fdir.dot(ydir)).normalized()
-        zdir = xdir.cross(ydir)
-        Mh = Matrix((xdir, ydir, zdir)).transposed().to_4x4(); Mh.translation = grip
-        bone_rest = arm.matrix_world @ arm.data.bones[HAND].matrix_local
-        off_m = bone_rest.inverted() @ Mh                 # .blend 用(GLB 用のオフセットは書き出し後に GLB の骨階層から出す)
+        Mh, off_m = hammer_matrix(arm, MW @ hands['Right']['grip'])
         hammer.parent = arm; hammer.parent_type = 'BONE'; hammer.parent_bone = HAND
         bpy.context.view_layer.update()
-        L = arm.data.bones[HAND].length
         hammer.matrix_parent_inverse = Matrix.Identity(4)
-        hammer.matrix_basis = Matrix.Translation((0, -L, 0)) @ off_m
+        hammer.matrix_basis = off_m
         bpy.context.view_layer.update()
         err = (hammer.matrix_world.translation - Mh.translation).length
         rec('ハンマー: ボーンの子にした位置の誤差(m)', err < 1e-4, round(err, 7), '<0.0001')
         hammer['n2_no_export'] = True
-        ng = apply_grip(arm, acts, palm_n)
-        rec('右手の指を握り形に固定(骨数)', ng == 15, ng, '15')
+    ng = 0
+    for sd, hp in hands.items():
+        ng += bake_hand_pose(arm, acts, hp['pose'])
+    rec('両手の指を固定ポーズに焼いた(骨数 左右 各 5 指 × 4 節)', ng == 40, ng, '40')
+    rmin = {sd: min(min(v) for f, v in hp['radius'].items() if f != 'Thumb') for sd, hp in hands.items()}
+    rec('握り: 指の関節と軸の最短距離 cm(右=柄の半径 1.2〜1.65＋指の厚み、左=懐中電灯 1.6＋指)',
+        rmin['Right'] >= 2.0 and rmin['Left'] >= 2.3, rmin, '右≥2.0・左≥2.3')
+    lrest = arm.data.bones['mixamorig:LeftHand'].matrix_local      # レンダ用(enemy_hand_render.py の懐中電灯の代役): 左手の骨の局所座標
+    arm['n2_flash_grip'] = list(lrest.inverted() @ hands['Left']['grip'])
+    arm['n2_flash_axis'] = list((lrest.to_3x3().inverted() @ hands['Left']['axis']).normalized())
     arm['n2_candidate'] = '07'
     arm.data.pose_position = 'POSE'
     # 7) テクスチャを縮めて GLB
@@ -343,6 +538,7 @@ def main():
     # 8b) GLB のノード階層からハンマー位置を再計算(Three.js と同じ計算)
     if hammer is not None:
         glb_hammer_offset(out, Mh, meta)
+    glb_flash_grip(out, MW @ hands['Left']['grip'], (MW.to_3x3() @ hands['Left']['axis']).normalized(), meta)
     # 8c) 再読込
     for o in list(bpy.data.objects):
         bpy.data.objects.remove(o, do_unlink=True)
@@ -474,6 +670,33 @@ def glb_root_motion(path):
 def trs(n):
     t = Vector(n.get('translation', [0, 0, 0])); r = n.get('rotation', [0, 0, 0, 1]); s = n.get('scale', [1, 1, 1])
     return Matrix.Translation(t) @ Quaternion((r[3], r[0], r[1], r[2])).to_matrix().to_4x4() @ Matrix.Diagonal((*s, 1))
+
+
+def glb_bone_rest(path, bone):
+    """GLB のノード階層(レスト)で骨のワールド行列(glTF 座標)。"""
+    nodes = glb_nodes(path)['nodes']
+    parent = {}
+    for i, n in enumerate(nodes):
+        for c in n.get('children', []):
+            parent[c] = i
+    i = next(i for i, n in enumerate(nodes) if n.get('name') == bone)
+    M = Matrix.Identity(4)
+    while i is not None:
+        M = trs(nodes[i]) @ M
+        i = parent.get(i)
+    return M
+
+
+def glb_flash_grip(path, grip_b, axis_b, meta):
+    """左手の握りの点と軸(小指→人差し指)を mixamorig:LeftHand の GLB 局所座標で meta に記録(enemy.js の懐中電灯の位置)。"""
+    C = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
+    M = glb_bone_rest(path, 'mixamorig:LeftHand')
+    Mi = M.inverted()
+    p = Mi @ (C @ grip_b)
+    a = (Mi.to_3x3() @ (C.to_3x3() @ axis_b)).normalized()
+    meta['flashlight_grip'] = dict(parent_bone='mixamorig:LeftHand', position_m=[round(v, 6) for v in p],
+                                   axis=[round(v, 6) for v in a],
+                                   note='左手の指の輪の中心(握りの点)と輪の軸(小指→人差し指)。enemy.js の懐中電灯は本体をこの点で握る')
 
 
 def glb_hammer_offset(path, Mh_blender, meta):
