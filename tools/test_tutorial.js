@@ -1,7 +1,7 @@
 // test_tutorial.js — P6a タイトルと場面を映すチュートリアル(DESIGN §3.8「チュートリアル」の表 0〜8・§7 P6a)の決定的テスト(ブラウザ内)。
 // http://127.0.0.1:8001/index.html?test=tutorial で自動実行。rAF に依存せず window.__N2.pump(dt, n) で進める(階の読み込み待ちの間だけ実時間を待つ)。結果: window.__N2.testResult
 //  0) タイトル: 「NOLIFE」(「2」は付けない。2026-11-02 ユーザー指示)と「クリックで開始」。クリックでチュートリアルが始まり、入力が止まり HUD が隠れる
-//  1) 通し: 場面 0,1,2,3,3b,4,5,6,6b,7,8 の順序・各場面の所要時間(表の値 ±0.05 秒)と合計 60〜95 秒(P6b)・文言が表のとおり(句読点・「、、、」も)・場面ごとの仕込み
+//  1) 通し: 場面 0,1,2,3,3b,4,5,6,6b,7,7b,8 の順序・各場面の所要時間(表の値 ±0.05 秒)と合計 60〜100 秒(P6b-A2)・文言が表のとおり(句読点・「、、、」も)・場面ごとの仕込み
 //     (P6b 3b 3F の外階段の踊り場から段を見る・管理人は映らない / 6b 手前の 410 の扉が開いたまま・奥の 409 は閉まっている・場面 7 では 410 が閉まっている)
 //     (2 光だけ = 管理人の体は壁の向こう・懐中電灯は点灯 / 3 階数表示 1→2→3 とチャイム・扉は開かない / 4 見つかる→扉を閉める→覗き穴→通り過ぎる /
 //      5 クローゼットの中 / 6 扉の下の揺らぎ・ロッカーの軋み・光漏れ / 7 花瓶が割れる音・遠いチャイム・足音)・演出中は AI の時計が止まっている
@@ -21,11 +21,12 @@ const EXPECT = [
   '管理人は至る所に潜んでいる、、、部屋の中、ロッカーの中にもいるかも？自分の懐中電灯の光には気をつけろ！',
   '施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい',
   '決して音をたてるな！',
+  '走ると足音が響く！管理人に聞こえる！',   // 7b(P6b-A2 §3.9 #17)
   '',
 ];
-// P6b(§3.9 #11): 並びは 0,1,2,3,3b,4,5,6,6b,7,8(添字 0〜10)。合計 87.5 秒(≤95)
-const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '8'];
-const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 3.0];
+// P6b(§3.9 #11): 並びは 0,1,2,3,3b,4,5,6,6b,7,8。P6b-A2(§3.9 #17): 7 の後に 7b(添字 0〜11)。合計 94.0 秒(≤100)
+const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '8'];
+const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0];
 const IX = (id) => IDS.indexOf(id);
 const LAST = IDS.length - 1;
 
@@ -101,12 +102,23 @@ export async function run(N) {
     const aiTime0 = N.ai.time;
     const seenCaption = {};
     const S = { s2: { n: 0, blocked: 0, light: 0, shown: 0 }, s3: { maxOpen: 0, disp: [] }, s4: { peep: false, doorClosedAtPeep: null }, s5: { hidden: false }, s6: { lurk: 0, leak: 0, jig: 0 },
-      s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 }, s6b: { n: 0, open410: 0, closed409: 0 }, after6b: null };
+      s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 }, s6b: { n: 0, open410: 0, closed409: 0 }, after6b: null,
+      s7b: { z0: null, zMax: -1e9, maxSpeed: 0, lastZ: null, disp: [], open: 0, enemyShown: 0, lookUpEnd: null } };
     const LZ = N.building.stairs.find((q) => q.id === 'main').geom;
     const bank0 = N.bank.n, steps0 = N.enemyAudio.logCount || 0, ev0 = N.elevator.logCount || 0;
     let scene7Bank = null;
-    await advance(90, (st) => {
+    await advance(100, (st) => {
       if (!st.active) return;
+      if (st.index === IX('7b')) {   // P6b-A2: 走る(速さ・前進)→ EV の表示 2→3→4・チャイム・扉は開かない・管理人は映らない
+        const z = N.player.pos.z, B = S.s7b;
+        if (B.z0 === null) B.z0 = z;
+        if (B.lastZ !== null) B.maxSpeed = Math.max(B.maxSpeed, (z - B.lastZ) / (6 * DT));
+        B.lastZ = z; B.zMax = Math.max(B.zMax, z);
+        const f = N.elevator.shown.floor; if (B.disp[B.disp.length - 1] !== f) B.disp.push(f);
+        B.open = Math.max(B.open, N.elevator.car.open);
+        if (N.enemyObj.root.visible && !N.ai.concealed) B.enemyShown++;
+        if (st.t > PLAN[IX('7b')] - 0.4) B.lookUpEnd = N.camera.getWorldDirection(new N.THREE.Vector3()).z;
+      }
       if (st.t > 1.6 && st.t < PLAN[st.index] - 1.0) seenCaption[st.index] = st.caption;
       if (st.index === 2 && st.t > 0.7) {
         S.s2.n++;
@@ -153,10 +165,12 @@ export async function run(N) {
       s2: S.s2, s3: { displays: S.s3.disp, chime: evNew.some((e) => e.ev === 'sfx' && e.name === 'chime'), maxOpen: +S.s3.maxOpen.toFixed(3) },
       s4: { found: L('found').length, doorClose: L('door_close').length, peep: S.s4.peep, doorClosedAtPeep: S.s4.doorClosedAtPeep, passed: L('passed_lens').length },
       s5: S.s5, s6: { lurkFrames: S.s6.lurk, maxJiggle: +S.s6.jig.toFixed(3), maxLeak: +S.s6.leak.toFixed(2) },
+      s7b: { ...S.s7b, runSteps: L('run_step').length, stepSounds: bankNew.filter((l) => l.id === 'pl_step_room').length, call: L('ev_call_7b').length, chime7b: evNew.filter((e) => e.ev === 'sfx' && e.name === 'chime').length },
       s7: { vaseBreak: L('vase_break').length, fallSound: bankNew.filter((l) => l.id === 'room_fall').length, chimeSound: bankNew.filter((l) => l.id === 'ev_chime').length, steps: stepsNew.length },
       aiFrozen: N.ai.time === aiTime0,
     };
-    r.pass = same(order, IDS.map((_, i) => i)) && same(r.ids, IDS) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 95 && r.textsMatch && r.captionsShown
+    r.pass = same(order, IDS.map((_, i) => i)) && same(r.ids, IDS) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 100 && r.textsMatch && r.captionsShown
+      && r.s7b.zMax - r.s7b.z0 > 4 && r.s7b.maxSpeed > 2.2 && r.s7b.runSteps >= 5 && r.s7b.stepSounds >= 5 && r.s7b.call === 1 && same(r.s7b.disp, [2, 3, 4]) && r.s7b.chime7b >= 2 && r.s7b.open === 0 && r.s7b.enemyShown === 0 && r.s7b.lookUpEnd > 0.9
       && S.s3b.n > 10 && S.s3b.onLanding === S.s3b.n && S.s3b.lookStairs === S.s3b.n && S.s3b.enemyShown === 0
       && S.s6b.n > 10 && S.s6b.open410 === S.s6b.n && S.s6b.closed409 === S.s6b.n && S.after6b === 0
       && S.s2.n > 10 && S.s2.blocked === S.s2.n && S.s2.light === S.s2.n && S.s2.shown === S.s2.n
@@ -185,7 +199,7 @@ export async function run(N) {
     for (const an of document.getElementById('tutskip').getAnimations()) an.finish();
     const skipHint = getComputedStyle(document.getElementById('tutskip')).opacity;
     // 片付け: 最後まで流す
-    await advance(90, null, () => !tu.active);
+    await advance(100, null, () => !tu.active);
     const e = await endState(b);
     return { pass: before3.index === 1 && after3.index === 1 && after3.active && ignored >= 1 && +skipHint === 0 && e.pass, before: before3, after: after3, ignored, skipHint, end: e.pass };
   });

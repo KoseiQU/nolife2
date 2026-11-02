@@ -1,5 +1,6 @@
 // tutorial.js — P6a: 場面を映すチュートリアル(DESIGN §3.8「チュートリアル(2026-11-01 ユーザー決定)」の表 0〜8。P5a の仮の文字カードを置き換えた)。
 //  P6b(§3.9 #11): 場面 3b(外階段の踊り場)・6b(開いた扉と閉まった扉)を追加。並びは 0,1,2,3,3b,4,5,6,6b,7,8(TUT.ids)、合計 87.5 秒。
+//  P6b-A2(§3.9 #17): 場面 7b(4F の廊下を走る足音 → 遠くの EV の表示が 2→3→4 と動いてチャイム)を追加。並びは …,7,7b,8、合計 94.0 秒。
 //  タイトルのクリックの後、操作を奪ったカメラが館内の場面 0〜8 を順に映し、各場面に表の一文を出す(0 は黒の中央、1〜7 は画面下)。
 //  音楽なし。環境音(main の updateAmbience)と場面の音(AudioBank の採用場面: 管理人の足音・EV のチャイム・花瓶の割れる音)だけ。
 //  - 管理人は演出体として置く: AI の通常動作(ai.update)は main が止め、ここが enemy を直接置いて歩かせる(位置・向き・クリップ・懐中電灯・照らす点)。
@@ -17,9 +18,9 @@ import { levelY } from './world.js';
 export const TUT = {
   seenKey: 'nolife2.tutorialSeen',
   // 場面の並び(P6b §3.9 #11 で 3b・6b を追加。配列の添字 = this.index、表の番号 = ids[index])
-  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '8'],
-  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 87.5 秒(P6b 契約 ≤95。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0)
-  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 3.0],
+  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '8'],
+  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 94.0 秒(P6b-A2 契約 ≤100。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0 ＋ 7b 6.5)
+  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0],
   edgeFade: 0.6,       // 場面の始めと終わりの暗転(秒)
   cutFade: 0.3,        // 場面 6 の中のカット
   bedside: { level: 4, x: 12.35, z: 7.25, yaw: Math.PI / 2, pitch: -0.04 },   // 終わりの位置: 410 のベッド脇(西 = 玄関の方を向く)
@@ -33,6 +34,9 @@ export const TUT = {
   flashScale: 0.38,    // 場面 6・7: 近い壁・扉が白く飛ばないよう、自分の懐中電灯をこの倍率に(終われば戻す)
   stair3b: { level: 3 },   // P6b 場面 3b: 3F の外階段の踊り場(場面 3 と同じ階 = 読み込み待ちなし)
   open6b: '410', closed6b: '409',   // P6b 場面 6b: 4F の廊下の北端から、手前の開いた扉(410)と奥の閉まった扉(409)
+  // P6b-A2 場面 7b: 4F の廊下を南(EV ホール)へ走る。z0→z1 を run 秒(≈2.5 m/s)、足音の間隔 step 秒、目の上下 bob m。
+  //  カゴは 2F から呼ばれて travel 秒で 4F へ(表示 2→3→4・チャイム。扉は開けない)
+  run7b: { x: 6.9, z0: 8.6, z1: 14.0, t0: 0.3, run: 2.2, step: 0.3, bob: 0.035, eye: 1.52, callAt: 0.6, from: 2, to: 4, travel: 3.4 },
 };
 const LAST = TUT.ids.length - 1;   // 最後の場面(黒 → ベッド脇)
 const DUR = (id) => TUT.dur[TUT.ids.indexOf(id)];
@@ -478,6 +482,39 @@ export class Tutorial {
         if (this._stepsOn) this._walk(dt, 6.85, 9.0, 1.15, 'walk_standard');
       },
       exit: () => { this._hideEnemy(); this.enemyAudio.setOccluded(false); this.vase.removeFromParent(); this.shards.removeFromParent(); } }];
+    // 7b(P6b-A2 §3.9 #17): 4F の廊下を走る(走りの高さ・速さ・足音)→ 足を止めると、遠くの EV の階数表示が 2→3→4 と動いてチャイム。
+    //  「走ると足音が響く！管理人に聞こえる！」。廊下の自分の足音は本編では「なし」なので、居室の足音(pl_step_room)を走りの音量で鳴らす
+    const R7 = TUT.run7b;
+    S['7b'] = [{ dur: DUR('7b'), level: 4,
+      enter: () => {
+        const c = this.elevator.car;
+        Object.assign(c, { level: R7.from, open: 0, state: 'idle', hold: 0, to: null, t: 0, dur: 0, riding: false, pending: [] });
+        this.elevator.npc = null;
+        this._place(4, R7.x, R7.z0, Math.PI, 0); this._hideEnemy(); this.player.setFlashlight(true); this.player.flashlight.intensity = this.snap.flashI * TUT.flashScale;
+        this._cam({ x: R7.x, z: R7.z0, eye: R7.eye, yaw: Math.PI, pitch: -0.05 }, L4);
+        this._called7b = false; this._sped7b = false; this._nextStep7b = R7.t0;
+      },
+      tick: (t) => {
+        const k = Math.min(1, Math.max(0, (t - R7.t0) / R7.run));
+        const z = R7.z0 + (R7.z1 - R7.z0) * (k < 0.85 ? k / 0.85 * 0.92 : 0.92 + 0.08 * smooth((k - 0.85) / 0.15));   // 走って、終わりで止まる
+        const running = t >= R7.t0 && k < 0.95;
+        const bob = running ? Math.abs(Math.sin((t - R7.t0) * Math.PI / R7.step)) * R7.bob : 0;
+        const stopT = R7.t0 + R7.run;
+        // 走っている間は前、止まってから EV ホールの階数表示(扉の上)を見上げる
+        const ahead = { x: R7.x, z, eye: R7.eye + bob, yaw: Math.PI, pitch: -0.05 };
+        const disp = this._look(R7.x, 1.6, z, 6.9, 2.35, 22.1);
+        this._cam(t < stopT ? ahead : keys([{ t: stopT, ...ahead, eye: R7.eye }, { t: stopT + 1.0, ...disp }], t), L4);
+        if (running && t >= this._nextStep7b) {
+          this._nextStep7b += R7.step;
+          if (this.bank) this.bank.play('pl_step_room', { vol: 1.0 });
+          this.log.push({ ev: 'run_step', t: +t.toFixed(2), z: +z.toFixed(2) });
+        }
+        const c = this.elevator.car;
+        if (!this._called7b && t >= R7.callAt) { this._called7b = true; this.elevator.call(R7.to); this.log.push({ ev: 'ev_call_7b', from: R7.from, to: R7.to }); }
+        if (!this._sped7b && c.state === 'moving') { this._sped7b = true; c.dur = R7.travel; }
+        if (c.state === 'arrived') c.lead = Math.max(c.lead, 0.5);   // チャイムの後も扉は閉じたまま
+      },
+      exit: () => { this.player.flashlight.intensity = this.snap.flashI; } }];
     // 8: 黒 → (暗転の中で世界を開始時の状態へ戻す)→ 410 のベッド脇でフェードイン → 操作一覧
     S['8'] = [{ dur: DUR('8'), level: 4, black: true,
       enter: () => { this._restore(); this.seen = true; },
