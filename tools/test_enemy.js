@@ -3,6 +3,7 @@
 // 結果: window.__N2.testResult と画面左上の <pre>。?test=enemy&fps=1 で 1080p の fps 実測も行う(タブが前面にあること)。
 
 import { HIDE_ODDS, HIDE_FORGET, hideOddsFrom } from '../src/enemy_ai.js';
+import { levelY } from '../src/world.js';
 
 const DT = 1 / 60;
 // 消灯時の黒つぶれ判定(画面中央 50% 領域の平均輝度、表示値 0..1)。P2b 時点: 410 室内 0.007 / 廊下 0.16
@@ -18,7 +19,9 @@ export async function run(N) {
   pre.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9;color:#9fe39f;background:rgba(0,0,0,.75);font:11px/1.35 monospace;padding:8px;max-width:46vw;max-height:94vh;overflow:auto;white-space:pre-wrap;';
   document.body.appendChild(pre);
   const show = () => { pre.textContent = JSON.stringify(out, null, 1); };
+  const ONLY = new URLSearchParams(location.search).get('only');   // P6b-A: ?only=36,40 で絞れる(番号の頭で一致)
   const T = async (name, fn) => {
+    if (ONLY && !ONLY.split(',').some((k) => name.startsWith(k + '_'))) return;
     try { const r = await fn(); out.cases[name] = r; if (!r.pass) out.ok = false; }
     catch (e) { out.cases[name] = { pass: false, error: String(e && e.stack || e) }; out.ok = false; }
     show();
@@ -959,6 +962,274 @@ export async function run(N) {
     const rattleSounds = N.enemyAudio.log.slice(a0).filter((l) => l.name === 'rattle').length;
     const pass = skipped && refused && maxR === 0 && rattleSounds === 0 && !N.deathState();
     return { pass, unknownDoorSkip: skipped, refusedAtDoor: refused, doorRattleMax: maxR, rattleSounds, framesWatched: frames, doorsWatched: doors4.length };
+  });
+
+  // ================================================================ P6b-A(DESIGN §3.9 #1・2・3・9・10。通しプレイ 1 回目の指摘)
+  const FN = { W: [-1, 0], E: [1, 0], N: [0, -1], S: [0, 1] };
+  const doorOf = (rid) => { const R = N.world.roomById.get(String(rid)); return { lv: R.level, pos: R.room.door.pos, n: FN[R.room.door.facing], facing: R.room.door.facing, d: N.doorApi.get(String(rid)) }; };
+  // 扉の内側 depth m・扉に正対して立つ(視線 = 廊下側の法線)
+  const standInside = async (rid, depth = 0.7) => { const D = doorOf(rid); await N.teleport(D.lv, D.pos[0] - D.n[0] * depth, D.pos[1] - D.n[1] * depth, Math.atan2(-D.n[0], -D.n[1])); N.pump(DT, 30, false); return D; };
+  const back4 = async () => { await N.teleport(4, N.CHECKPOINT.x, N.CHECKPOINT.z, N.CHECKPOINT.yaw); N.pump(DT, 10, false); };
+  // 見えている部分だけの world AABB(SkinnedMesh はスキニング後の頂点)の、扉面から廊下側への最大突出(m。負 = 部屋の中)
+  const _bb = new N.THREE.Box3(), _tb = new N.THREE.Box3();
+  const protrusion = (D) => {
+    _bb.makeEmpty();
+    N.enemyObj.root.updateMatrixWorld(true);
+    N.enemyObj.root.traverseVisible((o) => { if (!o.isMesh || !o.geometry) return; _tb.makeEmpty(); _tb.expandByObject(o, !!o.isSkinnedMesh); _bb.union(_tb); });
+    if (_bb.isEmpty()) return null;
+    const [nx, nz] = D.n;
+    return nx > 0 ? _bb.max.x - D.pos[0] : nx < 0 ? D.pos[0] - _bb.min.x : nz > 0 ? _bb.max.z - D.pos[1] : D.pos[1] - _bb.min.z;
+  };
+  const vRootOf = (D) => (N.enemyObj.pos.x - D.pos[0]) * D.n[0] + (N.enemyObj.pos.z - D.pos[1]) * D.n[1];   // 管理人の足元の扉面からの距離(廊下側 +)
+  const spotOn = () => N.enemyObj.root.visible && N.enemyObj.flashlight.light.visible && N.enemyObj.flashlight.light.intensity > 0;
+
+  // 36) #10 監督役の重み: プレイヤーの階 +3.5・緊張 ×1.8。潜伏 1 回ごとの「プレイヤーの階」= 通常 29%・緊張 38%・静か 13%(隣接 3.5×2・残り 4 階 1)
+  await T('36_p6b_director_weights', () => {
+    W.reset();
+    N.ai.reset(6.9, 20.6, Math.PI, 2); N.ai.noiseHist = {}; N.ai.floorStreak = 0; N.ai._lastLurkLevel = null;
+    const D = N.ai.cfg.director;
+    const share = (ph) => { const w = N.ai.floorWeights(ph); const s = Object.values(w).reduce((a, b) => a + b, 0); return { p4: +(w[4] / s).toFixed(4), w }; };
+    const n = share('normal'), te = share('tense'), ca = share('calm');
+    const pass = D.player === 3.5 && D.tense.player === 1.8 && Math.abs(n.p4 - 0.2903) < 0.002 && Math.abs(te.p4 - 0.3821) < 0.002 && Math.abs(ca.p4 - 0.1317) < 0.002
+      && n.w[3] === 3.5 && n.w[5] === 3.5 && [1, 2, 6, 7].every((l) => n.w[l] === 1) && n.w[4] === 4.5;
+    N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw);
+    return { pass, playerFloorShare: { normal: n.p4, tense: te.p4, calm: ca.p4 }, weightsNormal: n.w, director: { player: D.player, tensePlayer: D.tense.player } };
+  });
+
+  // 37) #1 全室スコープ: 221(2F・南向きの扉)と 605(6F・北向き)で、扉の内側から E 長押し/P → カメラが扉の廊下側(レンズ)・廊下向き。
+  //  離すと元に戻る。室内側のドアスコープはその部屋の扉板へ付け替わる。扉から 1.0m より奥・扉を見ていない時は覗けない
+  await T('37_p6b_peephole_every_room', async () => {
+    W.reset(); N.ai.lurkEnabled = false; N.ai.setState('SCRIPTED', { force: true });
+    const res = {};
+    for (const rid of ['221', '605']) {
+      const D = await standInside(rid, 0.7);
+      N.setFlashlight(false);
+      const cam = N.camera, y0 = N.player.pos.y;
+      const before = { pos: cam.position.clone(), fov: cam.fov };
+      const can = N.canPeep(), hint = N.hudState().hint;
+      W.key('KeyE', true); N.pump(DT, 30, false);
+      const on = { active: N.peepholeObj.active, fov: cam.fov, pos: cam.position.clone(), fwd: cam.getWorldDirection(new N.THREE.Vector3()), room: N.peepholeObj.lens.room };
+      W.key('KeyE', false); N.pump(DT, 2, false);
+      const off = { active: N.peepholeObj.active, posErr: cam.position.distanceTo(before.pos), fov: cam.fov, door: D.d.target };
+      W.key('KeyP', true); N.pump(DT, 2, false); const onP = N.peepholeObj.active && N.peepholeObj.lens.room === rid; W.key('KeyP', false); N.pump(DT, 2, false);
+      const v = (on.pos.x - D.pos[0]) * D.n[0] + (on.pos.z - D.pos[1]) * D.n[1];                  // レンズの扉面からの距離(廊下側 +)
+      const u = Math.abs((on.pos.x - D.pos[0]) * D.n[1] - (on.pos.z - D.pos[1]) * D.n[0]);           // 扉の中心からの横ずれ
+      const dot = on.fwd.x * D.n[0] + on.fwd.z * D.n[1];
+      const scopeOn = N.doorScopeDoor;
+      // 覗けない: 扉から 1.3m 奥 / 扉に背を向ける
+      N.setView(D.pos[0] - D.n[0] * 1.3, D.pos[1] - D.n[1] * 1.3, Math.atan2(-D.n[0], -D.n[1]), 0); N.pump(DT, 2, false); const far = N.canPeep();
+      N.setView(D.pos[0] - D.n[0] * 0.7, D.pos[1] - D.n[1] * 0.7, Math.atan2(D.n[0], D.n[1]), 0); N.pump(DT, 2, false); const away = N.canPeep();
+      res[rid] = { facing: D.facing, can, hint, on: { active: on.active, fov: on.fov, room: on.room, lensFromDoorFace_m: +v.toFixed(3), lateral_m: +u.toFixed(3), eyeY: +(on.pos.y - levelY(D.lv)).toFixed(3), forwardDotCorridor: +dot.toFixed(4) },
+        off: { active: off.active, posErr: +off.posErr.toExponential(1), fov: off.fov, doorTarget: off.door }, pKey: onP, scopeInsideOn: scopeOn, cannotFar: !far, cannotAway: !away, y0 };
+      res[rid].pass = can && hint.includes('覗く') && on.active && on.fov === 110 && on.room === rid && v > 0 && v < 0.12 && u < 0.03 && dot > 0.999 && Math.abs(on.pos.y - (levelY(D.lv) + 1.48)) < 0.01
+        && !off.active && off.posErr < 1e-6 && off.fov === 68 && off.door === 0 && onP && scopeOn === rid && !far && !away;
+    }
+    await back4();
+    N.ai.lurkEnabled = true;
+    return { pass: res['221'].pass && res['605'].pass && N.peepholeObj.lens.room === '410', ...res, lensBackTo410: N.peepholeObj.lens.room };
+  });
+
+  // 38) #1 SCOPE(覗き返し)が 221 で成立: 部屋を知られて 221 の覗き穴を覗く → 通り過ぎ → 消える → 戻り → 覗き返し(顔がレンズの 0.3m 以内)→ ノブ → 扉が開く → OUT
+  await T('38_p6b_scope_221', async () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    const D = await standInside('221', 0.7);
+    N.setFlashlight(false);
+    N.ai.reset(17.4, 21.2, Math.PI / 2, 2);
+    N.ai.knownRoomId = '221';
+    N.ai.setState('PATROL', { force: true, log: true });
+    N.pump(DT, 2, false);
+    const ev0 = evMark();
+    N.peephole(true);
+    const lensRoom = N.peepholeObj.lens.room;
+    let t = 0, minFace = Infinity, stareAt = null, attackAfterStare = 0, peepAtKnob = null, hitAt = null, standAt = null;
+    for (let i = 0; i < Math.round(70 / DT) && hitAt === null; i++) {
+      N.pump(DT, 1, false); t += DT;
+      if (N.ai.state === 'SCOPE' && isFinite(N.ai.scopeFaceDist)) minFace = Math.min(minFace, N.ai.scopeFaceDist);
+      if (stareAt === null && has(ev0, 'scope_stare')) { stareAt = t; standAt = vRootOf(D); }
+      if (stareAt !== null && t - stareAt <= 1.2) attackAfterStare = Math.max(attackAfterStare, N.enemyObj.face.attack);
+      if (peepAtKnob === null && has(ev0, 'scope_knob')) peepAtKnob = N.peepholeObj.active;
+      if (N.deathState()) hitAt = t;
+    }
+    const order = ['scope_start', 'scope_pass', 'scope_hide', 'scope_return', 'scope_stare', 'scope_knob', 'door_opened', 'attack_start', 'hit'];
+    const evs = evSince(ev0);
+    const idx = order.map((k) => evs.findIndex((e) => e.ev === k));
+    const inOrder = idx.every((v, i) => v >= 0 && (i === 0 || v > idx[i - 1]));
+    const st = evs.find((e) => e.ev === 'scope_start'), kn = evs.find((e) => e.ev === 'scope_knob'), op = evs.find((e) => e.ev === 'door_opened');
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    N.peephole(false);
+    await back4();
+    N.ai.lurkEnabled = true;
+    return { pass: lensRoom === '221' && inOrder && st && st.room === '221' && kn && kn.room === '221' && op && op.room === '221' && minFace <= 0.3 && attackAfterStare > 0.9 && peepAtKnob === false && hitAt !== null,
+      lensRoom, faceToLensMin_m: +minFace.toFixed(3), stareFromDoorFace_m: standAt && +standAt.toFixed(2), attackWithin1_2s: +attackAfterStare.toFixed(2), peepholeClosedAtKnob: peepAtKnob === false, outAfter_s: hitAt && +hitAt.toFixed(1),
+      scope: N.ai.scopeLog, timeline: evs.filter((e) => order.includes(e.ev)).map((e) => `${e.t.toFixed(1)} ${e.ev}`) };
+  });
+
+  // 39) #2 クローゼット: 焦らしの間は無言。「みぃつけた」(breath = mgr_line_found_01)は開けると決まった瞬間に 1 回、外れ(spare)は 0 回
+  await T('39_p6b_closet_found_only_on_open', () => {
+    const runOne = (spare) => {
+      const ev0 = setupHide({ hide: true });
+      N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.5, spare ? { after: 'enter', v: 0.9 } : null);
+      const a0 = aud0(), tEv = evMark();
+      let breathBeforeRoll = 0, deadAt = null, t = 0, teaseSeen = false;
+      for (let i = 0; i < Math.round(70 / DT); i++) {
+        N.pump(DT, 1, false); t += DT;
+        const rolled = evSince(tEv).some((e) => e.ev === 'hide_roll' && e.kind === 'closet');
+        if (has(tEv, 'locker_tease')) teaseSeen = true;
+        if (!rolled) breathBeforeRoll += audSince(a0).filter((l) => l.name === 'breath').length - breathBeforeRoll;
+        if (deadAt === null && N.deathState()) deadAt = t;
+        if (deadAt !== null && t - deadAt > 0.5) break;
+        if (spare && has(tEv, 'hide_left')) break;
+      }
+      const br = audSince(a0).filter((l) => l.name === 'breath');
+      const roll = evSince(tEv).find((e) => e.ev === 'hide_roll' && e.kind === 'closet');
+      N.ai._rand = N.ai._rand0;
+      void ev0;
+      return { teaseSeen, roll: roll && roll.result, foundPlays: br.length, foundScene: br[0] ? br[0].scene || 'silent' : null, beforeRoll: breathBeforeRoll, out: deadAt !== null };
+    };
+    const sp = runOne(true);
+    for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
+    const op = runOne(false);
+    for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
+    const pass = sp.teaseSeen && sp.roll === 'spare' && sp.foundPlays === 0 && !sp.out && op.teaseSeen && op.roll === 'open' && op.foundPlays === 1 && op.beforeRoll === 0 && op.foundScene === 'enemy_breath_close' && op.out;
+    return { pass, spare: sp, open: op };
+  });
+
+  // 40) #3 空室潜伏の入室: 4 方向の扉(3F 310 西向き・304 東向き・316 北向き・322 南向き)で、毎フレームの体・ハンマー・懐中電灯の AABB と光を記録。
+  //  扉が開き始めてから潜むまで懐中電灯 0・中に収まってから潜むまで廊下側への突出 ≤0・閉める間は扉面から 0.9m 以上(AABB も扉面に触れない)・
+  //  閉まり切った時に concealed。続けて「同類」: 潜んでいる間に外へ引き出す理由(向かいの部屋の光漏れ・物音・クローゼット・覗き穴・別の階の音、
+  //  入る途中の光漏れ)を 1 つずつ起こし、閉じた空室の中で光る/見える/扉に押し付けて止まる(stuck)フレームが 0 で、扉を開けて出てから動くこと
+  await T('40_p6b_room_lurk_no_leak', async () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    await N.teleport(3, 24.5, 21.2, -Math.PI / 2); N.pump(DT, 20, false);
+    N.setFlashlight(false);
+    N.ai.playerLevelAt = () => 5;   // 入室の計測の間は見つからない(描画はプレイヤーの実際の階 = 3F)
+    const entry = {};
+    for (const rid of ['310', '304', '316', '322']) {
+      const D = doorOf(rid);
+      const tx = D.n[1] !== 0 ? 1 : 0, tz = D.n[1] !== 0 ? 0 : 1;
+      N.ai.reset(D.pos[0] + D.n[0] * 0.9 + tx * 3.0, D.pos[1] + D.n[1] * 0.9 + tz * 3.0, 0, 3);
+      const ev0 = evMark();
+      N.ai.setState('LURK', { force: true, log: true, room: rid });
+      let opened = false, spotAfterOpen = 0, fullyIn = false, protAfterIn = 0, maxProtAfterIn = -9, closing = false, minVClosing = 9, maxProtClosing = -9, maxAng = 0, closedNotConcealed = 0, frames = 0, protFrames = 0;
+      for (let i = 0; i < Math.round(30 / DT); i++) {
+        N.pump(DT, 1, false); frames++;
+        const a = D.d.angle; maxAng = Math.max(maxAng, a);
+        if (a > 0.01) opened = true;
+        if (N.ai.concealed) break;
+        const vr = vRootOf(D);
+        if (opened && spotOn()) spotAfterOpen++;
+        if (opened && N.enemyObj.root.visible && vr < 0.9) {
+          const p = protrusion(D); protFrames++;
+          if (!fullyIn && p !== null && p <= 0 && vr < 0) fullyIn = true;
+          if (fullyIn) { maxProtAfterIn = Math.max(maxProtAfterIn, p); if (p > 0) protAfterIn++; }
+          if (maxAng > 1.0 && a < maxAng - 0.01) { closing = true; minVClosing = Math.min(minVClosing, -vr); maxProtClosing = Math.max(maxProtClosing, p); }
+        }
+        if (closing && a < 0.005 && !N.ai.concealed) closedNotConcealed++;
+      }
+      const stuck = evSince(ev0).filter((e) => e.ev === 'stuck').length;
+      entry[rid] = { facing: D.facing, concealed: N.ai.concealed, doorAngle: +D.d.angle.toFixed(3), spotAfterOpen, fullyIn, protAfterIn, maxProtAfterIn: +maxProtAfterIn.toFixed(3), closing, minDepthWhileClosing: +minVClosing.toFixed(3),
+        maxProtWhileClosing: +maxProtClosing.toFixed(3), closedNotConcealed, stuck, standDepth: +(-vRootOf(D)).toFixed(3), protFrames };
+      entry[rid].pass = N.ai.concealed && D.d.angle < 0.005 && spotAfterOpen === 0 && fullyIn && protAfterIn === 0 && closing && minVClosing >= 0.9 && maxProtClosing <= -0.05 && closedNotConcealed === 0 && stuck === 0 && Math.abs(-vRootOf(D) - 1.3) < 0.02;
+    }
+    // ---- 同類: 310 に潜んだまま、外へ引き出す理由を 1 つずつ
+    delete N.ai.playerLevelAt; N.ai.playerLevelAt = () => N.level;
+    const D = doorOf('310');
+    const P305 = doorOf('305');
+    const pulls = {};
+    const watchPull = (name, setup, done, sec = 30, onFrame = null) => {
+      N.ai.reset(6.9, 3.0, 0, 3);
+      if (N.rooms.hidden) N.rooms.forceUnhide();
+      N.peephole(false); N.setFlashlight(false); N.ai.knownRoomId = null;
+      N.ai.setState('LURK', { force: true, log: true, room: '310', standNow: name !== 'light_during_entry' });
+      N.pump(DT, 3, false);
+      const ev0 = evMark();
+      setup();
+      let bad = 0, spotIn = 0, frames = 0;
+      for (let i = 0; i < Math.round(sec / DT); i++) {
+        N.pump(DT, 1, false); frames++;
+        const vr = vRootOf(D), inside = vr < -0.05, closed = D.d.angle < 0.005;
+        if (inside && closed && (N.enemyObj.root.visible || spotOn()) && (N.ai.lurkRoomId === '310' || N.ai.state !== 'LURK' || !N.ai.concealed)) bad++;
+        if (inside && spotOn()) spotIn++;
+        if (onFrame) onFrame();
+        if (done(evSince(ev0))) break;
+      }
+      const evs = evSince(ev0);
+      const r = { wake: evs.some((e) => e.ev === 'lurk_wake'), release: evs.some((e) => e.ev === 'lurk_released'), stuck: evs.filter((e) => e.ev === 'stuck').length, badFrames: bad, spotInside: spotIn,
+        after: N.ai.state, out: vRootOf(D) > 0.3, seq: evs.filter((e) => ['lurk_wake', 'lurk_room_in', 'lurk_release', 'room_door_open', 'room_door_close', 'lurk_released', 'room_known', 'stuck'].includes(e.ev) || (e.ev === 'state')).map((e) => e.ev + (e.to ? ':' + e.to : '')).slice(0, 14) };
+      r.pass = (name === 'light_leak_305' ? (!r.wake && !r.release && N.ai.concealed && N.ai.state === 'LURK') : (r.release && r.out)) && r.stuck === 0 && bad === 0 && spotIn === 0;
+      pulls[name] = r;
+      N.peephole(false); if (N.rooms.hidden) N.rooms.forceUnhide();
+      for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
+      N.player.frozen = false; N.viewLock.cancel(); N.movie.end();
+    };
+    const in305 = async (depth = 0.9) => { N.setView(P305.pos[0] - P305.n[0] * depth, P305.pos[1] - P305.n[1] * depth, Math.atan2(-P305.n[0], -P305.n[1]), 0); N.pump(DT, 2, false); };
+    const released = (evs) => evs.some((e) => e.ev === 'lurk_released');
+    await in305(1.5);
+    // 光漏れ: 閉じた空室の中からは向かいの部屋の光は見えない = 潜んだまま(光らない・出てこない・扉に押し付けて止まらない)
+    watchPull('light_leak_305', () => { N.setFlashlight(true); }, released, 12);
+    await in305(1.5);
+    watchPull('noise_305', () => { N.ai.noiseRoom('305', 3.3, 13.05, 3); }, released);
+    const H305 = N.world.roomById.get('305').room.interior.hide;
+    watchPull('closet_305', () => { N.setView(H305.out[0], H305.out[1], 0, 0); N.pump(DT, 2, false); N.rooms.hide('305'); N.pump(DT, 40, false); N.ai.knownRoomId = '305'; }, released);
+    await in305(0.7);
+    watchPull('peephole_305', () => { N.ai.knownRoomId = '305'; N.peephole(true); }, released);
+    await in305(1.5);
+    watchPull('floor_noise', () => { N.ai.floorNoise(4, 6.9, 12, 'run'); }, released);
+    await in305(1.5);
+    // 入る途中(扉を開けてから閉めるまで = 割り込み不可の間)に光漏れで知った → 閉め終えてから静かに出る
+    let lit = false;
+    watchPull('light_during_entry', () => { lit = false; }, released, 40, () => { if (!lit && D.d.angle > 0.3) { lit = true; N.setFlashlight(true); } });
+    N.setFlashlight(false);
+    await back4();
+    N.ai.lurkEnabled = true;
+    const pass = Object.values(entry).every((r) => r.pass) && Object.values(pulls).every((r) => r.pass) && pulls.peephole_305.wake && pulls.closet_305.wake && pulls.noise_305.wake && pulls.light_during_entry.wake;
+    return { pass, entry, pulls };
+  });
+
+  // 41) #9 管理人のいる階へ EV で降りる: 3F の廊下(巡回中)に管理人、4F のカゴから 3F へ → 管理人は EV ホールの扉の正面で待ち構え、
+  //  扉が開いた時に正面 1.5m 以内 → 視点固定 → OUT。遠ければ扉が開く前に立ち位置へ移る。空室に潜んでいる時・眠っている(第1段)時は対象外
+  await T('41_p6b_ev_wait_out', async () => {
+    const ev = N.elevator, g4 = ev.rooms[4].geom;
+    const run = async (mode) => {
+      W.reset(); N.ai.lurkEnabled = false;
+      Object.assign(ev.car, { level: 4, state: 'idle', open: 0, pending: [], riding: false, to: null }); ev.npc = null; ev.npcStop = null;
+      await N.teleport(4, g4.center[0], g4.center[1] + 0.25, 0); N.pump(DT, 5, false);
+      N.setFlashlight(false);
+      if (mode === 'lurk') { N.ai.reset(6.9, 9.0, 0, 3); N.ai.setState('LURK', { force: true, log: true, room: '310', standNow: true }); }
+      else { N.ai.reset(6.9, mode === 'far' ? 3.0 : 17.0, Math.PI, 3); N.ai.setState('PATROL', { force: true, log: true }); }
+      if (mode === 'dormant') N.ai.setDormant(true);
+      N.pump(DT, 2, false);
+      const ev0 = evMark(), vl0 = N.viewLock.log.length;
+      const inCar0 = ev.inCar(N.player.pos.x, N.player.pos.z, 4);
+      ev.select(3);
+      let t = 0, openAt = null, atOpen = null, dead = null, attack = false;
+      for (let i = 0; i < Math.round(25 / DT); i++) {
+        N.pump(DT, 1, false); t += DT;
+        if (openAt === null && ev.car.level === 3 && ev.car.state === 'opening') {
+          openAt = t; const e = N.enemyObj.pos, g = ev.rooms[3].geom, dx = (g.open[0] + g.open[1]) / 2, dz = g.doorZ[0];
+          atOpen = { lv: N.ai.level, state: N.ai.state, doorDist: +Math.hypot(e.x - dx, e.z - dz).toFixed(2), front: Math.abs(e.x - dx) < 0.3 && e.z < dz, visible: N.enemyObj.root.visible, playerLevel: N.level };
+        }
+        if (N.ai.state === 'ATTACK') attack = true;
+        if (dead === null && N.deathState()) dead = t;
+        if (dead !== null && t - dead > 0.5) break;
+        if (openAt !== null && t - openAt > 6) break;
+      }
+      const evs = evSince(ev0);
+      const chk = evs.find((e) => e.ev === 'ev_ride_check'), ready = evs.find((e) => e.ev === 'ev_wait_ready');
+      const r = { inCar0, check: chk ? chk.ok : null, eta: chk && chk.eta, wait: evs.some((e) => e.ev === 'ev_wait'), ready: ready ? { warped: ready.warped, dist: ready.dist } : null, atOpen, attack, out: dead !== null, outAfterOpen_s: dead !== null && openAt !== null ? +(dead - openAt).toFixed(2) : null,
+        viewLock: N.viewLock.log.slice(vl0).map((l) => l.ev + ':' + l.label) };
+      for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
+      if (mode === 'dormant') N.ai.setDormant(false);
+      return r;
+    };
+    const near = await run('near'), far = await run('far'), lurk = await run('lurk'), dorm = await run('dormant');
+    Object.assign(ev.car, { level: 4, state: 'idle', open: 0, pending: [], riding: false, to: null });
+    await back4();
+    N.ai.lurkEnabled = true;
+    const okHit = (r) => r.inCar0 && r.check === true && r.wait && r.atOpen && r.atOpen.lv === 3 && r.atOpen.doorDist <= 1.5 && r.atOpen.front && r.atOpen.visible && r.atOpen.playerLevel === 3 && r.attack && r.out && r.viewLock.includes('start:ev_wait');
+    const pass = okHit(near) && okHit(far) && near.ready && !near.ready.warped && far.ready && far.ready.warped
+      && lurk.check === false && !lurk.wait && !lurk.out && dorm.check === false && !dorm.wait && !dorm.out;
+    return { pass, near, far, lurkingInRoom: lurk, dormant: dorm };
   });
 
   W.reset();
