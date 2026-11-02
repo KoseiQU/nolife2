@@ -98,6 +98,8 @@ export class Story {
     if (this.stage === 1 && this.sub === 'return') return '1r';
     if (this.stage === 4 && this.getLevel() === 'X105') return '4x';
     if (this.stage === 9 && this.sub === 'chase') return '9c';
+    if (this.stage === 10 && this.getLevel() === 'XB1') return '10b';   // P6b #13: 地下の中「奥の作業場で車のキーを探せ」
+    if (this.stage === 11 && this.getLevel() === 'XB1') return '10c';   // P6b #13: 車のキーを取った後、地下の中は「鉄扉へ戻れ」
     return this.stage;
   }
 

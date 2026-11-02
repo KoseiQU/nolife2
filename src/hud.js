@@ -3,6 +3,9 @@
 //  - 一時表示: 「鍵がかかっている」「反応がない」「懐中電灯 ON/OFF」など 1 秒
 //  - 開始時の操作一覧(6 秒で消える。H で 2 秒再表示)、中央の「クリックで開始/再開」
 //  - 覗き穴視点・襲撃ムービー・死亡演出の間は文脈ヒントを隠す(覗き穴中は画面下端に「E を離す やめる」だけ)
+//  - P6b(§3.9 #6): 左上の目標表示は文字 1.6 倍・下に薄い半透明の帯。章が変わる時 3 秒強調(明滅 2 回)。持ち物の札も同じ比率
+//  - P6b(§3.9 #8): 右下に懐中電灯の ON/OFF の常時表示(ON = 琥珀色・OFF = 灰色、切替の 1 秒は明るく)。
+//    タイトル・チュートリアル(root ごと隠れる)・死亡・ムービー・エンディング・隠れ中は出さない
 // update(dt) 駆動(rAF 非依存。手動ポンプでも決定的に変わる)。
 
 import * as THREE from 'three';
@@ -16,6 +19,8 @@ export const HUD = {
   flashSec: 1.0,
   controlsSec: 6.0,
   controlsKeySec: 2.0,
+  objEmSec: 3.0,       // P6b #6: 章が変わる時の強調(明滅 2 回を含む)
+  lightPulseSec: 1.0,  // P6b #8: 懐中電灯を切り替えた時に表示を明るくする時間
 };
 
 const CSS = `
@@ -33,13 +38,26 @@ const CSS = `
 #hud-controls { bottom: 6vh; font-size: 13px; letter-spacing: .1em; padding: 7px 16px; white-space: normal; width: max-content; max-width: 92vw; text-align: center; }
 #hud-notice { top: 13vh; font-size: 13px; letter-spacing: .14em; background: rgba(6,7,9,.42); color: #d8d2c8; transition: opacity .6s linear; }
 #hud-center { top: 50%; transform: translate(-50%, -50%); font-size: 16px; letter-spacing: .2em; padding: 9px 20px; }
-#hud-obj { position: absolute; left: 22px; top: 18px; font-size: 13px; letter-spacing: .14em; color: #d9d3c8; opacity: .78; text-shadow: 0 1px 3px rgba(0,0,0,.9);
-  transition: font-size .35s ease, color .35s ease, opacity .35s ease; white-space: nowrap; }
-#hud-obj.em { font-size: 19px; color: #f2ead8; opacity: 1; }
-#hud-obj.off { opacity: 0; }
-#hud-item { position: absolute; left: 22px; top: 44px; font-size: 12px; letter-spacing: .12em; color: #d9c48c; background: rgba(6,7,9,.45); border: 1px solid rgba(217,196,140,.35);
-  border-radius: 2px; padding: 2px 9px; opacity: 0; transition: opacity .3s linear; }
+#hud-tl { position: absolute; left: 18px; top: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
+#hud-obj { font-size: 21px; line-height: 1.35; letter-spacing: .12em; color: #e2dccf; opacity: .9; text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  background: rgba(0,0,0,.35); border-radius: 5px; padding: 4px 13px 5px;
+  transition: color .35s ease, opacity .35s ease, background-color .35s ease; white-space: nowrap; }
+#hud-obj.em { color: #fff6e2; opacity: 1; background: rgba(0,0,0,.5); animation: hudObjBlink .75s ease-in-out .15s 2; }
+#hud-obj.off { opacity: 0; animation: none; }
+@keyframes hudObjBlink { 0%, 100% { opacity: 1; } 50% { opacity: .22; } }
+#hud-item { font-size: 19px; letter-spacing: .1em; color: #d9c48c; background: rgba(6,7,9,.45); border: 1px solid rgba(217,196,140,.35);
+  border-radius: 3px; padding: 2px 12px 3px; opacity: 0; transition: opacity .3s linear; }
 #hud-item.on { opacity: .9; }
+#hud-light { position: absolute; right: 20px; bottom: 18px; display: flex; align-items: center; gap: 8px; padding: 4px 11px 4px 9px; border-radius: 5px;
+  background: rgba(0,0,0,.3); font-size: 13px; letter-spacing: .12em; color: #7d7a74; opacity: 0; transition: opacity .3s linear, color .25s linear, background-color .25s linear; }
+#hud-light svg { width: 22px; height: 14px; display: block; }
+#hud-light .beam { opacity: 0; transition: opacity .25s linear; }
+#hud-light.shown { opacity: .62; }
+#hud-light.on { color: #e3a648; }
+#hud-light.on .beam { opacity: .75; }
+#hud-light.shown.pulse { opacity: 1; background: rgba(0,0,0,.5); }
+#hud-light.on.pulse { color: #ffc56a; }
+#hud-light.pulse:not(.on) { color: #b9b5ad; }
 #hud-dot { position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; border-radius: 50%; background: rgba(234,230,223,.45); }
 `;
 
@@ -54,14 +72,18 @@ export class Hud {
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
       + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>'
-      + '<div id="hud-obj" class="off"></div><div id="hud-item"></div>';
+      + '<div id="hud-tl"><div id="hud-obj" class="off"></div><div id="hud-item"></div></div>'
+      + '<div id="hud-light"><svg viewBox="0 0 22 14" aria-hidden="true"><path class="beam" d="M15 4.2 L22 0.5 L22 13.5 L15 9.8 Z" fill="currentColor"/>'
+      + '<rect x="0.5" y="5" width="8.5" height="4" rx="1" fill="currentColor"/><path d="M9 4.2 L14.5 3 L14.5 11 L9 9.8 Z" fill="currentColor"/></svg><span></span></div>';
     document.body.appendChild(this.root);
     this.el = {
       dot: this.root.querySelector('#hud-dot'), hint: this.root.querySelector('#hud-hint'), toast: this.root.querySelector('#hud-toast'),
       release: this.root.querySelector('#hud-release'), controls: this.root.querySelector('#hud-controls'), center: this.root.querySelector('#hud-center'),
       notice: this.root.querySelector('#hud-notice'),
       obj: this.root.querySelector('#hud-obj'), item: this.root.querySelector('#hud-item'),
+      light: this.root.querySelector('#hud-light'), lightText: this.root.querySelector('#hud-light span'),
     };
+    this.lightPulseT = 0; this._lightKey = '';   // P6b #8
     this.objective = ''; this.objEmT = 0; this.objLog = []; this.itemText = '';   // P5b-1
     this.noticeT = 0;
     this.noticeLog = [];
@@ -88,12 +110,13 @@ export class Hud {
     this.noticeLog.push({ text, sec });
   }
   // P5b-1: 目標(一文)。文言が変わった時だけ em 秒強調する(章が変わる時)。空文字で隠す
-  setObjective(text, em = 2.0) {
+  setObjective(text, em = HUD.objEmSec) {
     text = text || '';
     if (text === this.objective) return;
     this.objective = text;
     this.el.obj.textContent = text;
     this.objEmT = text ? em : 0;
+    if (text) { this.el.obj.classList.remove('em'); void this.el.obj.offsetWidth; }   // P6b #6: 続けて変わった時も明滅をやり直す
     this.objLog.push({ text });
   }
   // P5b-1: 持ち物の札(null で隠す)
@@ -122,7 +145,16 @@ export class Hud {
     // 懐中電灯の切替
     const fl = this.player.flashlightOn;
     if (this._lastFlashlight !== null && fl !== this._lastFlashlight && !hidden) this.flash(fl ? TX.flashlight.on : TX.flashlight.off);
+    if (this._lastFlashlight !== null && fl !== this._lastFlashlight) this.lightPulseT = HUD.lightPulseSec;
     this._lastFlashlight = fl;
+    // P6b #8: 右下の懐中電灯の表示
+    this.lightPulseT = Math.max(0, this.lightPulseT - dt);
+    const lightShown = this._lightVisible(hidden);
+    const lk = fl ? 'on' : 'off';
+    if (lk !== this._lightKey) { this._lightKey = lk; this.el.lightText.textContent = fl ? TX.flashlight.on : TX.flashlight.off; }
+    this.el.light.classList.toggle('on', fl);
+    this.el.light.classList.toggle('shown', lightShown);
+    this.el.light.classList.toggle('pulse', lightShown && this.lightPulseT > 0);
 
     this.target = (hidden || peeping) ? null : this._findTarget();
     const html = this.target ? this._render(this.target.items, this.target.badge) : '';
@@ -150,6 +182,17 @@ export class Hud {
     if (center) this.el.center.textContent = center;
     this.el.center.classList.toggle('on', !!center && !this.isMovie());
     this.el.dot.style.opacity = (hidden || peeping || !this.locked) ? '0' : '1';
+  }
+
+  // P6b #8: 懐中電灯の表示を出すか(タイトル・死亡・ムービー・エンディング・隠れ中は出さない。チュートリアル中は root ごと隠れている)
+  _lightVisible(hidden) {
+    if (hidden) return false;
+    if (this.isEnding && this.isEnding()) return false;
+    if (this.player && this.player.hidden) return false;   // 隠れ中(rooms.hide が player.hidden を立てる)
+    if (this.root.style.visibility === 'hidden') return false;
+    const t = document.getElementById('title');
+    if (t && !t.classList.contains('out')) return false;
+    return true;
   }
 
   _render(items, badge) {
@@ -209,6 +252,7 @@ export class Hud {
       objective: this.el.obj.classList.contains('off') ? '' : this.objective,
       objectiveEm: this.el.obj.classList.contains('em'),
       item: this.el.item.classList.contains('on') ? this.itemText : '',
+      light: { shown: this.el.light.classList.contains('shown'), on: this.el.light.classList.contains('on'), pulse: this.el.light.classList.contains('pulse'), text: this.el.lightText.textContent },
     };
   }
 }

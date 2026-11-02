@@ -4,7 +4,7 @@
 //  1) 通し: 場面 0〜8 の順序・各場面の所要時間(表の値 ±0.05 秒)と合計 60〜80 秒・文言が表のとおり(句読点・「、、、」も)・場面ごとの仕込み
 //     (2 光だけ = 管理人の体は壁の向こう・懐中電灯は点灯 / 3 階数表示 1→2→3 とチャイム・扉は開かない / 4 見つかる→扉を閉める→覗き穴→通り過ぎる /
 //      5 クローゼットの中 / 6 扉の下の揺らぎ・ロッカーの軋み・光漏れ / 7 花瓶が割れる音・遠いチャイム・足音)・演出中は AI の時計が止まっている
-//  2) 終わり: 410 のベッド脇・操作が戻る・操作一覧・管理人/扉/EV/帯/クローゼット/ロッカー/覗き穴/懐中電灯/環境光が開始前と同じ・目標「食堂へ」・既読になる
+//  2) 終わり: 410 のベッド脇・操作が戻る・操作一覧・管理人/扉/EV/帯/クローゼット/ロッカー/覗き穴/懐中電灯/環境光が開始前と同じ・目標「1階の食堂へ」・既読になる
 //  3) 初回(未読)は Esc で飛ばせない
 //  4) 既読なら Esc で飛ばせる(場面 4 の途中 = 扉・覗き穴・EV が動いた後)→ 場面 8 → 終わりの状態は 2) と同じ。ポインタロックが外れた時も飛ばせる
 
@@ -68,7 +68,7 @@ export async function run(N) {
     r.objective = N.hud.state().objective; r.stage = N.story.stage; r.sub = N.story.sub;
     r.aiAfter1s = N.ai.stats().state;
     r.pass = !r.active && r.level === 4 && Math.hypot(p.x - 12.35, p.z - 7.25) < 0.05 && Math.abs(yaw - Math.PI / 2) < 0.02 && !r.frozen && r.controlsEnabled
-      && r.hudVisible && r.controlsShown && r.seen && r.worldSame && r.objective === '食堂へ' && r.stage === 1 && r.sub === 'memo';
+      && r.hudVisible && r.controlsShown && r.seen && r.worldSame && r.objective === '1階の食堂へ' && r.stage === 1 && r.sub === 'memo';
     return r;
   };
 

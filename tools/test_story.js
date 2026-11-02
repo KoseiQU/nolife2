@@ -19,7 +19,8 @@
 // 10) 第10段: 地下の鉄扉(鍵)→ XB1 → 車のキー(管理人は地下へ来ない。P5b-2b: ループ・迷路は test_spaces.js、ここでは抜けたことにして作業場へ)
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
-// 13) 目標の文言が段ごとに変わり、章が変わる時だけ 2 秒強調される・持ち物の札
+// 13) 目標の文言が段ごとに変わり、章が変わる時だけ強調される(P6b: 3 秒)・持ち物の札
+// 16) P6b #6・#8: 目標表示 1.6 倍・半透明の帯・強調 3 秒＋明滅 2 回・持ち物の札も拡大 / 右下の懐中電灯 ON/OFF(文字・色・切替の 1 秒・隠れ中は出さない)
 // 15) P5b-1b → P5b-1c 登場演出: 予兆(扉が揺れる・閉じている間は中が見えない)→ 扉が 1.0〜1.6 秒かけて開く間は管理人が動かず中に見える(視点は管理人へ)→
 //     目が合う → ゆっくり 2 歩で出てくる(見える・遅い)→ 視点が出口へ旋回して操作が戻る(扉の方 ±25°・向きの跳びなし・マウスが続く)→
 //     grace(≥2.5 秒、221 が最長)の後に歩いて追い始める。ライト消灯なら中で自分の懐中電灯。221(点灯)と 606(消灯)。
@@ -276,11 +277,11 @@ export async function run(N) {
     const keyHint = pickAt(pk('small'));
     const st = S.state();
     const objStage2 = N.hudState().objective;
-    const pass = noEnemy && obj0 === '食堂へ' && memoHint.includes('拾う') && obj1 === '221号室へ' && em1 && toast.includes('221') && evOK
+    const pass = noEnemy && obj0 === '1階の食堂へ' && memoHint.includes('拾う') && obj1 === '221号室へ' && em1 && toast.includes('221') && evOK
       && A.doorHint.includes('開ける') && A.opened && A.walkedRoom && !A.before.burst && !A.before.keyVisible && !A.before.keyPickable && A.before.dormant
       && A.uAt >= 3.5 && A.uAt < 3.8 && !!A.ev && A.ev.lv === 2 && A.ev.room === '221' && Math.hypot(A.ev.x - A.BL.feet[0], A.ev.z - A.BL.feet[1]) < 0.05 && A.objFlee === '逃げろ'
       && B.chaseAt !== null && B.chaseAt >= 8.0 && B.chaseAt <= 8.7 && B.minD > 2.5 && !B.dead && B.reached >= 6 && B.escapedAt !== null && objReturn === '221号室へ戻れ'
-      && keyShown.visible && keyShown.pickable && walkedBack && noSecond && keyHint.includes('拾う') && st.stage === 2 && st.item === 'small' && objStage2 === '管理室へ';
+      && keyShown.visible && keyShown.pickable && walkedBack && noSecond && keyHint.includes('拾う') && st.stage === 2 && st.item === 'small' && objStage2 === '1階の管理室へ';
     quiet();
     return { pass, noEnemy, obj0, memoHint, obj1, objEmphasized: em1, toast, doorHint: A.doorHint, opened: A.opened, beforeBack: A.before, burstAtU: A.uAt, burst: A.ev || null,
       objFlee: A.objFlee, chaseStart_s: B.chaseAt, minDistDuringChase: B.minD, dead: B.dead, reached: B.reached, escapedAfter_s: B.escapedAt, objReturn, keyShown, walkedBack, noSecond, keyHint,
@@ -671,7 +672,7 @@ export async function run(N) {
     const st = S.state();
     const pass = evBefore && noKey.toast === '鍵がかかっている' && ent.level === 'X705' && pickHint.includes('拾う') && objChase === '逃げろ' && evDis && !!appear && behind
       && !dead && on7 && enemyOn7 !== null && callHint.includes('呼ぶ') && evToast === '反応がない' && !evCalled
-      && vias.includes('stair') && !vias.includes('ev') && st.stage === 10 && st.item === 'b1' && N.hudState().objective === '地下へ' && !N.ai.allowStairs;
+      && vias.includes('stair') && !vias.includes('ev') && st.stage === 10 && st.item === 'b1' && N.hudState().objective === '食堂の奥の階段から地下へ' && !N.ai.allowStairs;
     return { pass, evBefore, noKey, enter: ent, pickHint, objChase, evDisabled: evDis, appear: appear || null, enemyAt: ePos, behind, dead, on7, enemyOn7_s: enemyOn7,
       callHint, evToast, evCalled, routeVias: vias, stage: st.stage, item: st.item, objective: N.hudState().objective };
   });
@@ -686,6 +687,8 @@ export async function run(N) {
     const noKey = tryLocked('B1DOOR');
     S.item = 'b1';
     const ent = openAndEnter('B1DOOR');
+    N.pump(DT, 2, false);
+    const objIn = N.hudState().objective;   // P6b #13: 地下の中「奥の作業場で車のキーを探せ」
     // P5b-2b: トンネルのループと迷路は test_spaces.js(B1_1〜3)。ここではループを抜けたことにして作業場へ移り、キーを取って踊り場から出る
     const DB = N.spaces.debug('XB1'), ox = N.spaces.def('XB1').origin[0];
     DB.release('test_story');
@@ -693,14 +696,18 @@ export async function run(N) {
     walkTo(pk('kCar').pos.x, pk('kCar').pos.z - 0.8, 600);
     const pickHint = pickAt(pk('kCar'));
     const st = S.state();
+    N.pump(DT, 2, false);
+    const objKey = N.hudState().objective;   // P6b #13: 取ったら「鉄扉へ戻れ」
     // 管理人は地下へ来ない(経路が無い)
     const routeB1 = N.ai._route(17.6, 23.5, 8.5, 1.45, 1, 'B1');
     const routeXB1 = N.ai._route(17.6, 23.5, 300, 3, 1, 'XB1');
     await tp('XB1', ox - 3.1, 2.0, 0);
     const back = leave();
+    N.pump(DT, 2, false);
     const pass = noKey.toast === '鍵がかかっている' && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.level === 'XB1' && pickHint.includes('拾う')
+      && objIn === '奥の作業場で車のキーを探せ' && objKey === '鉄扉へ戻れ'
       && st.stage === 11 && st.item === 'car' && N.hudState().objective === '駐車場の車で逃げろ' && routeB1.length === 0 && routeXB1.length === 0 && back.level === 'B1';
-    return { pass, noKey, enter: ent, pickHint, stage: st.stage, item: st.item, routeB1: routeB1.length, routeXB1: routeXB1.length, back };
+    return { pass, noKey, enter: ent, pickHint, objIn, objKey, stage: st.stage, item: st.item, routeB1: routeB1.length, routeXB1: routeXB1.length, back };
   });
 
   // ---------------------------------------------------------------- 11) 最後だけ敷地まで追ってくる → 黒い車 → エンディング
@@ -769,12 +776,48 @@ export async function run(N) {
   await T('13_objective_text_and_item_tag', async () => {
     S.applyStage(3); quiet(); N.pump(DT, 2, false);
     const a = N.hudState();
-    N.pump(DT, 150, false);
+    N.pump(DT, 200, false);   // P6b #6: 強調は 3 秒
     const b = N.hudState();
     S.applyStage(4); N.pump(DT, 2, false);
     const c = N.hudState();
     const pass = a.objective === '312号室へ' && a.objectiveEm && !b.objectiveEm && b.objective === '312号室へ' && a.item === '鍵　312' && c.objective === '105号室へ' && c.objectiveEm && c.item === '鍵　105';
     return { pass, start: a, after25s: b, next: c };
+  });
+
+  // ---------------------------------------------------------------- 16) P6b #6・#8: 目標表示の大きさ・帯・強調 3 秒(明滅 2 回)/ 右下の懐中電灯の表示
+  await T('16_p6b_objective_style_and_light', async () => {
+    S.applyStage(3); quiet(); N.pump(DT, 2, false);
+    const obj = document.getElementById('hud-obj'), item = document.getElementById('hud-item'), light = document.getElementById('hud-light');
+    const alpha = (c) => { const m = /rgba?\(([^)]+)\)/.exec(c); if (!m) return 0; const v = m[1].split(',').map(Number); return v.length > 3 ? v[3] : 1; };
+    const em0 = { em: N.hudState().objectiveEm, anim: getComputedStyle(obj).animationName, iter: getComputedStyle(obj).animationIterationCount };
+    N.pump(DT, 170, false); const em29 = N.hudState().objectiveEm;
+    N.pump(DT, 14, false); const em31 = N.hudState().objectiveEm;
+    const cs = getComputedStyle(obj), ci = getComputedStyle(item);
+    const style = { font: parseFloat(cs.fontSize), band: alpha(cs.backgroundColor), radius: parseFloat(cs.borderTopLeftRadius), itemFont: parseFloat(ci.fontSize),
+      left: obj.getBoundingClientRect().left, top: obj.getBoundingClientRect().top, itemTop: item.getBoundingClientRect().top, objBottom: obj.getBoundingClientRect().bottom };
+    // 懐中電灯: F で ON/OFF に追従(文字と色)。切替の 1 秒は明るい。隠れ中は出さない
+    // CSS の遷移(実時間 0.3 秒。ヘッドレスではフレームが粗く進みが遅い)を終わらせてから computed style を読む
+    const sleep = async () => { await new Promise((r) => setTimeout(r, 30)); for (const an of light.getAnimations({ subtree: true })) an.finish(); };
+    N.player.setFlashlight(false); N.pump(DT, 2, false); await sleep();
+    const rgb = () => getComputedStyle(light).color.match(/\d+/g).map(Number);
+    const off0 = { ...N.hudState().light, color: rgb() };
+    tap('KeyF'); N.pump(DT, 20, false); await sleep();
+    const on1 = { ...N.hudState().light, color: rgb(), op: +getComputedStyle(light).opacity };
+    N.pump(DT, 70, false); await sleep();
+    const on2 = { ...N.hudState().light, op: +getComputedStyle(light).opacity };
+    tap('KeyF'); N.pump(DT, 70, false); await sleep();
+    const off1 = { ...N.hudState().light, color: rgb() };
+    N.player.hidden = { room: 'test', level: 3 }; N.hud.update(0);   // 隠れ中(rooms.hide が立てる印)
+    const hidingShown = N.hudState().light.shown;
+    N.player.hidden = null; N.hud.update(0);
+    const amber = (c) => c[0] > 180 && c[0] > c[1] + 25 && c[1] > c[2] + 25;
+    const grey = (c) => Math.max(...c) - Math.min(...c) < 14;
+    const pass = style.font >= 13 * 1.5 && style.band > 0 && style.itemFont >= 12 * 1.5 && style.left < 40 && style.top < 40 && style.itemTop >= style.objBottom - 1
+      && em0.em && em0.anim === 'hudObjBlink' && em0.iter === '2' && em29 && !em31
+      && off0.shown && !off0.on && off0.text === '懐中電灯　OFF' && grey(off0.color)
+      && on1.shown && on1.on && on1.text === '懐中電灯　ON' && amber(on1.color) && on1.pulse && !on2.pulse && on1.op > on2.op
+      && off1.shown && !off1.on && off1.text === '懐中電灯　OFF' && grey(off1.color) && !hidingShown && N.hudState().light.shown;
+    return { pass, style, em0, em29, em31, off0, on1, on2, off1, hidingShown };
   });
 
   // ---------------------------------------------------------------- 14) 追跡中に外階段で階を変えてもフリーズしない(P5b-1b 差し戻し 1)
