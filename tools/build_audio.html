@@ -16,7 +16,8 @@ async function plan() {
   const out = { adopted: [], voice: [], none: [], round3: [], unselected: [] };
   for (const sc of SCENES) {
     const e = ch[sc.id] || {}, pick = (e.pick || '').toLowerCase();
-    if (sc.round === 3 && !['a', 'b', 'c'].includes(pick)) { out.round3.push(sc.id); continue; }
+    // P4c: 3 周目は A/B/C を選んだら採用。それ以外は反映済み(sound_lib.js の ROUND3_DONE が none)ならなし、まだなら 3 周目の選択待ち
+    if (sc.round === 3 && !['a', 'b', 'c'].includes(pick)) { (sc.r3.done === 'none' ? out.none : out.round3).push(sc.id); continue; }
     if (['a', 'b', 'c'].includes(pick)) {
       const g = GAME.scenes[sc.id] || {};
       (g.voice ? out.voice : out.adopted).push({ id: sc.id, cand: pick, note: e.note || null });

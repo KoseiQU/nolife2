@@ -1062,6 +1062,14 @@ export const ROUND3 = {
   x312_door_locked: { from: 'new' }, x312_key_slam: { from: 'new' }, x312_watcher_lookup: { from: 'new' }, x312_room_shift: { from: 'new' }, x312_bed_creak: { from: 'new' },
 };
 for (const id of Object.keys(ROUND3)) REDONE[id] = 'P4b 3 周目';
+// P4c(2026-11-02): 3 周目の結果をゲームに反映した場面(場面 → 結果)。'a' = 3 周目の候補 A を採用(wav に書いて接続)、'none' = なし(仮音を消して無音)。
+//  ユーザーの所見「作り直しのものは全て機械音感がすごい」で、足音以外はすべてなし。room_door_rattle は pick が redo(メモ「扉のガタガタ演出自体を無くす」)だが、
+//  演出ごと無くす(動きの削除は P5b-6)ので音はなし扱い。新 312 の 9 場面は未選択のまま(ここに無い = 選ばれたら接続する)
+export const ROUND3_DONE = {
+  enemy_step_walk: 'a',
+  pl_flashlight: 'none', door_wood: 'none', enemy_breath_close: 'none', enemy_scream: 'none', enemy_presence: 'none', locker_open_slow: 'none', locker_burst: 'none',
+  room_door_rattle: 'none',
+};
 // P4b: 採用のままメモの方向へ調整した候補(場面 → 説明)。ゲームの wav はこの調整後の音
 export const ADJUSTED = {
   room_fall: 'A を調整(パリーン！と割れる)', enemy_step_run: 'C を調整(もっと大きくドタバタ)', enemy_breath_door: 'B に笑い・台詞を 2 本追加',
@@ -1081,6 +1089,8 @@ export const GAME = {
       const acc = i % 2 ? 0.82 : 1;
       K.tn(t, 0.07, { f: 120 * K.rnd(0.9, 1.1), f2: 80, vol: 0.4 * acc, lpf: 600 }); K.nz(t, 0.04, { type: 'lowpass', f: 600 * K.rnd(0.9, 1.1), vol: 0.15 * acc });
     } },
+    // P4c: 管理人の歩き = 3 周目 A「ゴム底の重い足音」の一歩(softStep・同じ残響)を 4 通り。歩幅は AI の接地が決めるので 1 歩ずつ
+    enemy_step_walk: { sprite: { n: 4, slot: 0.7 }, step: (K, t, i) => softStep(K, t, { vol: 0.85 * (i % 2 ? 0.82 : 1), heel: 650, scuff: 0.3, to: K.split(K.out, K.verb(0.5, 0.2, 0.6), 0.45) }) },
     enemy_step_run: { sprite: { n: 4, slot: 0.55 }, step: (K, t, i) => runStomp(K, t, i % 2 ? 0.92 : 1.05, K.split(K.out, K.verb(0.5, 0.18, 0.5), 0.4), i === 2) },
     pl_closet: { segs: { open: [0, 0.75], close: [1.7, 3.0] } },
     // 落ちる物: 割れ物(花瓶・マグ・コップ・瓶)は採用 A(パリーン)。本・ファイルと缶は割れないので、A と同じ残響の作りで派生させた区間を同じ 1 本に並べる(sounds.md の申し送り)
@@ -1098,7 +1108,7 @@ export const GAME = {
     enemy_breath_door: { voice: true }, x105_scream: { voice: true },
   },
 };
-for (const sc of S) { if (REDONE[sc.id]) sc.redone = REDONE[sc.id]; if (ROUND2.includes(sc.id)) sc.round = 2; if (ROUND3[sc.id]) { sc.round = 3; sc.r3 = ROUND3[sc.id]; } if (ADJUSTED[sc.id]) sc.adjusted = ADJUSTED[sc.id]; }
+for (const sc of S) { if (REDONE[sc.id]) sc.redone = REDONE[sc.id]; if (ROUND2.includes(sc.id)) sc.round = 2; if (ROUND3[sc.id]) { sc.round = 3; sc.r3 = { ...ROUND3[sc.id], ...(ROUND3_DONE[sc.id] ? { done: ROUND3_DONE[sc.id] } : {}) }; } if (ADJUSTED[sc.id]) sc.adjusted = ADJUSTED[sc.id]; }
 
 // ================================================================ 書き出し
 for (const sc of S) for (const c of sc.cands) {

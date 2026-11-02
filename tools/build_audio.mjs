@@ -91,7 +91,7 @@ try {
   const keep = new Set(Object.values(scenes).map((s) => s.file));
   for (const f of fs.readdirSync(OUT)) if (f.endsWith('.wav') && !keep.has(f)) { fs.unlinkSync(path.join(OUT, f)); console.log('removed', f); }
   const manifest = {
-    _note: 'tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目(ゲームは仮音のまま)、unselected = 未選択(仮音のまま)',
+    _note: 'tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。P4c で反映済みの場面は scenes か none へ)、unselected = 未選択(仮音のまま)',
     sr: 22050, totalBytes: total, scenes,
     voice: Object.fromEntries(plan.voice.map((v) => [v.id, { cand: v.cand, ...(v.note ? { note: v.note } : {}) }])),
     none: plan.none, round3: plan.round3, unselected: plan.unselected,

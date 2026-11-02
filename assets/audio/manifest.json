@@ -1,7 +1,7 @@
 {
- "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目(ゲームは仮音のまま)、unselected = 未選択(仮音のまま)",
+ "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。P4c で反映済みの場面は scenes か none へ)、unselected = 未選択(仮音のまま)",
  "sr": 22050,
- "totalBytes": 4017354,
+ "totalBytes": 4140878,
  "scenes": {
   "pl_step_room": {
    "file": "pl_step_room.wav",
@@ -103,6 +103,21 @@
    "peakDb": -17.1,
    "rmsDb": -26,
    "loop": true
+  },
+  "enemy_step_walk": {
+   "file": "enemy_step_walk.wav",
+   "cand": "a",
+   "kind": "sfx",
+   "dur": 2.8,
+   "sr": 22050,
+   "bytes": 123524,
+   "peakDb": -6,
+   "rmsDb": -29.4,
+   "sprite": {
+    "n": 4,
+    "slot": 0.7
+   },
+   "note": "金属音感をなくして"
   },
   "enemy_step_run": {
    "file": "enemy_step_run.wav",
@@ -273,7 +288,9 @@
  },
  "none": [
   "amb_room",
+  "pl_flashlight",
   "pl_crouch",
+  "door_wood",
   "pl_step_corridor",
   "door_locked",
   "pl_peephole",
@@ -281,8 +298,12 @@
   "ev_button",
   "ev_door",
   "ev_car_quiet",
+  "enemy_presence",
+  "enemy_breath_close",
   "enemy_handle",
+  "room_door_rattle",
   "enemy_door_latch",
+  "enemy_scream",
   "gameover",
   "checkpoint",
   "watcher_silence",
@@ -290,6 +311,8 @@
   "door_glass",
   "door_steel",
   "locker_tease",
+  "locker_open_slow",
+  "locker_burst",
   "key_unlock",
   "x105_lamp_off",
   "space_warp",
@@ -305,15 +328,6 @@
   "space_release"
  ],
  "round3": [
-  "pl_flashlight",
-  "door_wood",
-  "enemy_presence",
-  "enemy_step_walk",
-  "enemy_breath_close",
-  "room_door_rattle",
-  "enemy_scream",
-  "locker_open_slow",
-  "locker_burst",
   "amb_x312_room_loop",
   "x312_clock_tick",
   "x312_door_open",
