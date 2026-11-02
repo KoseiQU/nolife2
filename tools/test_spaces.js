@@ -253,8 +253,12 @@ export async function run(N) {
     const k = S.pickups.find((q) => q.id === 'k105');
     const canPickR1 = k.need();
     const rooms = [];
+    const plateOf = (seam) => { const d = st312().doors.find((q) => q.seam === seam); return d ? d.plate : undefined; };
+    const plates = [];   // P6b #4: 行きの扉の札(境目 1〜5)
+    const sfx0 = st312().sfx.length;
     for (let i = 0; i < 5; i++) {
       N.pump(DT, 10, false);
+      plates.push(plateOf(i + 1));
       const lk = D312().look(i), r = st312().room;
       rooms.push({ id: r.id, extras: lk.extras, poster: lk.blank ? 'blank' : 'orig', curtain: lk.curtainProc ? 'closed' : 'orig', bed: lk.messy ? 'messy' : 'orig', closet: lk.closet, lamp: lk.lamp, clockRun: r.clock === 'run' });
       if (i < 4) { const p = passDoor(i); rooms[i].doorHint = p.hint; if (!p.ok) rooms[i].stuck = true; }
@@ -285,6 +289,7 @@ export async function run(N) {
     N.pump(DT, 30, false);
     const st = S.state(), ph = st312().phase;
     const stateSeen = N.ai.state;
+    const sfxNow = st312(); const sfxLog = sfxNow.sfx.slice(sfx0);   // P6b #4: 合成音は鳴らさない(ログだけ)
     const okRooms = rooms.length === 5 && rooms.every((r, i) => r.id === 'R' + (i + 1) && !r.stuck)
       && !rooms[0].extras && rooms[0].poster === 'orig' && rooms[0].curtain === 'orig' && rooms[0].bed === 'orig' && rooms[0].closet === 0 && rooms[0].lamp > 0.5 && rooms[0].clockRun
       && rooms[1].extras && rooms[1].poster === 'orig' && rooms[1].bed === 'orig'
@@ -294,17 +299,19 @@ export async function run(N) {
     const pass = lv === 'X312' && obj === '312号室へ' && okRooms && !canPickR1 && canPickR5 && Math.abs(h1 - h0) < 0.05
       && mgr.room === 'R5' && mgr.pose === 'sit' && mgr.aiState === 'SCRIPTED' && mgr.aiLevel === 'X312' && mgr.visible && mgr.angleDeg < 20 && besideBed
       && lookUp > 0.8 && raisedLog && farToast === '開かない' && Math.abs(farAngle) < 0.01
-      && pickHint.includes('拾う') && st.stage === 4 && st.item === '105' && ph === 'ret' && !['CHASE', 'ATTACK'].includes(stateSeen);
-    return { pass, level: lv, objective: obj, rooms, canPick: { R1: canPickR1, R5: canPickR5 }, clockR5: [h0, h1], mgr, besideBed, lookUp: +lookUp.toFixed(2), raisedLog, farDoor: { toast: farToast, angle: farAngle }, pickHint, stage: st.stage, item: st.item, phase: ph };
+      && pickHint.includes('拾う') && st.stage === 4 && st.item === '105' && ph === 'ret' && !['CHASE', 'ATTACK'].includes(stateSeen)
+      && JSON.stringify(plates) === '["4","3","2","1","0"]' && ['open', 'lookup', 'key'].every((n) => sfxLog.includes(n)) && sfxNow.sfxPlayed === 0;
+    return { pass, plates, sfx: { log: sfxLog, played: sfxNow.sfxPlayed }, level: lv, objective: obj, rooms, canPick: { R1: canPickR1, R5: canPickR5 }, clockR5: [h0, h1], mgr, besideBed, lookUp: +lookUp.toFixed(2), raisedLog, farDoor: { toast: farToast, angle: farAngle }, pickHint, stage: st.stage, item: st.item, phase: ph };
   });
 
   await T('312_2_return_seven_rooms_watcher_closer_exit_3F', async () => {
     if (N.level !== 'X312' || st312().phase !== 'ret') return { pass: false, why: 'needs 312_1' };
-    const deaths0 = N.deaths(), states = new Set(), rooms = [];
+    const deaths0 = N.deaths(), states = new Set(), rooms = [], retPlates = [];
     const r5 = passDoor(0);
     for (let i = 1; i <= 7; i++) {
       N.pump(DT, 20, false);
       const st = st312();
+      for (const d of st.doors) if (d.plate) retPlates.push(st.room.id + ':' + d.plate);   // P6b #4: 戻りの扉は札なし
       const rec = { id: st.room.id, mirror: st.room.mirror, mgrRoom: st.mgr && st.mgr.room, pose: st.mgr && st.mgr.pose, mgrToExit: st.mgr && st.mgr.room === st.room.id ? +mgrDistToExit(i).toFixed(2) : null, mgrVisible: N.enemyObj.root.visible };
       crossBack(i, () => { states.add(N.ai.state); return false; });
       rec.passed = true;
@@ -323,8 +330,8 @@ export async function run(N) {
     const pass = r5.room === 'B1' && rooms.length === 7 && rooms.every((r, i) => r.id === 'B' + (i + 1) && r.mirror && r.mgrRoom === r.id && r.mgrVisible) && closer
       && poses[0] === 'sit' && poses[6] === 'stand' && poses.indexOf('stand') > 0 && poses.lastIndexOf('sit') < poses.indexOf('stand')
       && !states.has('CHASE') && !states.has('ATTACK') && N.deaths() === deaths0 && exits.length === 1 && exitHint.includes('戻る')
-      && at.level === 3 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && N.hudState().objective === '105号室へ' && S.state().stage === 4 && N.ai.level !== 'X312';
-    return { pass, firstBack: r5, rooms, mgrToExit: dists, poses, aiStates: [...states], exitHint, exits: exits.map((e) => [+e.x.toFixed(2), +e.z.toFixed(2)]), back: at, objective: N.hudState().objective, aiLevel: N.ai.level };
+      && at.level === 3 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && N.hudState().objective === '105号室へ' && S.state().stage === 4 && N.ai.level !== 'X312' && retPlates.length === 0;
+    return { pass, retPlates, firstBack: r5, rooms, mgrToExit: dists, poses, aiStates: [...states], exitHint, exits: exits.map((e) => [+e.x.toFixed(2), +e.z.toFixed(2)]), back: at, objective: N.hudState().objective, aiLevel: N.ai.level };
   });
 
   await T('312_3_mirror_collision_ctrl_nodeath_reentry', async () => {

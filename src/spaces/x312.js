@@ -11,14 +11,17 @@
 //   光は three.js のライトを足さず、材質のシェーダの中で部屋ごとの天井灯を計算(ライトマップの代わり。R5 は消灯)＋懐中電灯。
 //  座標: 型の局所 (tu, h, tz) = 410 の (x − 7.8, y − 8.7, z − 5.8)。tu = 玄関の壁(0)→ 窓の壁(6)、tz = 部屋の幅(0..2.9)。
 //   部屋 rec の世界座標 = (rec.x0 + tu, SPACE_Y + h, rec.mirror ? rec.zBase − tz : rec.zBase + tz)。行きは +x へ、戻りは −x へ並ぶ。
+//  P6b(§3.9 #4): 合成の効果音(open/close/key/lookup)は無音(ログだけ残す)。行きの扉の番号札はカウントダウン 4・3・2・1・0
+//   (R1→R2 = 4 … R4→R5 = 1、R5 の奥の開かない扉 = 0)。戻りの扉は札なし。札は玄関の札と同じアトラス(build/tex/room_plates.png)の数字を切り出して作る。
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SPACE_Y } from '../world.js';
-import { actx, noiseBuf, burst, tone } from './gb.js';
+import { actx, burst } from './gb.js';
 
 const OX = 330, OZ = 0;
-const TPL = { glb: './build/floor_4.glb', pal: './build/tex/room_palette.json', room: '410', x: 7.8, y: 8.7, z: 5.8, level: 4 };
+const TPL = { glb: './build/floor_4.glb', pal: './build/tex/room_palette.json', room: '410', x: 7.8, y: 8.7, z: 5.8, level: 4,
+  plates: './build/tex/room_plates.png', platesUV: './build/tex/room_plates.json', plateMat: 'M_RoomPlate' };
 // 調整値(docs/p5b4/NOTES.md)
 export const X312 = {
   pitch: 6.0,                 // 部屋の並び(玄関の壁から次の玄関の壁まで)
@@ -72,7 +75,7 @@ const toLocal = (rec, x, z) => ({ tu: x - rec.x0, tz: rec.mirror ? rec.zBase - z
 // ================================================================ 型(4F の GLB から 410 を抜き出す)
 //  parts: static(常に)・poster・curtain・bedding・cup(複製用)。door: 玄関の扉の板(蝶番の局所)・枠。closet: 折戸(外の板と内の板の蝶番)
 async function loadTemplate(ctx) {
-  const [gltf, pal] = await Promise.all([new GLTFLoader().loadAsync(TPL.glb), fetch(TPL.pal).then((r) => r.json())]);
+  const [gltf, pal, plates] = await Promise.all([new GLTFLoader().loadAsync(TPL.glb), fetch(TPL.pal).then((r) => r.json()), loadPlates().catch(() => null)]);
   const root = gltf.scene; root.updateMatrixWorld(true);
   const floor = ctx.building.floors.find((f) => f.level === TPL.level);
   const room = floor.rooms.find((r) => r.id === TPL.room);
@@ -170,8 +173,65 @@ async function loadTemplate(ctx) {
   }
   // 当たり(家具)・壁の当たりは build で
   const solids = room.interior.solids.map((s) => [s[0] - TPL.x, s[1] - TPL.z, s[2] - TPL.x, s[3] - TPL.z, s[4], s[5]]);
-  return { parts, door, closet, mats, solids, cell, pal, B: Object.fromEntries(Object.entries(B).map(([k, b]) => [k, b && { tu0: b.x0 - TPL.x, tu1: b.x1 - TPL.x, tz0: b.z0 - TPL.z, tz1: b.z1 - TPL.z, h0: b.y0, h1: b.y1 }])) };
+  return { parts, door, closet, mats, solids, cell, pal, plates, B: Object.fromEntries(Object.entries(B).map(([k, b]) => [k, b && { tu0: b.x0 - TPL.x, tu1: b.x1 - TPL.x, tz0: b.z0 - TPL.z, tz1: b.z1 - TPL.z, h0: b.y0, h1: b.y1 }])) };
 }
+// P6b #4: 号室プレートのアトラス(make_textures.py の room_plates。1 マス 128×64・Inter の数字)と UV 表(Blender の UV = v 上向き)
+async function loadPlates() {
+  const [uv, blob] = await Promise.all([fetch(TPL.platesUV).then((r) => r.json()), fetch(TPL.plates).then((r) => r.blob())]);
+  const img = await createImageBitmap(blob);
+  return { uv, img };
+}
+// アトラスのマス id の画素の矩形
+function plateCell(P, id) {
+  const c = P.uv[id]; if (!c) return null;
+  const W = P.img.width, H = P.img.height;
+  return { x: Math.round(c[0] * W), y: Math.round((1 - c[3]) * H), w: Math.round((c[2] - c[0]) * W), h: Math.round((c[3] - c[1]) * H) };
+}
+// 札の画像(label = '4' など)。410 のマスを地にして、文字の部分を地の色で消し、数字の字形(410・312 の札から切り出す)を中央に置く
+function plateCanvas(P, label) {
+  const base = plateCell(P, TPL.room);
+  const cv = document.createElement('canvas'); cv.width = base.w; cv.height = base.h;
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  if (P.uv[label]) { const c = plateCell(P, label); g.drawImage(P.img, c.x, c.y, c.w, c.h, 0, 0, cv.width, cv.height); return cv; }   // 号室そのもの(312)
+  g.drawImage(P.img, base.x, base.y, base.w, base.h, 0, 0, base.w, base.h);
+  const bg = g.getImageData(8, base.h >> 1, 1, 1).data;
+  g.fillStyle = `rgb(${bg[0]},${bg[1]},${bg[2]})`;
+  g.fillRect(6, 6, base.w - 12, base.h - 12);
+  const glyphs = plateGlyphs(P);
+  let x = 0; const parts = [...label].map((ch) => glyphs[ch]).filter(Boolean);
+  const tw = parts.reduce((a, q) => a + q.w, 0) + Math.max(0, parts.length - 1) * 3;
+  x = Math.round((base.w - tw) / 2);
+  for (const q of parts) { g.drawImage(q.cv, x, q.y); x += q.w + 3; }
+  return cv;
+}
+// 数字の字形: 410 と 312 の札の中の明るい画素の列のかたまり(左から順に 1 文字)
+function plateGlyphs(P) {
+  if (P.glyphs) return P.glyphs;
+  const out = {};
+  for (const id of ['410', '312']) {
+    const c = plateCell(P, id); if (!c) continue;
+    const cv = document.createElement('canvas'); cv.width = c.w; cv.height = c.h;
+    const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(P.img, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
+    const D = g.getImageData(0, 0, c.w, c.h).data;
+    const lit = (x, y) => { const i = (y * c.w + x) * 4; return D[i] + D[i + 1] + D[i + 2] > 3 * 120; };
+    const m = 6, cols = [];
+    for (let x = m; x < c.w - m; x++) { let on = false; for (let y = m; y < c.h - m && !on; y++) on = lit(x, y); cols.push(on); }
+    const runs = []; let st = -1;
+    cols.forEach((on, i) => { if (on && st < 0) st = i; if (!on && st >= 0) { runs.push([st + m, i + m]); st = -1; } });
+    if (st >= 0) runs.push([st + m, cols.length + m]);
+    if (runs.length !== id.length) continue;
+    runs.forEach(([x0, x1], k) => {
+      let y0 = c.h, y1 = 0;
+      for (let y = m; y < c.h - m; y++) for (let x = x0; x < x1; x++) if (lit(x, y)) { y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      const pad = 1, gx = Math.max(0, x0 - pad), gw = Math.min(c.w, x1 + pad) - gx, gy = Math.max(0, y0 - pad), gh = Math.min(c.h, y1 + 1 + pad) - gy;
+      const gc = document.createElement('canvas'); gc.width = gw; gc.height = gh;
+      gc.getContext('2d').drawImage(cv, gx, gy, gw, gh, 0, 0, gw, gh);
+      if (!out[id[k]]) out[id[k]] = { cv: gc, w: gw, y: gy };
+    });
+  }
+  return (P.glyphs = out);
+}
+
 function geoOf(a) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(a.p, 3));
@@ -406,7 +466,8 @@ function buildFromTemplate(ctx, T) {
   G.static = mk(T.parts.static); G.poster = mk(T.parts.poster); G.curtain = mk(T.parts.curtain); G.bedding = mk(T.parts.bedding);
   G.cup = mk(T.parts.cup);
   G.blank = [{ geo: blankPosterGeo(T), mat: pal }];
-  G.leaf = mk(T.door.leaf); G.frame = mk(T.door.frame);
+  G.leaf = mk(T.door.leaf).filter((q) => q.mat && q.mat.name !== TPL.plateMat); G.frame = mk(T.door.frame);
+  G.plate = platePart(ctx, T, M);   // P6b #4: 札は扉ごとに差し替える(410 の札の板の形・UV はマスの中の 0..1 に直す)
   G.closet = T.closet.map((c) => ({ ...c, outerG: mk(c.outer), innerG: mk(c.inner) }));
   const bed = T.B.bed;
   G.messy = messyBedGeo(T, bed);
@@ -414,6 +475,40 @@ function buildFromTemplate(ctx, T) {
   G.hand = handGeo();
   G.cache = new Map();   // 窓の壁・カーテンの形(扉の位置ごと)
   for (let i = 0; i < X312.slots; i++) st.slots.push(makeSlot(ctx, i));
+}
+function platePart(ctx, T, M) {
+  const a = T.door.leaf.get(TPL.plateMat), base = M.get(TPL.plateMat);
+  if (!a || !base || !T.plates || !T.plates.uv[TPL.room]) return null;
+  const c = T.plates.uv[TPL.room];   // Blender の UV(v 上向き)→ glTF の UV は v = 1 − v
+  const uv = [];
+  for (let i = 0; i < a.uv.length; i += 2) uv.push((a.uv[i] - c[0]) / (c[2] - c[0]), (a.uv[i + 1] - (1 - c[3])) / (c[3] - c[1]));
+  return { geo: geoOf({ p: a.p, n: a.n, uv }), base, mats: new Map() };
+}
+function plateMat(ctx, label) {
+  const P = ctx.state.G.plate;
+  if (!P.mats.has(label)) {
+    const tex = new THREE.CanvasTexture(plateCanvas(ctx.state.T.plates, label));
+    tex.flipY = false; tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
+    const m = P.base.clone(); m.map = tex; m.color.setRGB(1, 1, 1);
+    patchLamp(m, ctx.state.U); m.needsUpdate = true;
+    P.mats.set(label, m);
+  }
+  return P.mats.get(label);
+}
+// 扉の札の文字: 行きは 312(入口)・4・3・2・1・0(奥の開かない扉)。戻り・鍵の後の 1 部屋の奥は札なし(戻りは鏡像なので文字も裏返る)
+function plateLabel(st, d) {
+  if (d.rec && d.rec.mirror) return null;
+  if (d.seam === 0 && d.exit) return '312';
+  if (st.phase !== 'fwd') return null;
+  if (d.seam >= 1 && d.seam <= X312.fwd) return String(X312.fwd - d.seam);
+  return null;
+}
+function setPlate(ctx, d) {
+  if (!d.plate) return;
+  const label = plateLabel(ctx.state, d);
+  d.plateLabel = label;
+  d.plate.visible = !!label;
+  if (label) d.plate.material = plateMat(ctx, label);
 }
 function cached(ctx, key, fn) { const C = ctx.state.G.cache; if (!C.has(key)) C.set(key, fn()); return C.get(key); }
 
@@ -545,9 +640,11 @@ function makeDoor(ctx) {
   for (const p of G.frame) add(p.geo, p.mat, group);
   const pivot = new THREE.Group(); pivot.position.fromArray(st.T.door.pivot); group.add(pivot);
   for (const p of G.leaf) add(p.geo, p.mat, pivot);
+  const plate = G.plate ? add(G.plate.geo, G.plate.base, pivot) : null;
+  if (plate) { plate.castShadow = false; plate.visible = false; }
   const col = { minX: 0, maxX: 0, minZ: 0, maxZ: 0, y0: SPACE_Y, y1: SPACE_Y + 2.1, kind: 'door', roomId: 'X312', disabled: true };
   ctx.cols.push(col);
-  const d = { key: null, group, pivot, col, angle: 0, target: 0, rec: null };
+  const d = { key: null, group, pivot, col, angle: 0, target: 0, rec: null, plate, plateLabel: null };
   st.doorPool.push(d);
   return d;
 }
@@ -637,6 +734,7 @@ function ensureRooms(ctx, instant = false) {
     d.exit = (info.seam === 0 && P[0].entry === 'genkan') || (info.seam === P.length && P[P.length - 1].exit === 'genkan');
     d.locked = !d.exit && (info.seam === 0 || info.seam === P.length);
     placeDoor(d, info);
+    setPlate(ctx, d);
   }
 }
 function seamDoor(ctx, sd) {
@@ -944,14 +1042,11 @@ function sound(ctx, dt) {
   }
 }
 function stopSound(ctx) { const st = ctx.state; if (!st.amb) return; try { st.amb.o.stop(); } catch (e) { void e; } st.amb = null; }
+// P6b #4(2026-11-03 ユーザー「312 の変な効果音」): 合成の効果音 open/close/key/lookup は鳴らさない。ログ(st.sfx)だけ残す。
+//  鳴らした回数 st.sfxPlayed は 0 のまま(テストが見る。録音の音を足す時はここで bank を鳴らして数える)
 function sfx(ctx, name) {
   const st = ctx.state; st.sfx = st.sfx || []; st.sfx.push(name); if (st.sfx.length > 60) st.sfx.shift();
-  if (!actx(ctx)) return;
-  if (name === 'open') { tone(ctx, 420, 300, 0.5, 0.02, 'sawtooth'); burst(ctx, 0.08, 900, 2, 0.05); }
-  else if (name === 'close') { burst(ctx, 0.18, 160, 1, 0.22); burst(ctx, 0.05, 1800, 3, 0.05); }
-  else if (name === 'key') { burst(ctx, 0.3, 120, 0.8, 0.35, 0.15); tone(ctx, 60, 40, 1.4, 0.06, 'sawtooth', 0.15); }
-  else if (name === 'lookup') { tone(ctx, 180, 150, 0.9, 0.015, 'triangle'); burst(ctx, 0.4, 600, 3, 0.02); }
-  void noiseBuf;
+  st.sfxPlayed = st.sfxPlayed || 0;
 }
 
 // ================================================================ テスト・スクショ用
@@ -962,8 +1057,8 @@ export function debug(ctx) {
     X312, st,
     ready: () => st.ready, error: () => st.tplError,
     state: () => ({
-      ready: st.ready, phase: st.phase, idx: st.idx, room: roomInfo(curRec(st)), pathLen: st.path.length, maxIdx: st.maxIdx, visited: [...st.visited], keyTaken: st.keyTaken,
-      slots: st.slots.map((s) => s.rec && s.rec.id), doors: [...st.doors.values()].map((d) => ({ key: d.key, seam: d.seam, x: +d.x.toFixed(2), z: +d.z.toFixed(2), angle: +d.angle.toFixed(2), locked: !!d.locked, exit: !!d.exit })),
+      ready: st.ready, phase: st.phase, idx: st.idx, sfx: (st.sfx || []).slice(), sfxPlayed: st.sfxPlayed || 0, room: roomInfo(curRec(st)), pathLen: st.path.length, maxIdx: st.maxIdx, visited: [...st.visited], keyTaken: st.keyTaken,
+      slots: st.slots.map((s) => s.rec && s.rec.id), doors: [...st.doors.values()].map((d) => ({ key: d.key, seam: d.seam, x: +d.x.toFixed(2), z: +d.z.toFixed(2), angle: +d.angle.toFixed(2), locked: !!d.locked, exit: !!d.exit, plate: d.plate && d.plate.visible ? d.plateLabel : null })),
       mgr: st.mgr && { room: st.mgr.rec.id, spot: st.mgr.spot, pose: X312.spots[st.mgr.spot].pose, look: +st.look.toFixed(2) }, mgrLog: st.mgrLog.slice(), log: st.log.slice(-40),
     }),
     rooms: () => st.path.map(roomInfo),
