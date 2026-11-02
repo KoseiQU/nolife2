@@ -480,10 +480,24 @@ export class EnemyAI {
     this.log(o.label || 'appear', { room: o.room || null, lv: o.level, x: +o.x.toFixed(2), z: +o.z.toFixed(2) });
     if (o.closet && this.roomsSys) { this.roomsSys.openCloset(o.room, 3.5); o.closet.revealed = true; if (this.audio) this.audio.play('slam', new THREE.Vector3(o.x, this.floorY + 1.1, o.z), 0.9, { dur: 0.6 }); }
     const lock = o.lock ?? 1.0, recover = o.recover ?? 1.5;
-    if (lock > 0 && this.onViewLock) this.onViewLock({ total: lock, label: o.label || 'appear', returnView: true });
+    if (lock > 0 && this.onViewLock) this.onViewLock({ total: lock, label: o.label || 'appear', returnView: true, ...(o.back ? { back: o.back } : {}) });
     e.play('walk_brutal', { fade: 0.1 });
     let t = 0;
     if (o.out) for (; t < 0.7; t += this.dt) { if (this._stepToward(o.out[0], o.out[1], 1.8, 'walk_brutal', 8.0, 0.08)) break; yield; }
+    // P6b-A(§3.9 #15): 視点を固定している間はプレイヤーへ歩いて近づく(o.walk = { speed, time })。経路は別空間の nav(扉を通る)
+    if (o.walk) {
+      let route = null, replan = 0;
+      for (; t < o.walk.time; t += this.dt) {
+        const p = this.player.pos;
+        replan -= this.dt;
+        if (!route || replan <= 0) { route = this._route(e.pos.x, e.pos.z, p.x, p.z); replan = 0.25; }
+        while (route.length > 1 && Math.hypot(route[0].x - e.pos.x, route[0].z - e.pos.z) < 0.35) route.shift();
+        const wp = route[0] || p;
+        e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.3, p.z);
+        this._stepToward(wp.x, wp.z, o.walk.speed, 'walk_brutal', 6.0, 0.3);
+        yield;
+      }
+    }
     e.speed = 0;
     e.play('look_idle', { fade: 0.25 });
     for (; t < recover; t += this.dt) {   // 体勢を立て直す間(こちらを向いて照らす)

@@ -8,7 +8,10 @@
 //    RL(x 0)96〜166 は R0 の写し(見た目の座標 = z − 96)。中で扉が閉まったら z − 96 へ継ぎ目なしに移す = 最初の地点へ戻る
 //  異世界の要素(§3.8 I): ①伸びる(R0 の z 10〜46 の間、前の分岐 F1 がプレイヤーの 24m 先を保って遠のき、来た道は背後 7m の壁になる)
 //   ②折り返し(F2 の左)③反転(R2 の扉を抜けるとカメラが 180° ロール。当たりと床の高さはそのまま)④歪み(追跡中は壁と天井が呼吸し、背後から灯りが消える)
-//  追跡: R3 の z 121 で反転の扉の前に管理人(悲鳴)→ 追跡(全知・経路はこのモジュールの nav)。止まると捕まる、走り続ければ出口へ。
+//  追跡(P6b-A §3.9 #15 で前倒し): F1 を抜けた直後(R1 の v 72)。背後で物が落ちて割れる音 → 同時に管理人が 8m 後ろ(F1 の右の扉越しの R0、
+//   扉は開け放す)に現れて悲鳴 → 視点を管理人へ 1.5 秒固定(その間は歩いて近づく)→ 0.6 秒で前へ戻る → 追跡(全知・経路はこのモジュールの nav、
+//   R0→R1→R2→R3→R4)。追跡中は折り返し(RL)を使わない(F2 の左は施錠・右は開いている)、反転の扉は開いたまま(管理人も通る)。
+//   止まると捕まる、走り続ければ出口へ。
 //  光はすべてシェーダの中の計算(三角関数の周期の灯り。three.js のライトは足さない = 他の材質のシェーダを作り直さない)＋懐中電灯。
 //  座標: 局所 u = x − 300(R0 の中心線)、v = z。y は SPACE_Y からの高さ。
 
@@ -22,7 +25,9 @@ export const X105 = {
   stretch: { from: 10, keep: 24, until: 46, endMax: 70, time: 45, glide: 3.0, backGap: 7.0 },   // ①伸びる
   loop: { closeAt: 1.6, jumpAt: 2.2, closeSec: 0.8 },                                          // ②折り返し(RL の扉から何 m 入ったら閉じ・移すか)
   roll: { sec: 3.2 },                                                                           // ③反転
-  chase: { at: 121, appear: [2.2, 110.7], slow: 3.0, offLead: 4.0, offBehind: 6.0, offRate: 3.2, warpIn: 2.0 },   // 追跡・灯りが消える・歪み
+  // 追跡・灯りが消える・歪み。P6b-A(§3.9 #15): at 121→72(R1 の入口)、appear = R0 の (0, 64)(v 72 の 8m 後ろ・F1 の右の扉越し)、
+  //  lock = 視点固定(hold 1.5 秒 ＋ 前へ戻す back 0.6 秒)、walk = 固定中の歩き(1.1 m/s)、fallVol = 背後の落下音(room_fall)の音量
+  chase: { at: 72, appear: [0.0, 64.0], hold: 1.5, back: 0.6, walk: 1.1, fallVol: 1.0, slow: 3.0, offLead: 4.0, offBehind: 6.0, offRate: 3.2, warpIn: 2.0 },
   look: { bld: 10, gray: 40 },                                                                  // 見た目の座標: これより手前は建物の仕上げ、奥は灰色
   fog: { density: 0.022, color: 0x050506 },
   pool: 14, ahead: 46, behind: 10,
@@ -40,7 +45,7 @@ const RUNS = [
 const RUN = Object.fromEntries(RUNS.map((r, i) => [r.id, Object.assign(r, { i })]));
 const NEXT = { R0: ['R1'], R1: ['RL', 'R2'], RL: [], R2: ['R3'], R3: ['R4'], R4: [] };
 const PREV = { R1: 'R0', RL: 'R1', R2: 'R1', R3: 'R2', R4: 'R3' };
-const CHAIN = ['R2', 'R3', 'R4'];   // 追跡の道筋(nav)
+const CHAIN = ['R0', 'R1', 'R2', 'R3', 'R4'];   // 追跡の道筋(nav)。P6b-A: R2〜 → R0〜(管理人は R0 に現れ F1 の右・F2 の右・反転の扉・F3 の右を通る)
 
 export const DEF = {
   origin: [OX, OZ], host: { level: 1, door: '105' },
@@ -504,7 +509,7 @@ function setR0End(ctx, z1) {
 
 // 入口(死んだ後のやり直しは追跡の区間の前 = R2 の始まりから。DESIGN H 第4段の「105 の前から再挑戦」)
 export function entryPoint(ctx) {
-  if (ctx.state.fromChase) return { x: OX + RUN.R2.xc, z: OZ + RUN.R2.z0 + 0.75, yaw: Math.PI };   // enter() の後に呼ばれる
+  if (ctx.state.fromChase) return { x: OX + RUN.R1.xc, z: OZ + RUN.R1.z0 + 0.75, yaw: Math.PI };   // enter() の後に呼ばれる。P6b-A: 追跡の区間の前 = R1 の始まり(R2→R1)
   return null;
 }
 export function enter(ctx) {
@@ -599,17 +604,27 @@ export function update(dt, ctx) {
     st.rollT += dt;
     const k = Math.min(1, st.rollT / X105.roll.sec);
     st.roll = Math.PI * (k * k * (3 - 2 * k));
-    if (v > RUN.R3.z0 + 2.0 && !st.dINV.locked) { st.dINV.target = 0; st.dINV.locked = true; st.dINV.speed = 0.8; }
+    if (v > RUN.R3.z0 + 2.0 && !st.dINV.locked && !st.chase) { st.dINV.target = 0; st.dINV.locked = true; st.dINV.speed = 0.8; }   // P6b-A: 追跡中は閉めない(管理人が通る)
   }
   if (!busy) setRoll(ctx, st.roll);
-  // 追跡: R3 の奥へ進むと、反転の扉の前に管理人(悲鳴)→ 追う
+  // 追跡(P6b-A §3.9 #15): R1 の v 72(F1 を抜けた直後)→ 背後で落下音 → 同じフレームで管理人が 8m 後ろに現れて悲鳴 → 視点固定 → 追う
   const C = X105.chase;
-  if (st.inverted && !st.chase && run.id !== 'R2' && v >= C.at && ctx.ai && ctx.story && ctx.story.aiControl) {
+  if (!st.chase && run.id === 'R1' && v >= C.at && ctx.ai && ctx.story && ctx.story.aiControl) {
     st.chase = true; st.chaseT = 0; st.retryArmed = true;
     st.offZ = OZ + C.appear[1] - 1.0;
+    // 道筋: F1 の右の扉は開け放す(管理人が出てくる口・振り返ると扉越しに見える)、F2 は左を施錠・右を開ける(折り返しは使わない)
+    const open = (d, a) => { d.locked = false; d.target = d.angle = a; d.col.disabled = true; d.pv.rotation.y = -a; };
+    open(st.dF1R, 1.45);
+    if (!st.loopDone) { st.loopDone = true; U.uRunB.value[RUN.RL.i].x = 0; for (const c of [...st.runCols.RL, st.dRLfakeL.col, st.dRLfakeR.col]) c.disabled = true; }
+    st.dF2L.locked = true; st.dF2L.target = 0;
+    open(st.dF2R, 1.25);
+    const at = new THREE.Vector3(OX + C.appear[0], SPACE_Y, OZ + C.appear[1]);
+    const bank = ctx.audio && ctx.audio.bank;
+    if (bank) bank.play('room_fall', { pos: at.clone().setY(SPACE_Y + 0.3), vol: C.fallVol });   // 物が落ちてガラスが割れる音(背後 8m)
+    st.log.push({ t: st.t, ev: 'fall', v, at: [C.appear[0], C.appear[1]] });
     ctx.ai.chaseOmni = true;
-    ctx.ai.appear({ level: ctx.key, x: OX + C.appear[0], z: OZ + C.appear[1], lock: 0, recover: 0.35, slow: C.slow, label: 'appear_105' });
-    if (ctx.audio) ctx.audio.play('x105_scream', new THREE.Vector3(OX + C.appear[0], SPACE_Y + 1.6, OZ + C.appear[1]), 1.0, { ref: 6.0 });   // P4b: 採用 x105_scream C(声)
+    ctx.ai.appear({ level: ctx.key, x: at.x, z: at.z, lock: C.hold + C.back, back: C.back, walk: { speed: C.walk, time: C.hold + C.back }, recover: 0, slow: C.slow, label: 'appear_105' });
+    if (ctx.audio) ctx.audio.play('x105_scream', at.clone().setY(SPACE_Y + 1.6), 1.0, { ref: 6.0 });   // P4b: 採用 x105_scream C(声)
     st.log.push({ t: st.t, ev: 'chase', v });
   }
   if (st.chase) {
@@ -752,13 +767,17 @@ export function nav(ctx, fx, fz, tx, tz) {
     for (let i = ia; i < ib; i++) {
       const r = RUN[CHAIN[i]], nx = RUN[CHAIN[i + 1]].xc;
       if (r.end === 'fork' && z < r.z1 - BAY - 0.3) pts.push({ x: OX + r.xc + Math.sign(nx - r.xc) * 0.35, z: OZ + r.z1 - BAY - 0.3 });
-      pts.push({ x: OX + nx, z: OZ + r.z1 - 0.7 }, { x: OX + nx, z: OZ + r.z1 + 0.8 });
+      // P6b-A: 扉の手前の点を既に越えていれば足さない(越えた点へ戻ろうとして扉の前で行き来して止まっていた。R0 から追う時に起きる)
+      if (z < r.z1 - 0.7 - 0.05) pts.push({ x: OX + nx, z: OZ + r.z1 - 0.7 });
+      pts.push({ x: OX + nx, z: OZ + r.z1 + 0.8 });
       z = r.z1 + 0.8;
     }
   } else {
     for (let i = ia; i > ib; i--) {
       const r = RUN[CHAIN[i]], pr = RUN[CHAIN[i - 1]];
-      pts.push({ x: OX + r.xc, z: OZ + r.z0 + 0.8 }, { x: OX + r.xc, z: OZ + r.z0 - 0.7 });
+      if (z > r.z0 + 0.8 + 0.05) pts.push({ x: OX + r.xc, z: OZ + r.z0 + 0.8 });
+      pts.push({ x: OX + r.xc, z: OZ + r.z0 - 0.7 });
+      z = r.z0 - 0.7;
       if (pr.end === 'fork') pts.push({ x: OX + pr.xc, z: OZ + pr.z1 - BAY - 0.3 });
     }
   }
@@ -778,7 +797,7 @@ export function debug(ctx) {
       if (what === 'post' || what === 'loopDone') { st.phase = 'post'; st.release = true; setR0End(ctx, RUN.R0.z1); st.backOn = false; st.backCol.disabled = true; }
       if (what === 'loopDone') { st.loopDone = true; st.dF2L.locked = true; st.dF2R.locked = false; st.U.uRunB.value[RUN.RL.i].x = 0; for (const c of st.runCols.RL) c.disabled = true; }
     },
-    lampsOff: () => { if (!st.chase) return { off: 0, maxOffZ: null }; let off = 0; for (const id of ['R2', 'R3', 'R4']) { const r = RUN[id]; for (let z = r.z0 + SEG / 2; z < r.z1 - BAY; z += SEG) if (OZ + z < st.offZ) off++; } return { off, offZ: +(st.offZ - OZ).toFixed(2) }; },
+    lampsOff: () => { if (!st.chase) return { off: 0, maxOffZ: null }; let off = 0; for (const id of ['R1', 'R2', 'R3', 'R4']) { const r = RUN[id]; for (let z = r.z0 + SEG / 2; z < r.z1 - BAY; z += SEG) if (OZ + z < st.offZ) off++; } return { off, offZ: +(st.offZ - OZ).toFixed(2) }; },
     door: (id) => st.doors.find((d) => d.id === id),
     local: (x, z) => ({ u: x - OX, v: z - OZ }), world: (u, v) => ({ x: OX + u, z: OZ + v }),
   };

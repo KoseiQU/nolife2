@@ -49,7 +49,7 @@ const TOUR = PARAMS.has('tour');
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
 // P5b-1: 物語(story.js)のモード。通常プレイと ?test=story = 'play'(段・目標・鍵・221/6F の罠・最終追跡・エンディング)、?tour = 'tour'(全部解放・別空間に入れる)、
 //  他のテスト(?test=enemy/rooms/building)= 'off'(物語の扉は施錠のまま、それ以外は P5a までと同じ)
-const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces' || PARAMS.get('test') === 'audio' || PARAMS.get('test') === 'tutorial') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'。P4b: ?test=audio も
+const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces' || PARAMS.get('test') === 'x105' || PARAMS.get('test') === 'audio' || PARAMS.get('test') === 'tutorial') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'。P4b: ?test=audio も
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -1078,5 +1078,6 @@ if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then(
 if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'story') import('../tools/test_story.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'spaces') import('../tools/test_spaces.js').then((m) => m.run(window.__N2)).catch(showErr);   // P5b-2a: 異世界 105・312
+if (PARAMS.get('test') === 'x105') import('../tools/test_x105.js').then((m) => m.run(window.__N2)).catch(showErr);       // P6b-A: 105 の追跡の前倒し(§3.9 #15)
 if (PARAMS.get('test') === 'tutorial') import('../tools/test_tutorial.js').then((m) => m.run(window.__N2)).catch(showErr);   // P6a: タイトルとチュートリアル
 if (PARAMS.get('test') === 'audio') import('../tools/test_audio.js').then((m) => m.run(window.__N2)).catch(showErr);     // P4b: 音の接続
