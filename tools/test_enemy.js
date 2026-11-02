@@ -861,6 +861,7 @@ export async function run(N) {
     const ev0 = setupHide({ hide: true });
     N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.5, { after: 'enter', v: 0.9 });
     const r = runHide(ev0, 60, (evs) => evs.some((e) => e.ev === 'hide_left'));
+    const graceAtLeft = N.ai.stats().grace;   // 出て行って扉を閉めた時から猶予を数え直す
     N.pump(DT, 60, false);   // 扉が閉じ切るまで
     const rl = rolls(ev0);
     N.ai._rand = N.ai._rand0;
@@ -871,8 +872,9 @@ export async function run(N) {
     const spare = evOf(ev0).find((x) => x.ev === 'locker_spare'), tease = evOf(ev0).find((x) => x.ev === 'locker_tease');
     const pass = rl.length === 2 && rl[0].kind === 'enter' && rl[0].result === 'enter' && rl[1].kind === 'closet' && Math.abs(rl[1].p - 0.714) < 0.001 && rl[1].result === 'spare'
       && rl[0].r !== rl[1].r && k === order.length && !r.evs.includes('locker_open') && !r.evs.includes('attack_start') && r.deadAt === null
-      && !!N.rooms.state().hidden && N.ai.knownRoomId === null && W.door410().angle < 0.01 && away > 2.0;
-    return { pass, rolls: rl, teaseToSpare_s: spare && tease && +(spare.t - tease.t).toFixed(2), enemyFromCloset_m: +away.toFixed(2), doorAngleAfter: +W.door410().angle.toFixed(3), stillHidden: !!N.rooms.state().hidden, timeline: tline(ev0, KEEP) };
+      && !!N.rooms.state().hidden && N.ai.knownRoomId === null && W.door410().angle < 0.01 && away > 2.0
+      && graceAtLeft && Math.abs(graceAtLeft.left_s - HIDE_FORGET.grace) < 0.05 && !graceAtLeft.leaving;
+    return { pass, rolls: rl, graceAtLeft, teaseToSpare_s: spare && tease && +(spare.t - tease.t).toFixed(2), enemyFromCloset_m: +away.toFixed(2), doorAngleAfter: +W.door410().angle.toFixed(3), stillHidden: !!N.rooms.state().hidden, timeline: tline(ev0, KEEP) };
   });
 
   // 31) 扉を閉めてクローゼット・捕まる(50% 側): 入る → 焦らす → 開ける → OUT

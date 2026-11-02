@@ -156,7 +156,8 @@ export const LOCKER = {
 export const HIDE_ODDS = { enter: 0.7, closet: 0.5 };
 // 助かった時の段取りと、部屋を忘れた後の再発見の猶予
 export const HIDE_FORGET = {
-  grace: 10.0,               // 忘れてからこの秒数は、その部屋の光漏れ・物音では再発見しない(プレイヤーが扉を開けた・部屋を出たら即終わる。目で見られるのは別)
+  grace: 10.0,               // 忘れてからこの秒数は、その部屋の光漏れ・物音では再発見しない(プレイヤーが扉を開けた・部屋を出たら即終わる。目で見られるのは別)。
+                             //  クローゼットの前で離れた時は、部屋を出て扉を閉め終えた時から数える
   pause: [1.5, 2.5],         // 扉の前で入らない時: 足音を止めて立ち止まる秒数(この範囲で乱数)→ 無言で立ち去る。扉は揺らさない・音なし(2026-11-02 ユーザー指示)
   letGo: 1.0,                // クローゼット/ロッカーの前: 焦らし終えた後、手を掛けたまま止まって離れるまで
   away: 5.0,                 // 猶予の間、忘れた部屋の扉からこの距離以内の巡回先(扉・廊下の端・EV)へは行かない
@@ -831,7 +832,8 @@ export class EnemyAI {
     const p = this.player.pos, e = this.enemy.pos;
     const d = this.doors.get(g.room);
     const doorOpen = !!d && (this.doors.isOpen(g.room) || d.target > 0);
-    if (g.leaving && !doorOpen && this._rid(e.x, e.z) !== g.room) { g.leaving = false; this.log('hide_left', { room: g.room }); }
+    // 中から出て行って扉を閉め終えた → 猶予はここから数え直す(クローゼットの前から出て行くまでの 7〜9 秒で猶予を使い切らないように)
+    if (g.leaving && !doorOpen && this._rid(e.x, e.z) !== g.room) { g.leaving = false; g.until = this.time + HIDE_FORGET.grace; this.log('hide_left', { room: g.room, grace: HIDE_FORGET.grace }); }
     if (this.time >= g.until) this._endGrace('time');
     else if (this._rid(p.x, p.z, this._plv()) !== g.room) this._endGrace('left');
     else if (doorOpen && !g.leaving) this._endGrace('door');
