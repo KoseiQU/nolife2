@@ -8,26 +8,28 @@
       "pick": "A"
     },
     "pl_flashlight": {
-      "pick": "redo"
+      "pick": "redo",
+      "note": "カチッという音"
     },
     "pl_crouch": {
       "pick": "none",
       "note": "そもそもしゃがむ要素がいらない（しゃがみ廃止。Ctrl は 312 の潜水専用に）"
     },
     "door_wood": {
-      "pick": "redo"
+      "pick": "redo",
+      "note": "がちゃっというような単純な音でいい"
     },
     "amb_corridor": {
       "pick": "A"
     },
     "pl_step_corridor": {
-      "pick": "redo"
+      "pick": "none"
     },
     "door_locked": {
-      "pick": "redo"
+      "pick": "none"
     },
     "pl_peephole": {
-      "pick": "redo"
+      "pick": "none"
     },
     "pl_closet": {
       "pick": "A"
@@ -55,44 +57,45 @@
       "pick": "none"
     },
     "enemy_presence": {
-      "pick": "redo",
+      "pick": "none",
       "note": "なにかぼそぼそ呟いてる"
     },
     "enemy_step_walk": {
       "pick": "redo",
-      "note": "硬いゆかを歩いてる感じ"
+      "note": "金属音感をなくして"
     },
     "enemy_step_run": {
-      "pick": "redo",
+      "pick": "C",
       "note": "もっと大きい音でドタバタ恐怖感を煽る"
     },
     "enemy_breath_close": {
       "pick": "redo",
-      "note": "息遣いではなく、笑い声かセリフにして"
+      "note": "みいつけたで、ただまだ機械音感がする"
     },
     "enemy_breath_door": {
-      "pick": "redo",
+      "pick": "B",
       "note": "息遣いではなく、笑い声かセリフにして"
     },
     "enemy_handle": {
-      "pick": "redo"
+      "pick": "none"
     },
     "room_door_rattle": {
-      "pick": "redo"
+      "pick": "redo",
+      "note": "機械音感をなくして"
     },
     "enemy_door_latch": {
       "pick": "none"
     },
     "enemy_door_smash": {
-      "pick": "redo",
+      "pick": "C",
       "note": "もっと爆発音のような感じ"
     },
     "enemy_scream": {
       "pick": "redo",
-      "note": "もっと叫び声"
+      "note": "機械音感をなくして"
     },
     "enemy_hit": {
-      "pick": "redo",
+      "pick": "A",
       "note": "もっと重量感のあるものに"
     },
     "death": {
@@ -123,11 +126,11 @@
       "pick": "none"
     },
     "locker_open_slow": {
-      "pick": "redo",
+      "pick": "none",
       "note": "キイという音がいい"
     },
     "locker_burst": {
-      "pick": "redo",
+      "pick": "none",
       "note": "もっと驚かせる音で"
     },
     "pickup_key": {
@@ -137,7 +140,7 @@
       "pick": "A"
     },
     "key_unlock": {
-      "pick": "redo"
+      "pick": "none"
     },
     "amb_x312_above": {
       "pick": "none"
@@ -161,7 +164,7 @@
       "pick": "C"
     },
     "x105_scream": {
-      "pick": "redo",
+      "pick": "C",
       "note": "もっと機械音感をなくしたい"
     },
     "x105_lamp_off": {
@@ -216,7 +219,7 @@
       "pick": "B"
     },
     "ending_gate": {
-      "pick": "redo",
+      "pick": "C",
       "note": "ジャリジャリ感をなくして"
     }
   }
