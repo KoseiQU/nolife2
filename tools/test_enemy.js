@@ -685,19 +685,12 @@ export async function run(N) {
       strip: { ...uni, index408: idx }, breathAfterStill_s: breathAt && +breathAt.toFixed(2), breathVolume: vol, passWhileStanding: passWhileStill, breathWhileWalking: breathWalking };
   });
 
-  // 24) チュートリアル(仮): カードが 4〜5 枚、クリック/Esc で送り、最後で閉じる(?test では自動で出さない)
-  await T('24_tutorial_cards', () => {
-    const tu = N.tutorial;
+  // 24) P6a: タイトルと場面を映すチュートリアルは ?test(tutorial 以外)では出ない(P5a の仮の文字カードは P6a で置き換えた。中身は ?test=tutorial)
+  await T('24_tutorial_not_under_test', () => {
+    const tu = N.tutorial, ti = N.title;
     const autoShown = tu.active || tu.log.length > 0;
-    tu.start();
-    const first = tu.state();
-    const press = (code) => window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
-    press('Escape'); const second = tu.state();
-    tu.root.dispatchEvent(new MouseEvent('click', { bubbles: true })); const third = tu.state();
-    for (let i = 0; i < 5; i++) press('Escape');
-    const end = tu.state();
-    return { pass: !autoShown && first.active && first.index === 0 && first.count >= 4 && first.count <= 5 && second.index === 1 && third.index === 2 && !end.active,
-      autoShownUnderTest: autoShown, cards: first.count, titles: N.tutorial.cards.map((c) => c.title), afterEsc: second.index, afterClick: third.index, closed: !end.active };
+    return { pass: !autoShown && !ti.active && !ti.state().shown && !document.getElementById('title'),
+      autoShownUnderTest: autoShown, title: ti.state() };
   });
 
   // ------------------------------------------------------------ P5b-6: 逃げ込みの確率(DESIGN §3.4.1)
