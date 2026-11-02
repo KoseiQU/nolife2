@@ -35,6 +35,8 @@ import { DoorFx } from './door_fx.js';
 import { ViewLock } from './view_lock.js';
 import { Watcher } from './watcher.js';
 import { Tutorial } from './tutorial.js';
+import { Title } from './title.js';
+import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Spaces } from './spaces.js';
 
@@ -47,7 +49,7 @@ const TOUR = PARAMS.has('tour');
 const FLAGS = { roofA: TOUR || PARAMS.has('roofA'), entranceOut: TOUR || PARAMS.has('entranceOut') };
 // P5b-1: 物語(story.js)のモード。通常プレイと ?test=story = 'play'(段・目標・鍵・221/6F の罠・最終追跡・エンディング)、?tour = 'tour'(全部解放・別空間に入れる)、
 //  他のテスト(?test=enemy/rooms/building)= 'off'(物語の扉は施錠のまま、それ以外は P5a までと同じ)
-const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces' || PARAMS.get('test') === 'audio') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'。P4b: ?test=audio も
+const STORY_MODE = TOUR ? 'tour' : (!PARAMS.has('test') || PARAMS.get('test') === 'story' || PARAMS.get('test') === 'spaces' || PARAMS.get('test') === 'audio' || PARAMS.get('test') === 'tutorial') ? 'play' : 'off';   // P5b-2a: ?test=spaces も 'play'。P4b: ?test=audio も
 
 // 見た目の調整値(目視で決める。DESIGN §3.2「やり過ぎない」)
 export const LOOK = {
@@ -603,7 +605,7 @@ const elevator = new Elevator({ building, world, player, camera, listener: enemy
 elevator.onRideStart = (to) => world.focus(to, { keep: [playerLevel] });
 // P3b: 入れる部屋の仕掛け(掃き出し窓・隠れ場所・落ちる物・屋上A の乗り越え)
 rooms = new Rooms({ building, world, scene, player, camera, listener: enemyAudio.listener, bank, getLevel: () => playerLevel, flags: FLAGS,
-  onNoise: (f) => { if (!TOUR) ai.noiseRoom(f.room, f.x, f.z, f.level); },
+  onNoise: (f) => { if (!TOUR && !(tutorial && tutorial.active)) ai.noiseRoom(f.room, f.x, f.z, f.level); },
   onHide: () => {} });
 world.onBind = (lv, binds) => rooms.onBind(lv, binds);
 world.onUnbind = (lv) => rooms.onUnbind(lv);
@@ -819,13 +821,14 @@ function step(dt) {
   updatePortal();
   if (!movie.active && !death) stairs.update(dt);   // P5b-1b: 襲撃ムービー・死亡演出の間は段の上り下りを止める
   rooms.update(dt, playerLevel);
+  if (tutorial.active) tutorial.update(dt);   // P6a: 場面を映すチュートリアル(カメラ・演出体の管理人・扉・EV を動かす。rooms の後 = 隠れ場所のカメラの向きを上書き)
   rooms.updateWind(dt, outdoorKind());   // P4b: 風の音は updateAmbience(amb_roof)。ここは場所の記録だけ
-  story.update(dt);   // P5b-1
+  if (!tutorial.active) story.update(dt);   // P5b-1(P6a: チュートリアルの間は止める)
   updatePeepInput(dt);
   camera.updateMatrixWorld();
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   if (!TOUR) {
-    ai.update(dt);
+    if (!tutorial.active) ai.update(dt);   // P6a: チュートリアルの間は AI の通常動作を止める(管理人は tutorial.js が演出体として動かす)
     enemy.update(dt, camera);
     // P5b-3: 管理人もシアターの段床に乗る(見た目の足元の高さだけ。当たり・経路・視線の判定は床のまま。段は約 0.1 秒で登る)
     if (!ai.transit && TIERS.has(ai.level)) {
@@ -841,11 +844,11 @@ function step(dt) {
   enemy.root.visible = !TOUR && ai.level === playerLevel && !ai.transit && !ai.concealed;   // P5a: 空室の中に潜んでいる間は描かない
   updateCarLamp();
   doorFx.update(dt, { level: playerLevel, x: player.pos.x, z: player.pos.z,
-    busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : ai.lurkRoomId);
+    busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : tutorial.active ? tutorial.lurkId : ai.lurkRoomId);
   updateVisibility();
   updateOutdoorLook(dt);
   spaces.update(dt);   // P5b-2a: 今いる別空間の演出(霧などの見た目の上書きもあるので外の見た目の後)
-  if (!TOUR) watcher.update(dt);
+  if (!TOUR && !tutorial.active) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
   updateAmbience();   // P4b: 場所ごとの環境音(地下の水滴 updateDrips を置き換え)
   bank.update(dt);
@@ -876,7 +879,7 @@ function render() {
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
   const t0 = performance.now();
-  if ((!window.__n2 || !window.__n2.paused) && !tutorial.active) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める。P5a: チュートリアル表示中も止める
+  if ((!window.__n2 || !window.__n2.paused) && !title.active) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める。P6a: タイトル表示中も止める(チュートリアルは step の中で進む)
   render();
   const cpu = performance.now() - t0;
   frameTimes.push([now, dt * 1000, cpu]);
@@ -884,15 +887,22 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 // P2c: 襲撃ムービーの血(ShaderPass)と血煙(Points)のシェーダを先にコンパイルしておく(初回発動時の 50ms 級の引っかかり対策)
-// P5a: 行動パターンのチュートリアル(仮)。ゲーム開始直後に毎回(?notutorial・?tour・?test では出さない)
 // P5b-1: 物語の開始(?stage=N はその段の開始状態)
 if (STORY_MODE === 'play') {
   story.applyStage(parseInt(PARAMS.get('stage'), 10) || 1);
   if (PARAMS.has('roofA')) FLAGS.roofA = true;
   if (PARAMS.has('entranceOut')) { FLAGS.entranceOut = true; story._applyEntrance(); }
 }
-const tutorial = new Tutorial();
-if (!TOUR && !PARAMS.has('notutorial') && !PARAMS.has('test')) tutorial.start();
+// P6a: タイトル(「NOLIFE」＋「クリックで開始」)→ 場面を映すチュートリアル → 410 のベッド脇。
+//  タイトルは通常プレイと ?test=tutorial だけ(?tour・他の ?test=… では出さない)。チュートリアルは ?notutorial で出さない(タイトルのクリックで通常プレイへ)
+const tutorial = new Tutorial({ camera, player, ai, enemy, enemyAudio, bank, world, elevator, rooms, doorFx, peephole, hud, scene, ambientFloor, door410,
+  teleport: (key, x, z, yaw, pitch = 0) => { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); },
+  getLevel: () => playerLevel, controlsSec: HUD.controlsSec,
+  resetAI: (dormant) => { ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw); if (dormant) ai.setDormant(true); } });
+const TITLE_ON = !TOUR && (!PARAMS.has('test') || PARAMS.get('test') === 'tutorial');
+const title = new Title({ show: TITLE_ON, lock: () => player.lock(), resumeAudio,
+  onStart: () => { if (!PARAMS.has('notutorial') && STORY_MODE === 'play') tutorial.start(); } });
+player.controls.addEventListener('unlock', () => { if (tutorial.active) tutorial.requestSkip('unlock'); });   // ポインタロック中の Esc はロックが外れるだけでキーが届かないことがある
 movie.pass.enabled = true; movie.mist.points.visible = true;
 render();
 movie.pass.enabled = false; movie.mist.points.visible = false;
@@ -930,7 +940,7 @@ window.__n2 = {
   get hideOdds() { return { ...ai.hideOdds, open: +ai.hideOpenOdds().toFixed(3), start: { ...HIDE_ODDS_START } }; },   // P5b-6: 逃げ込みの確率の現在値(起動時の値)
   enemyObj: enemy, ai, enemyAudio, bank, get bankLoad() { return bankLoad; }, ambienceAt, peepholeObj: peephole, doorApi, lens, CHECKPOINT, ENEMY_HOME, rooms, flags: FLAGS,
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
-  doorFx, viewLock, watcher, tutorial,   // P5a
+  doorFx, viewLock, watcher, tutorial, title,   // P5a・P6a
   story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
@@ -995,4 +1005,5 @@ if (PARAMS.get('test') === 'building') import('../tools/test_building.js').then(
 if (PARAMS.get('test') === 'rooms') import('../tools/test_rooms.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'story') import('../tools/test_story.js').then((m) => m.run(window.__N2)).catch(showErr);
 if (PARAMS.get('test') === 'spaces') import('../tools/test_spaces.js').then((m) => m.run(window.__N2)).catch(showErr);   // P5b-2a: 異世界 105・312
+if (PARAMS.get('test') === 'tutorial') import('../tools/test_tutorial.js').then((m) => m.run(window.__N2)).catch(showErr);   // P6a: タイトルとチュートリアル
 if (PARAMS.get('test') === 'audio') import('../tools/test_audio.js').then((m) => m.run(window.__N2)).catch(showErr);     // P4b: 音の接続
