@@ -1,9 +1,9 @@
-// door_fx.js — P5a: 空室(管理人が潜む施錠された部屋)の扉まわりの見た目と「ガタガタ扉」(DESIGN §3.8 A・E)。
+// door_fx.js — P5a: 空室(管理人が潜む施錠された部屋)の扉まわりの見た目(DESIGN §3.8 A)。
 //  - 扉の下の隙間: 空室 73 室の扉の下に 1.2cm の暗い帯(階ごとに 1 枚の面に結合)。潜伏中の部屋だけ、帯の明るさがゆっくり揺らぐ
 //    (中の弱い明かりを何かが遮っては離れる。歩いていると気付かない程度)
 //  - 奥の闇の箱: 空室には内装がないので、扉が開いている間(管理人の出入り)と壊れた後は、戸口の奥 1.25m に暗い箱(床・壁・天井・突き当たり)を置く
 //  - 壊れた扉の破片: 戸先側の枠に裂けた木片、廊下の床に木屑。扉が壊れた時に足す(world.breakDoor → onDoorBroken)
-//  - ガタガタ扉: 数分に 1 回、プレイヤーから 4〜15m の空室の扉が 3〜5 秒激しく揺れて鳴る。絶対に出てこない。潜伏中の部屋では起こさない
+//  - 旧「ガタガタ扉」(空室の扉が数分に 1 回揺れて鳴る)は 2026-11-02 のユーザー指示で廃止(P5b-6b。§3.8 E)
 // 実行時の Three.js メッシュだけ(GLB は再ビルドしない)。階ごとの group を world.visible に合わせて出し入れする。
 
 import * as THREE from 'three';
@@ -15,7 +15,6 @@ export const DOORFX = {
   stripLeak: [0.030, 0.026, 0.022],           // 潜伏中に揺らぐ明るさの最大(線形。露出 4.5 の前)。中の弱い明かりが漏れては遮られる
   stripFade: 2.5,                             // 潜伏が始まって/終わって揺らぎが現れる/消える時間(秒)
   void: { depth: 1.25, h: 2.15, side: 0.12, color: 0x2a2521, back: 0x161311 },
-  rattle: { every: [150, 300], first: [90, 160], dur: [3, 5], minDist: 4, maxDist: 15, volume: 1.0 },
 };
 
 export class DoorFx {
@@ -30,9 +29,6 @@ export class DoorFx {
     this.lurkId = null;            // 潜伏中の部屋(帯が揺らぐ)
     this.lurkAmt = 0;
     this.time = 0;
-    this.rattleT = rand(...DOORFX.rattle.first);
-    this.rattling = null;
-    this._rand = mulberry(4242);
     this.uniforms = {};
     for (const lv of [1, 2, 3, 4, 5, 6, 7]) {
       const g = new THREE.Group(); g.name = 'DoorFx_' + lv;
@@ -181,31 +177,6 @@ export class DoorFx {
     this._buildStrips(d.level);
   }
 
-  // ------------------------------------------------------------ ガタガタ扉(§3.8 E)
-  // 3〜5 秒、扉板が激しく揺れて鳴る。管理人は出てこない(扉は開かない・壊れない)
-  rattle(id, dur = rand(...DOORFX.rattle.dur, this._rand)) {
-    const d = this.world.doorById.get(String(id));
-    if (!d || !d.lurkable || d.broken || d.angle > 0.01 || id === this.lurkId) return false;
-    d.shake = dur; d.shakeT = 0; d.shakePhase = this._rand() * 6.28;
-    this.rattling = { id: d.roomId, until: this.time + dur };
-    if (this.audio) this.audio.play('slam', new THREE.Vector3(d.pos[0], levelY(d.level) + 1.0, d.pos[1]), DOORFX.rattle.volume, { cutoff: 9000, ref: 3.0, dur });
-    this.log('rattle', { room: d.roomId, dur: +dur.toFixed(2) });
-    return true;
-  }
-  // 数分に 1 回。プレイヤーの階で、4〜15m の空室の扉(壊れていない・潜伏中でない)
-  _scheduleRattle(dt, ctx) {
-    if (this.rattling && this.time > this.rattling.until) this.rattling = null;
-    if (!ctx || ctx.busy || typeof ctx.level !== 'number') return;
-    this.rattleT -= dt;
-    if (this.rattleT > 0) return;
-    const R = DOORFX.rattle;
-    const cands = this.world.doors.filter((d) => d.level === ctx.level && d.lurkable && !d.broken && d.angle < 0.01 && d.roomId !== this.lurkId
-      && (() => { const k = Math.hypot(d.pos[0] - ctx.x, d.pos[1] - ctx.z); return k >= R.minDist && k <= R.maxDist; })());
-    if (!cands.length) { this.rattleT = 10; return; }
-    this.rattle(cands[Math.floor(this._rand() * cands.length)].roomId);
-    this.rattleT = rand(...R.every, this._rand);
-  }
-
   // ------------------------------------------------------------ 毎フレーム
   // ctx: { level, x, z, busy }(プレイヤー)。lurkId: 潜伏中の部屋(null)
   update(dt, ctx, lurkId) {
@@ -227,16 +198,14 @@ export class DoorFx {
     }
     for (const [id, g] of this.voids) { const d = this.world.doorById.get(id); g.visible = !!d.broken || d.angle > 0.01; }
     for (const [lv, g] of this.groups) g.visible = this.world.visible.has(lv);
-    this._scheduleRattle(dt, ctx);
   }
   // 扉が開き始める前に闇の箱を用意する(管理人が空室へ出入りする時)
   prepare(id) { const d = this.world.doorById.get(String(id)); if (d) this._void(d); }
 
   stats() {
-    return { lurkId: this.lurkId, lurkAmt: +this.lurkAmt.toFixed(2), rattleIn: +this.rattleT.toFixed(1), rattling: this.rattling, strips: [...this.strips].map(([lv, s]) => [lv, s.ids.length]), broken: [...this.debris.keys()] };
+    return { lurkId: this.lurkId, lurkAmt: +this.lurkAmt.toFixed(2), strips: [...this.strips].map(([lv, s]) => [lv, s.ids.length]), broken: [...this.debris.keys()] };
   }
 }
 
-function rand(a, b, r = Math.random) { return a + (b - a) * r(); }
 function hashStr(s) { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
 function mulberry(a) { return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }

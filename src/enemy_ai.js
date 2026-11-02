@@ -1761,7 +1761,7 @@ export class EnemyAI {
   _pickLurkRoom(lv) {
     const R = AI.roomLurk, p = this.player.pos, same = this._plv() === lv;
     let c = this.lurkable.filter((r) => r.level === lv).map((r) => this.doors.get(r.id))
-      .filter((d) => d && !d.broken && d.angle < 0.01 && !(d.shake > 0) && !(same && Math.hypot(d.pos[0] - p.x, d.pos[1] - p.z) < R.avoidNear));
+      .filter((d) => d && !d.broken && d.angle < 0.01 && !(same && Math.hypot(d.pos[0] - p.x, d.pos[1] - p.z) < R.avoidNear));
     if (!c.length) return null;
     if (this.phase() === 'tense' && same) {
       c.sort((a, b) => Math.hypot(a.pos[0] - p.x, a.pos[1] - p.z) - Math.hypot(b.pos[0] - p.x, b.pos[1] - p.z));

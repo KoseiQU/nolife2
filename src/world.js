@@ -160,7 +160,7 @@ export class World {
           locked: false, speedMul: 1, rattle: 0, node: null, leaves: [], sealed: !!r.door.sealed, tryable: !!r.door.sealed,
           pos: r.door.pos, facing: r.door.facing, width: doorWidth(r),
           // P5a: lurkable = 管理人が潜む空室の扉(開かない扉だが、管理人は開けて出入りする・壊して飛び出す・中で何かが暴れて揺れる)
-          lurkable: this.lurkableIds.has(r.id), broken: null, shake: 0, shakeT: 0, shakePhase: 0, nodeBase: null, blockers: [],
+          lurkable: this.lurkableIds.has(r.id), broken: null, nodeBase: null, blockers: [],
           collision: this.cols.get(key).find((c) => c.kind === 'door' && c.roomId === r.id) || null,
         };
         this.doors.push(d);
@@ -530,8 +530,8 @@ export class World {
   }
 
   // P5a: 空室の扉板(14 枚前後/階 × 3 材質)を別ノードのまま描くと描画コールが 1 階で約 +100 になる(影・GTAO の走査込み)。
-  //  止まっている扉板は階ごとに材質単位で 1 つへ結合して描き、動いている扉(管理人の出入り・ガタガタ・壊れた・ノブを試した)だけ別ノードを見せる
-  _leafAtRest(d) { return !d.broken && d.angle === 0 && d.target === 0 && !(d.shake > 0) && !(d.rattle > 0); }
+  //  止まっている扉板は階ごとに材質単位で 1 つへ結合して描き、動いている扉(管理人の出入り・壊れた・ノブを試した)だけ別ノードを見せる
+  _leafAtRest(d) { return !d.broken && d.angle === 0 && d.target === 0 && !(d.rattle > 0); }
   _rebuildLurkMerged(level) {
     const rec = this.floors.get(level);
     if (!rec || rec.state !== 'ready' || !rec.group) return;
@@ -617,7 +617,6 @@ export class World {
           if (d.collision) d.collision.disabled = d.angle > 0.25;
         }
         if (d.rattle > 0) d.rattle -= dt;
-        if (d.shake > 0) { d.shake -= dt; d.shakeT += dt; }
       }
       if (d.node && !d.operable) this._poseLeaf(d);
       if (d.lurkable && d.node && this._leafAtRest(d) !== d._merged) (dirty ||= new Set()).add(d.level);
@@ -625,7 +624,7 @@ export class World {
     if (dirty) for (const lv of dirty) this._rebuildLurkMerged(lv);
   }
 
-  // P5a: 開かない扉の扉板の姿勢(開き角・壊れた傾き・ガタガタの揺れ・ノブを試した時のごく小さな揺れ)
+  // P5a: 開かない扉の扉板の姿勢(開き角・壊れた傾き・ノブを試した時のごく小さな揺れ)
   _poseLeaf(d) {
     const n = d.node;
     if (!n) return;
@@ -638,15 +637,6 @@ export class World {
       const b = d.broken, k = Math.min(1, b.t / 0.25);
       if (ns) rz = -b.tilt * k; else rx = b.tilt * k;
       n.position.y -= b.drop * k;
-    } else if (d.shake > 0) {
-      // ガタガタ: 中から激しく引かれて掛け金の遊びの分だけ部屋側へ跳ねる(ラッチで止まる)。2 Hz の波の中に 11〜15 Hz の震え
-      const t = d.shakeT, env = Math.min(1, t / 0.15) * Math.min(1, d.shake / 0.3);
-      const surge = Math.max(0, Math.sin(t * 2 * Math.PI * 1.9 + d.shakePhase)) ** 2;
-      const buzz = Math.abs(Math.sin(t * 2 * Math.PI * 13.0) + 0.6 * Math.sin(t * 2 * Math.PI * 11.3 + 1.7));
-      ry = d.sign * (0.004 + 0.022 * surge * (0.5 + 0.5 * buzz)) * env;
-      const [fx, fz] = FACING_N[d.facing];
-      const push = -0.004 * surge * env;   // 部屋側へ(扉板ごと数 mm)
-      n.position.x += fx * push; n.position.z += fz * push;
     } else if (d.angle === 0 && d.rattle > 0) ry = d.sign * 0.004;
     n.rotation.set(rx, ry, rz);
   }
@@ -657,7 +647,7 @@ export class World {
     const d = this.doorById.get(String(id));
     if (!d || d.broken) return false;
     d.broken = { angle, tilt, drop, t: 0 };
-    d.target = 0; d.shake = 0;
+    d.target = 0;
     if (d.collision) d.collision.disabled = true;
     const rr = this.roomById.get(d.roomId);
     if (rr) {

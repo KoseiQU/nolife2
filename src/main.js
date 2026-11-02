@@ -403,12 +403,11 @@ composer.addPass(movie.pass);
 // P5a: 視点を管理人へ向ける短いムービー(潜伏室からの飛び出し・EV の賭け)
 const viewLock = new ViewLock({ camera, player, holdFrozen: () => inputHeld() });
 ai.onViewLock = (o) => viewLock.start((out) => enemy.headWorld(out).add(new THREE.Vector3(0, 0.02, 0)), o);
-// P5a: 空室の扉まわり(扉の下の隙間・奥の闇の箱・壊れた扉の破片・ガタガタ扉)
+// P5a: 空室の扉まわり(扉の下の隙間・奥の闇の箱・壊れた扉の破片)
 doorFx = new DoorFx({ scene, world, building, audio: enemyAudio });
 // P5a: 窓越しの管理人(見えるだけの演出体。本体が別の階にいる時、静かな時間帯に)。テストでは自動では出さない(N.watcher.enabled / force)
 const watcher = new Watcher({ scene, camera, enemy, world, building, ai, getLevel: () => playerLevel,
   isBusy: () => movie.active || viewLock.active || !!death, enabled: !TOUR && !PARAMS.has('test') && !PARAMS.has('noai') });
-if (PARAMS.has('test')) doorFx.rattleT = 1e9;   // テストではガタガタ扉を自然には起こさない(決定的に。20 番は自分で起こす)
 world.onDoorBroken = (d) => doorFx.onBroken(d);
 world.onDoorRepaired = (d) => doorFx.onRepaired(d);
 if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
