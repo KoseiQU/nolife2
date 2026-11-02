@@ -1,4 +1,5 @@
 // tutorial.js — P6a: 場面を映すチュートリアル(DESIGN §3.8「チュートリアル(2026-11-01 ユーザー決定)」の表 0〜8。P5a の仮の文字カードを置き換えた)。
+//  P6b(§3.9 #11): 場面 3b(外階段の踊り場)・6b(開いた扉と閉まった扉)を追加。並びは 0,1,2,3,3b,4,5,6,6b,7,8(TUT.ids)、合計 87.5 秒。
 //  タイトルのクリックの後、操作を奪ったカメラが館内の場面 0〜8 を順に映し、各場面に表の一文を出す(0 は黒の中央、1〜7 は画面下)。
 //  音楽なし。環境音(main の updateAmbience)と場面の音(AudioBank の採用場面: 管理人の足音・EV のチャイム・花瓶の割れる音)だけ。
 //  - 管理人は演出体として置く: AI の通常動作(ai.update)は main が止め、ここが enemy を直接置いて歩かせる(位置・向き・クリップ・懐中電灯・照らす点)。
@@ -15,8 +16,10 @@ import { levelY } from './world.js';
 
 export const TUT = {
   seenKey: 'nolife2.tutorialSeen',
-  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 74.5 秒(契約 60〜80)
-  dur: [5.0, 8.0, 8.5, 8.0, 13.0, 7.5, 13.5, 8.0, 3.0],
+  // 場面の並び(P6b §3.9 #11 で 3b・6b を追加。配列の添字 = this.index、表の番号 = ids[index])
+  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '8'],
+  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 87.5 秒(P6b 契約 ≤95。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0)
+  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 3.0],
   edgeFade: 0.6,       // 場面の始めと終わりの暗転(秒)
   cutFade: 0.3,        // 場面 6 の中のカット
   bedside: { level: 4, x: 12.35, z: 7.25, yaw: Math.PI / 2, pitch: -0.04 },   // 終わりの位置: 410 のベッド脇(西 = 玄関の方を向く)
@@ -28,7 +31,11 @@ export const TUT = {
   ambient5: 0.5,       // 場面 5: クローゼットの隙間から薄暗い部屋が読める程度に
   gap5: 0.15,          // 場面 5: 隙間の開き(ROOMS.hideGap 0.09 より少し広く。映す時だけ)
   flashScale: 0.38,    // 場面 6・7: 近い壁・扉が白く飛ばないよう、自分の懐中電灯をこの倍率に(終われば戻す)
+  stair3b: { level: 3 },   // P6b 場面 3b: 3F の外階段の踊り場(場面 3 と同じ階 = 読み込み待ちなし)
+  open6b: '410', closed6b: '409',   // P6b 場面 6b: 4F の廊下の北端から、手前の開いた扉(410)と奥の閉まった扉(409)
 };
+const LAST = TUT.ids.length - 1;   // 最後の場面(黒 → ベッド脇)
+const DUR = (id) => TUT.dur[TUT.ids.indexOf(id)];
 
 const CSS = `
 #tutx { position: fixed; inset: 0; z-index: 8; pointer-events: none; background: #000; opacity: 0; }
@@ -66,7 +73,7 @@ export class Tutorial {
   constructor(ctx) {
     Object.assign(this, ctx);
     this.active = false;
-    this.index = -1;        // 場面の番号(0〜8)
+    this.index = -1;        // 場面の添字(0〜LAST。表の番号は TUT.ids[index])
     this.t = 0;             // 場面の中の時刻(読み込み待ちを除く)
     this.total = 0;         // 開始からの合計(読み込み待ちを除く)
     this.log = [];
@@ -175,9 +182,9 @@ export class Tutorial {
   // Esc・ポインタロックが外れた: 2 回目以降(既読)なら場面 8 へ
   requestSkip(why) {
     if (!this.active) return false;
-    if (!this.seen || this.index >= 8) { this.log.push({ ev: 'skip_ignored', why, index: this.index }); return false; }
+    if (!this.seen || this.index >= LAST) { this.log.push({ ev: 'skip_ignored', why, index: this.index }); return false; }
     this.log.push({ ev: 'skip', why, from: this.index, t: +this.t.toFixed(2) });
-    this._go(8);
+    this._go(LAST);
     return true;
   }
 
@@ -187,7 +194,7 @@ export class Tutorial {
     this.cap = HUD_TEXT.tutorial.scenes[i] || '';
     if (i === 0) { this.centerEl.textContent = this.cap; this.capEl.textContent = ''; }
     else { this.centerEl.textContent = ''; this.capEl.textContent = this.cap; }
-    this.log.push({ ev: 'scene', index: i, text: this.cap, at: +this.total.toFixed(3) });
+    this.log.push({ ev: 'scene', index: i, id: TUT.ids[i], text: this.cap, at: +this.total.toFixed(3) });
     this._enterScene(i);
   }
 
@@ -198,7 +205,7 @@ export class Tutorial {
     for (const el of [this.black, this.capEl, this.centerEl, this.skipEl]) el.style.display = 'none';
     P.frozen = false;
     P.controls.enabled = true;
-    this.index = 9;
+    this.index = LAST + 1;
     this.log.push({ ev: 'end', total: +this.total.toFixed(3) });
     if (this.onDone) this.onDone();
   }
@@ -248,9 +255,9 @@ export class Tutorial {
   _scenes() {
     if (this._S) return this._S;
     const L4 = 4, y4 = levelY(4);
-    const S = [];
+    const S = {};
     // 0: 黒に「ノーライフ学生会館　午前3時」(裏で 410 へ移って読み込みを済ませる)
-    S[0] = [{ dur: TUT.dur[0], level: 4, black: true, enter: () => { this._place(4, 11.6, 7.7, -1.1, 0.5); this._hideEnemy(); } }];
+    S['0'] = [{ dur: DUR('0'), level: 4, black: true, enter: () => { this._place(4, 11.6, 7.7, -1.1, 0.5); this._hideEnemy(); } }];
     // 1: 410 の室内。消えた灯り(天井)→ 動かないスマホ(ベッドの上)→ 窓の外の闇。ベッド脇からゆっくり
     const K1 = [
       { t: 0.0, x: 11.45, z: 7.78, eye: 1.28, yaw: -1.12, pitch: 0.62 },
@@ -258,13 +265,13 @@ export class Tutorial {
       { t: 4.6, x: 11.4, z: 7.9, eye: 1.3, yaw: -0.56, pitch: -0.8 },
       { t: 8.0, x: 12.2, z: 7.42, eye: 1.36, yaw: -1.48, pitch: -0.03 },
     ];
-    S[1] = [{ dur: TUT.dur[1], level: 4,
+    S['1'] = [{ dur: DUR('1'), level: 4,
       enter: () => { this.props.add(this.phone); this.ambientFloor.intensity = TUT.ambient1; this.player.setFlashlight(false); this._cam(keys(K1, 0), L4); },
       tick: (t) => this._cam(keys(K1, t), L4),
       exit: () => { this.ambientFloor.intensity = this.snap.ambient; this.phone.removeFromParent(); } }];
     // 2: 4F の無人の廊下の奥。管理人は EV ホールの東の角の向こう(廊下から見えない所)に置き、懐中電灯の光だけが奥の壁を横切る。足音(壁越し)
     const AIM2 = [[0, 6.5, 0.05, 19.4], [2.2, 6.0, 0.95, 20.6], [3.8, 6.0, 1.15, 21.7], [5.2, 6.4, 0.7, 22.05], [6.4, 6.0, 1.0, 20.5], [8.5, 7.4, 0.2, 21.4]];
-    S[2] = [{ dur: TUT.dur[2], level: 4,
+    S['2'] = [{ dur: DUR('2'), level: 4,
       enter: () => {
         this._place(4, 6.9, 12.1, Math.PI, 0.02);
         this._enemy(4, 10.4, 21.3, -Math.PI / 2, { light: true, clip: 'walk_oldman' });
@@ -281,7 +288,7 @@ export class Tutorial {
       },
       exit: () => { this._hideEnemy(); this.enemyAudio.setOccluded(false); } }];
     // 3: 3F の EV ホール。カゴを 1F から呼び、階数表示が 1→2→3 と動いてチャイム。扉は開けない(中に誰がいるかは見せない)
-    S[3] = [{ dur: TUT.dur[3], level: 3,
+    S['3'] = [{ dur: DUR('3'), level: 3,
       enter: () => {
         const c = this.elevator.car;
         Object.assign(c, { level: 1, open: 0, state: 'idle', hold: 0, to: null, t: 0, dur: 0, riding: false, pending: [] });
@@ -298,6 +305,16 @@ export class Tutorial {
         if (c.state === 'arrived') c.lead = Math.max(c.lead, 0.5);   // チャイムの後も扉は閉じたまま(場面の終わりまで)
         void y;
       } }];
+    // 3b(P6b): 3F の外階段の踊り場。上りの段 → 下りの段へゆっくり視線を移す(管理人は描かない)。「管理人は階段を使うことはできない」
+    const K3b = [
+      { t: 0.0, ...this._look(5.3, 1.6, 20.62, 3.4, 2.3, 23.6) },
+      { t: 2.2, ...this._look(5.25, 1.6, 20.66, 3.5, 2.0, 23.4) },
+      { t: 5.0, ...this._look(5.15, 1.6, 20.72, 5.2, -0.4, 23.3) },
+      { t: 6.0, ...this._look(5.12, 1.6, 20.74, 5.2, -0.45, 23.3) },
+    ];
+    S['3b'] = [{ dur: DUR('3b'), level: TUT.stair3b.level,
+      enter: () => { this._place(3, 5.3, 20.62, Math.PI, 0); this._hideEnemy(); this.player.setFlashlight(false); this._cam(keys(K3b, 0), 3); this.log.push({ ev: 'stair_landing' }); },
+      tick: (t) => this._cam(keys(K3b, t), 3) }];
     // 4: 4F の廊下で見つかる → 410 へ駆け込み扉を閉める → 覗き穴から廊下(管理人が通り過ぎる)
     const K4 = [
       { t: 0.0, x: 6.9, z: 12.7, eye: 1.62, yaw: Math.PI, pitch: 0.0 },
@@ -309,7 +326,7 @@ export class Tutorial {
       { t: 5.05, x: 8.85, z: 7.27, eye: 1.6, yaw: -Math.PI - 0.9, pitch: -0.02 },
       { t: 5.65, x: 8.62, z: 7.25, eye: 1.6, yaw: Math.PI / 2, pitch: 0.0 },
     ];
-    S[4] = [{ dur: TUT.dur[4], level: 4,
+    S['4'] = [{ dur: DUR('4'), level: 4,
       enter: () => {
         const D = this.door410;
         D.target = D.openAngle; D.angle = D.openAngle; D.speedMul = 1;
@@ -353,7 +370,7 @@ export class Tutorial {
         const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false;
       } }];
     // 5: 410 のクローゼットに隠れる → 折戸が閉まり、隙間から薄暗い部屋
-    S[5] = [{ dur: TUT.dur[5], level: 4,
+    S['5'] = [{ dur: DUR('5'), level: 4,
       enter: () => { this._place(4, 11.34, 7.0, Math.PI, -0.1); this._cam({ x: 11.34, z: 7.0, eye: 1.6, yaw: Math.PI, pitch: -0.1 }, L4); this._hid = false; this._opened = false; this.ambientFloor.intensity = TUT.ambient5; },
       tick: (t) => {
         const R = this.rooms;
@@ -373,7 +390,7 @@ export class Tutorial {
       exit: () => { this.rooms.forceUnhide(); const c = this.rooms.closets.get('410'); c.target = 0; c.open01 = 0; this.rooms._applyCloset(c); this.ambientFloor.intensity = this.snap.ambient; } }];
     // 6: 空室(409)の扉の下の闇が揺らぐ → 6F の部屋(611)の奥のロッカーが内側から軋む(音は「なし」= 動きだけ)→ 自分の懐中電灯が 410 の扉の隙間に光を漏らす(室内から扉)
     const Y = (level) => levelY(level);
-    S[6] = [
+    S['6'] = [
       { dur: 4.6, level: 4, fin: TUT.edgeFade, fout: TUT.cutFade,
         enter: () => {
           this._place(4, 6.35, 10.15, -Math.PI / 2, -0.25);
@@ -404,8 +421,23 @@ export class Tutorial {
         },
         exit: () => { this.leakMat.opacity = 0; if (this.leakEdgeMat) this.leakEdgeMat.opacity = 0; } },
     ];
+    // 6b(P6b): 4F の廊下の北端から南を見る。手前の 410 の扉は開いたまま、奥の 409 の扉は閉まっている(扉はこの場面だけ開け、出る時に戻す)。
+    //  「施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい」
+    const K6b = [
+      { t: 0.0, ...this._look(6.5, 1.6, 5.98, 7.55, 1.15, 9.6) },
+      { t: 7.0, ...this._look(6.45, 1.6, 6.55, 7.6, 1.1, 10.1) },
+    ];
+    S['6b'] = [{ dur: DUR('6b'), level: 4,
+      enter: () => {
+        const D = this.door410;
+        D.target = D.openAngle; D.angle = D.openAngle; D.speedMul = 1; if (D.collision) D.collision.disabled = true;
+        this._place(4, 6.5, 5.98, Math.PI, 0); this._hideEnemy(); this.player.setFlashlight(false); this._cam(keys(K6b, 0), L4);
+        this.log.push({ ev: 'door_open_6b', door: TUT.open6b });
+      },
+      tick: (t) => this._cam(keys(K6b, t), L4),
+      exit: () => { const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false; } }];
     // 7: 410 の机の花瓶が落ちて割れる(room_fall)。遠くで EV のチャイム、近づく足音(廊下を歩く管理人。扉越し)
-    S[7] = [{ dur: TUT.dur[7], level: 4,
+    S['7'] = [{ dur: DUR('7'), level: 4,
       enter: () => {
         this.player.setFlashlight(true); this.player.flashlight.intensity = this.snap.flashI * TUT.flashScale;
         this.vase.position.copy(this.vaseHome); this.vase.rotation.set(0, 0.4, 0); this.vase.visible = true; this.props.add(this.vase);
@@ -447,17 +479,19 @@ export class Tutorial {
       },
       exit: () => { this._hideEnemy(); this.enemyAudio.setOccluded(false); this.vase.removeFromParent(); this.shards.removeFromParent(); } }];
     // 8: 黒 → (暗転の中で世界を開始時の状態へ戻す)→ 410 のベッド脇でフェードイン → 操作一覧
-    S[8] = [{ dur: TUT.dur[8], level: 4, black: true,
+    S['8'] = [{ dur: DUR('8'), level: 4, black: true,
       enter: () => { this._restore(); this.seen = true; },
       tick: (t) => {
         if (t >= 1.0 && !this._shown) { this._shown = true; this.hud.root.style.visibility = ''; this.hud.showControls(this.controlsSec); this.log.push({ ev: 'fade_in' }); }
       },
       exit: () => { this._shown = false; } }];
-    for (let i = 0; i < S.length; i++) {
-      const tot = S[i].reduce((s, x) => s + x.dur, 0);
-      if (Math.abs(tot - TUT.dur[i]) > 1e-6) throw new Error(`tutorial: 場面 ${i} の長さ ${tot} ≠ ${TUT.dur[i]}`);
+    const A = TUT.ids.map((id) => S[id]);
+    for (let i = 0; i < A.length; i++) {
+      if (!A[i]) throw new Error(`tutorial: 場面 ${TUT.ids[i]} が無い`);
+      const tot = A[i].reduce((s, x) => s + x.dur, 0);
+      if (Math.abs(tot - TUT.dur[i]) > 1e-6) throw new Error(`tutorial: 場面 ${TUT.ids[i]} の長さ ${tot} ≠ ${TUT.dur[i]}`);
     }
-    return (this._S = S);
+    return (this._S = A);
   }
 
   // 演出で動かした物を開始時の状態へ(場面 8 の暗転の中・飛ばした時)
@@ -526,7 +560,7 @@ export class Tutorial {
     // 暗転(場面の始めと終わり・カットの境目)
     const fin = sh.fin ?? (this._shot === 0 ? TUT.edgeFade : TUT.cutFade), fout = sh.fout ?? (this._shot === S.length - 1 ? TUT.edgeFade : TUT.cutFade);
     let b;
-    if (this.index === 8) b = this._shotT < 1.0 ? 1 : 1 - smooth((this._shotT - 1.0) / 2.0);
+    if (this.index === LAST) b = this._shotT < 1.0 ? 1 : 1 - smooth((this._shotT - 1.0) / 2.0);
     else if (sh.black) b = 1;
     else b = Math.max(1 - smooth(this._shotT / fin), smooth((this._shotT - (sh.dur - fout)) / fout));
     this.black.style.opacity = b.toFixed(3);
@@ -538,13 +572,13 @@ export class Tutorial {
     else { this.capEl.style.opacity = a.toFixed(3); this.centerEl.style.opacity = '0'; }
     if (this._shotT >= sh.dur - 1e-9) {
       if (this._shot < S.length - 1) { this._nextShot(); return; }
-      if (this.index < 8) this._go(this.index + 1);
-      else { this._exitScene(8); this._finish(); }
+      if (this.index < LAST) this._go(this.index + 1);
+      else { this._exitScene(LAST); this._finish(); }
     }
   }
 
   state() {
-    return { active: this.active, index: this.index, shot: this._shot, t: +this.t.toFixed(3), total: +this.total.toFixed(3), waiting: !!this.waiting, text: this.cap,
+    return { active: this.active, index: this.index, id: TUT.ids[this.index] ?? null, shot: this._shot, t: +this.t.toFixed(3), total: +this.total.toFixed(3), waiting: !!this.waiting, text: this.cap,
       caption: this.index === 0 ? this.centerEl.textContent : this.capEl.textContent, black: +this.black.style.opacity || 0, seen: this.seen };
   }
 }

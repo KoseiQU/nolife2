@@ -1,7 +1,8 @@
 // test_tutorial.js — P6a タイトルと場面を映すチュートリアル(DESIGN §3.8「チュートリアル」の表 0〜8・§7 P6a)の決定的テスト(ブラウザ内)。
 // http://127.0.0.1:8001/index.html?test=tutorial で自動実行。rAF に依存せず window.__N2.pump(dt, n) で進める(階の読み込み待ちの間だけ実時間を待つ)。結果: window.__N2.testResult
 //  0) タイトル: 「NOLIFE」(「2」は付けない。2026-11-02 ユーザー指示)と「クリックで開始」。クリックでチュートリアルが始まり、入力が止まり HUD が隠れる
-//  1) 通し: 場面 0〜8 の順序・各場面の所要時間(表の値 ±0.05 秒)と合計 60〜80 秒・文言が表のとおり(句読点・「、、、」も)・場面ごとの仕込み
+//  1) 通し: 場面 0,1,2,3,3b,4,5,6,6b,7,8 の順序・各場面の所要時間(表の値 ±0.05 秒)と合計 60〜95 秒(P6b)・文言が表のとおり(句読点・「、、、」も)・場面ごとの仕込み
+//     (P6b 3b 3F の外階段の踊り場から段を見る・管理人は映らない / 6b 手前の 410 の扉が開いたまま・奥の 409 は閉まっている・場面 7 では 410 が閉まっている)
 //     (2 光だけ = 管理人の体は壁の向こう・懐中電灯は点灯 / 3 階数表示 1→2→3 とチャイム・扉は開かない / 4 見つかる→扉を閉める→覗き穴→通り過ぎる /
 //      5 クローゼットの中 / 6 扉の下の揺らぎ・ロッカーの軋み・光漏れ / 7 花瓶が割れる音・遠いチャイム・足音)・演出中は AI の時計が止まっている
 //  2) 終わり: 410 のベッド脇・操作が戻る・操作一覧・管理人/扉/EV/帯/クローゼット/ロッカー/覗き穴/懐中電灯/環境光が開始前と同じ・目標「1階の食堂へ」・既読になる
@@ -14,13 +15,19 @@ const EXPECT = [
   'いつもと様子が違う。不気味だ。',
   '管理人があなたを探している！',
   '深夜の館内を歩き回っている。ライトの光と移動する音に耳をすませろ！',
+  '管理人は階段を使うことはできない',
   '見つかったら部屋の中に逃げろ！ドアの隙間から廊下の様子を確認しろ！',
   'クローゼットの中に身を隠すこともできる',
   '管理人は至る所に潜んでいる、、、部屋の中、ロッカーの中にもいるかも？自分の懐中電灯の光には気をつけろ！',
+  '施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい',
   '決して音をたてるな！',
   '',
 ];
-const PLAN = [5.0, 8.0, 8.5, 8.0, 13.0, 7.5, 13.5, 8.0, 3.0];
+// P6b(§3.9 #11): 並びは 0,1,2,3,3b,4,5,6,6b,7,8(添字 0〜10)。合計 87.5 秒(≤95)
+const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '8'];
+const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 3.0];
+const IX = (id) => IDS.indexOf(id);
+const LAST = IDS.length - 1;
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
@@ -93,7 +100,9 @@ export async function run(N) {
   await T('1_full_run', async () => {
     const aiTime0 = N.ai.time;
     const seenCaption = {};
-    const S = { s2: { n: 0, blocked: 0, light: 0, shown: 0 }, s3: { maxOpen: 0, disp: [] }, s4: { peep: false, doorClosedAtPeep: null }, s5: { hidden: false }, s6: { lurk: 0, leak: 0, jig: 0 } };
+    const S = { s2: { n: 0, blocked: 0, light: 0, shown: 0 }, s3: { maxOpen: 0, disp: [] }, s4: { peep: false, doorClosedAtPeep: null }, s5: { hidden: false }, s6: { lurk: 0, leak: 0, jig: 0 },
+      s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 }, s6b: { n: 0, open410: 0, closed409: 0 }, after6b: null };
+    const LZ = N.building.stairs.find((q) => q.id === 'main').geom;
     const bank0 = N.bank.n, steps0 = N.enemyAudio.logCount || 0, ev0 = N.elevator.logCount || 0;
     let scene7Bank = null;
     await advance(90, (st) => {
@@ -106,20 +115,32 @@ export async function run(N) {
         if (N.enemyObj.root.visible) S.s2.shown++;
       }
       if (st.index === 3) { S.s3.maxOpen = Math.max(S.s3.maxOpen, N.elevator.car.open); const f = N.elevator.shown.floor; if (S.s3.disp[S.s3.disp.length - 1] !== f) S.s3.disp.push(f); }
-      if (st.index === 4 && N.peepholeObj.active && !S.s4.peep) { S.s4.peep = true; S.s4.doorClosedAtPeep = N.world.doorById.get('410').angle < 0.02; }
-      if (st.index === 5 && N.rooms.hidden && N.rooms.hidden.phase === 'hidden') S.s5.hidden = true;
-      if (st.index === 6 && st.shot === 0 && N.doorFx.lurkId === '409' && N.doorFx.lurkAmt > 0.99) S.s6.lurk++;
-      if (st.index === 6 && st.shot === 1) S.s6.jig = Math.max(S.s6.jig, N.rooms.bursts.get('611').jiggle);
-      if (st.index === 6 && st.shot === 2) S.s6.leak = Math.max(S.s6.leak, tu.leakMat.opacity);
-      if (st.index === 7 && !scene7Bank) scene7Bank = N.bank.n;
+      if (st.index === IX('3b') && st.t > 0.7) {
+        S.s3b.n++; const p = N.player.pos, f = N.camera.getWorldDirection(new N.THREE.Vector3());
+        if (N.level === 3 && p.x > LZ.landing[0] && p.x < LZ.landing[0] + LZ.landing[2] && p.z > LZ.landing[1] && p.z < LZ.s0) S.s3b.onLanding++;
+        if (f.z > 0.5) S.s3b.lookStairs++;
+        if (N.enemyObj.root.visible && !N.ai.concealed) S.s3b.enemyShown++;
+      }
+      if (st.index === IX('6b') && st.t > 0.3) {
+        S.s6b.n++; const d410 = N.world.doorById.get('410'), d409 = N.world.doorById.get('409');
+        if (N.level === 4 && d410.angle > 1.5) S.s6b.open410++;
+        if (d409.angle < 0.01) S.s6b.closed409++;
+      }
+      if (st.index === IX('7') && S.after6b === null) S.after6b = +N.world.doorById.get('410').angle.toFixed(3);
+      if (st.index === IX('4') && N.peepholeObj.active && !S.s4.peep) { S.s4.peep = true; S.s4.doorClosedAtPeep = N.world.doorById.get('410').angle < 0.02; }
+      if (st.index === IX('5') && N.rooms.hidden && N.rooms.hidden.phase === 'hidden') S.s5.hidden = true;
+      if (st.index === IX('6') && st.shot === 0 && N.doorFx.lurkId === '409' && N.doorFx.lurkAmt > 0.99) S.s6.lurk++;
+      if (st.index === IX('6') && st.shot === 1) S.s6.jig = Math.max(S.s6.jig, N.rooms.bursts.get('611').jiggle);
+      if (st.index === IX('6') && st.shot === 2) S.s6.leak = Math.max(S.s6.leak, tu.leakMat.opacity);
+      if (st.index === IX('7') && !scene7Bank) scene7Bank = N.bank.n;
     }, () => !tu.active);
     const scenes = tu.log.filter((l) => l.ev === 'scene' && l.at !== undefined);
-    const lastRun = scenes.slice(-9);
+    const lastRun = scenes.slice(-IDS.length);
     const order = lastRun.map((l) => l.index);
     const endAt = tu.log.filter((l) => l.ev === 'end').slice(-1)[0];
     const at = [...lastRun.map((l) => l.at), endAt ? endAt.total : NaN];
     const durs = PLAN.map((_, i) => +(at[i + 1] - at[i]).toFixed(3));
-    const total = +(at[9] - at[0]).toFixed(3);
+    const total = +(at[IDS.length] - at[0]).toFixed(3);
     const texts = lastRun.map((l) => l.text);
     const L = (ev) => tu.log.filter((l) => l.ev === ev);
     const bankNew = N.bank.log.filter((l) => l.n > bank0);
@@ -127,14 +148,17 @@ export async function run(N) {
     const stepsNew = N.enemyAudio.log.filter((l) => l.n > steps0 && l.name === 'step');
     const r = {
       order, durs, total, texts,
-      textsMatch: EXPECT.every((t, i) => texts[i] === t), captionsShown: EXPECT.slice(0, 8).every((t, i) => seenCaption[i] === t),
+      textsMatch: EXPECT.length === IDS.length && EXPECT.every((t, i) => texts[i] === t), captionsShown: EXPECT.slice(0, LAST).every((t, i) => seenCaption[i] === t),
+      ids: lastRun.map((l) => l.id), s3b: S.s3b, s6b: S.s6b, after6b: S.after6b,
       s2: S.s2, s3: { displays: S.s3.disp, chime: evNew.some((e) => e.ev === 'sfx' && e.name === 'chime'), maxOpen: +S.s3.maxOpen.toFixed(3) },
       s4: { found: L('found').length, doorClose: L('door_close').length, peep: S.s4.peep, doorClosedAtPeep: S.s4.doorClosedAtPeep, passed: L('passed_lens').length },
       s5: S.s5, s6: { lurkFrames: S.s6.lurk, maxJiggle: +S.s6.jig.toFixed(3), maxLeak: +S.s6.leak.toFixed(2) },
       s7: { vaseBreak: L('vase_break').length, fallSound: bankNew.filter((l) => l.id === 'room_fall').length, chimeSound: bankNew.filter((l) => l.id === 'ev_chime').length, steps: stepsNew.length },
       aiFrozen: N.ai.time === aiTime0,
     };
-    r.pass = same(order, [0, 1, 2, 3, 4, 5, 6, 7, 8]) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 80 && r.textsMatch && r.captionsShown
+    r.pass = same(order, IDS.map((_, i) => i)) && same(r.ids, IDS) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 95 && r.textsMatch && r.captionsShown
+      && S.s3b.n > 10 && S.s3b.onLanding === S.s3b.n && S.s3b.lookStairs === S.s3b.n && S.s3b.enemyShown === 0
+      && S.s6b.n > 10 && S.s6b.open410 === S.s6b.n && S.s6b.closed409 === S.s6b.n && S.after6b === 0
       && S.s2.n > 10 && S.s2.blocked === S.s2.n && S.s2.light === S.s2.n && S.s2.shown === S.s2.n
       && same(S.s3.disp, [1, 2, 3]) && r.s3.chime && S.s3.maxOpen === 0
       && r.s4.found === 1 && r.s4.doorClose === 1 && S.s4.peep && S.s4.doorClosedAtPeep && r.s4.passed === 1
@@ -158,6 +182,7 @@ export async function run(N) {
     await advance(0.5);
     const after3 = tu.state();
     const ignored = tu.log.filter((l) => l.ev === 'skip_ignored').length;
+    for (const an of document.getElementById('tutskip').getAnimations()) an.finish();
     const skipHint = getComputedStyle(document.getElementById('tutskip')).opacity;
     // 片付け: 最後まで流す
     await advance(90, null, () => !tu.active);
@@ -170,8 +195,10 @@ export async function run(N) {
     tu.seen = true;
     const b = snapshot();
     tu.start();
-    const hint = +getComputedStyle(document.getElementById('tutskip')).opacity;
-    await advance(29.5 + 7.0, null, () => !tu.active);   // 場面 4 の 7 秒目(覗き穴・扉は閉じた・EV は 3F)
+    const skipEl = document.getElementById('tutskip');
+    for (const an of skipEl.getAnimations()) an.finish();   // CSS の遷移(実時間 0.6 秒)を終わらせてから読む(前面のページでは遷移の途中の値になる)
+    const hint = +getComputedStyle(skipEl).opacity;
+    await advance(PLAN.slice(0, IX('4')).reduce((a, b) => a + b, 0) + 7.0, null, () => !tu.active);   // 場面 4 の 7 秒目(覗き穴・扉は閉じた・EV は 3F)
     const mid = { ...tu.state(), peep: N.peepholeObj.active, car: N.elevator.car.level };
     window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape', bubbles: true }));
     window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Escape', key: 'Escape', bubbles: true }));
@@ -186,7 +213,7 @@ export async function run(N) {
     const jumped2 = tu.state();
     await advance(5, null, () => !tu.active);
     const e2 = await endState(b);
-    return { pass: hint > 0 && mid.index === 4 && mid.peep && mid.car === 3 && jumped.index === 8 && e.pass && mid2.index === 2 && jumped2.index === 8 && e2.pass,
+    return { pass: hint > 0 && mid.index === IX('4') && mid.peep && mid.car === 3 && jumped.index === LAST && e.pass && mid2.index === 2 && jumped2.index === LAST && e2.pass,
       hint, mid, jumped: jumped.index, end: e, mid2: mid2.index, jumped2: jumped2.index, end2: e2.pass };
   });
 
