@@ -195,6 +195,8 @@ export class Kit {
     const { rate = 0.75, rev = false, from = 0, len, loop, hold = 0, vol = 0.8, to = this.out, cents, jit = 0, jitHz = 7, vib = 0, vibd = 0, hp = 90, lp = 0, drive = 0, rasp = 0, raspF = 2600, raspQ = 0.6, dry = 1, a = 0.012, rel = 0.12 } = o;
     const buf = ttsBuf(this.c, name, rev);
     const srcLen = Math.min(len ?? Infinity, buf.duration - from), dur = loop ? hold : srcLen / rate;
+    // P4e-1: 検査用の記録(this.trace が配列の時だけ。AudioBank が読み込み時の音量合わせで使い、?test=audio が録音プロファイルの数値を確かめる)
+    if (this.trace) this.trace.push({ name, rate, len: len ?? null, srcLen: +srcLen.toFixed(3), bufDur: +buf.duration.toFixed(3), dur: +dur.toFixed(3), loop: loop || null, rasp, jit, drive, lp, hp, dry });
     const s = this.c.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate;
     if (loop) { s.loop = true; s.loopStart = loop[0]; s.loopEnd = loop[1]; }
     if (cents || jit || vib) {

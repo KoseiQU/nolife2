@@ -3,15 +3,16 @@
 //  - 位置音: PannerNode(inverse の距離減衰。基準は管理人の音 ENEMY_AUDIO と同じ)。壁越しのこもりは呼び出し側が cutoff(lowpass)を渡す(既存の遮蔽の仕組み)。
 //  - 環境音(ループ): loop(id) が返す持ち手に目標音量を渡すと、なめらかに寄せる。音量 0 まで下がったら音源を止める(鳴りっぱなしにしない)。
 //  - 記録: 鳴らそうとした場面は AudioContext が止まっていても log / count に残す(?test=audio の「採用場面ごとに再生 API が呼ばれる」の確認用)。
+//  - P4e-1: 声の素材のうち assets/audio/tts/recorded.txt にある ID(録音)は src/audio_voice.js の録音プロファイル(試聴盤の rec_fx。未選択は B)で鳴る。
 //  - 「なし」の場面はここに来ない(呼び出し側で無音にしている。manifest.none)。3 周目・未選択の場面は各モジュールの仮音のまま。
 import { Kit, loadTTS } from './audio_kit.js';
-import { VOICE, voiceLines } from './audio_voice.js';
+import { VOICE, voiceLines, loadRec, recFx, voiceSpan, REC } from './audio_voice.js';
 
 export const AUDIO = {
   // 場面ごとの音量の倍率(wav は正規化済み: 効果音ピーク −6dBFS、大きめ −3、環境音 RMS −26)。目視(耳)で決める値
   gain: {
     pl_step_room: 0.35, pl_closet: 0.6, room_fall: 1.0, ev_chime: 0.9, ev_motor: 1.0,
-    enemy_step_walk: 1.0, enemy_step_run: 1.3, enemy_breath_door: 2.5, enemy_door_smash: 1.0, enemy_hit: 1.0, death: 0.9,
+    enemy_step_walk: 1.0, enemy_step_run: 1.3, enemy_breath_door: 2.5, enemy_breath_close: 1.0, enemy_door_smash: 1.0, enemy_hit: 1.0, death: 0.9,
     story_221_lure: 0.7, pickup_key: 0.6, pickup_paper: 0.6, x105_scream: 1.0, x705_lights_off: 0.9,
     car_engine: 0.8, ending_gate: 0.9, xb1_loop_notice: 0.8,
     amb_corridor: 0.5, amb_outdoor: 0.8, amb_roof: 1.0, amb_b1: 0.9, amb_x105: 0.7,
@@ -31,6 +32,8 @@ export class AudioBank {
     this.manifest = null;
     this.bufs = new Map();      // 場面 ID → AudioBuffer
     this.voiceGain = {};        // 声の場面 → [take ごとの音量合わせの倍率]
+    this.voiceTrace = {};       // P4e-1: 声の場面 → [take ごとの { prof: 素材ごとの聞こえ方(null=仮声/A/B/C), vox: Kit.vox に渡った数値 }](検査用)
+    this.rec = REC;             // P4e-1: 録音の状態(recorded.txt の ID・rec_fx の選択とその出どころ)
     this.voiceNext = {};        // 声の場面 → 次に使う take
     this.loops = new Map();     // 持ち手の名前 → loop の持ち手
     this.log = []; this.count = {}; this.n = 0;
@@ -49,19 +52,28 @@ export class AudioBank {
         this.bufs.set(id, await this.ctx.decodeAudioData(await rr.arrayBuffer()));
       }));
       const vids = Object.keys(this.manifest.voice || {}).filter((id) => VOICE[id]);
+      await loadRec({ manifest: this.manifest });   // P4e-1: recorded.txt の ID は録音プロファイル(選択は sound_choice.json の rec_fx → manifest → B)
       await loadTTS(voiceLines(vids));
-      for (const id of vids) this.voiceGain[id] = await Promise.all(VOICE[id].takes.map((tk) => this._measureVoice(id, tk)));
+      for (const id of vids) {
+        this.voiceTrace[id] = [];
+        this.voiceGain[id] = await Promise.all(VOICE[id].takes.map((tk, i) => this._measureVoice(id, tk, i)));
+      }
       this.ready = true;
     } catch (e) { this.error = String(e && e.message || e); console.warn('audio bank:', this.error); }
     return this;
   }
   // 声の 1 take をオフラインで 1 度描いて、試聴盤と同じ基準の音量に合わせる倍率を出す(録音に差し替えても自動で揃う)
-  async _measureVoice(id, take) {
-    const V = VOICE[id], sr = 22050, oc = new OfflineAudioContext(1, Math.ceil((V.dur + 0.3) * sr), sr);
-    V.fn(new Kit(oc, oc.destination, 0, 7), take);
+  //  P4e-1: 録音は全長を使うので、描く長さは素材から見積もる(voiceSpan)。RMS は尻の無音(ピークの −66dB 未満)を除いて測る
+  async _measureVoice(id, take, i = 0) {
+    const V = VOICE[id], sr = 22050, oc = new OfflineAudioContext(1, Math.ceil((voiceSpan(id, take) + 0.3) * sr), sr);
+    const K = new Kit(oc, oc.destination, 0, 7); K.trace = [];
+    V.fn(K, take);
+    this.voiceTrace[id][i] = { take, prof: take.map((l) => recFx(l)), vox: K.trace };
     const d = (await oc.startRendering()).getChannelData(0);
-    let pk = 0, s2 = 0; for (const v of d) { const a = Math.abs(v); if (a > pk) pk = a; s2 += v * v; }
-    const [p, r] = AUDIO.voiceNorm[V.kind] || AUDIO.voiceNorm.sfx, rms = Math.sqrt(s2 / d.length);
+    let pk = 0; for (const v of d) { const a = Math.abs(v); if (a > pk) pk = a; }
+    let end = d.length; while (end > 1 && Math.abs(d[end - 1]) < pk * 5e-4) end--;
+    let s2 = 0; for (let k = 0; k < end; k++) s2 += d[k] * d[k];
+    const [p, r] = AUDIO.voiceNorm[V.kind] || AUDIO.voiceNorm.sfx, rms = Math.sqrt(s2 / Math.max(1, end));
     return pk < 1e-6 ? 0 : Math.min(db(p) / pk, db(r) / Math.max(rms, 1e-9));
   }
 
@@ -123,11 +135,12 @@ export class AudioBank {
     if (!V || !gains || !this.running) return null;
     const i = (this.voiceNext[id] || 0) % V.takes.length;
     this.voiceNext[id] = i + 1;
+    const last = this.log[this.log.length - 1]; if (last && last.id === id) { last.take = V.takes[i]; last.prof = V.takes[i].map((l) => recFx(l)); }   // P4e-1: 検査用
     const ch = this._chain(id, { ...o, vol: (o.vol ?? 1) * gains[i] });
     const K = new Kit(this.ctx, ch.input, this.ctx.currentTime + 0.03 + (o.delay || 0), (Math.random() * 1e9) | 0);
     V.fn(K, V.takes[i]);
-    setTimeout(() => ch.dispose(), (V.dur + 2.5 + (o.delay || 0)) * 1000);   // 残響の尾まで待って外す
-    return { take: V.takes[i] };
+    setTimeout(() => ch.dispose(), (voiceSpan(id, V.takes[i]) + 1.0 + (o.delay || 0)) * 1000);   // 残響の尾まで待って外す(P4e-1: 録音の全長から見積もる)
+    return { take: V.takes[i], prof: V.takes[i].map((l) => recFx(l)) };
   }
 
   // 環境音・走行音のループの持ち手(name ごとに 1 つ)。h.set(目標音量, { pos }) を毎フレーム呼ぶ → update(dt) で寄せる。0 まで下がると止まる
