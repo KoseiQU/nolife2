@@ -1,5 +1,5 @@
 {
- "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。反映済みの場面は scenes か none か unselected へ。P4d で空)、unselected = 未選択(ゲームでは無音 = なし扱い。P4d 時点は amb_x312_room_loop)",
+ "_note": "tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。反映済みの場面は scenes か none か unselected へ。P4d で空)、unselected = 未選択(ゲームでは無音 = なし扱い。P4d 時点は amb_x312_room_loop)。voice の cand が rec = 録音で復活した場面(P4e-1)。rec_fx = 録音の聞こえ方 A/B/C の写し(正は samples/sound_choice.json の rec_fx)",
  "sr": 22050,
  "totalBytes": 4286452,
  "scenes": {
@@ -287,6 +287,10 @@
   }
  },
  "voice": {
+  "enemy_breath_close": {
+   "cand": "rec",
+   "note": "みいつけたで、ただまだ機械音感がする"
+  },
   "enemy_breath_door": {
    "cand": "b",
    "note": "息遣いではなく、笑い声かセリフにして"
@@ -309,7 +313,6 @@
   "ev_door",
   "ev_car_quiet",
   "enemy_presence",
-  "enemy_breath_close",
   "enemy_handle",
   "room_door_rattle",
   "enemy_door_latch",
@@ -347,5 +350,6 @@
   "space_release"
  ],
  "round3": [],
- "unselected": []
+ "unselected": [],
+ "rec_fx": {}
 }

@@ -24,9 +24,9 @@ export const NORM = {
 };
 const db = (d) => Math.pow(10, d / 20);
 
-import { Kit, rng, hash, loadTTS, prepare, ttsBuf } from '../src/audio_kit.js';
-import { VOICE } from '../src/audio_voice.js';   // P4b: ゲームと共有する声の場面の加工   // P4b: Kit と声の素材の読み込みは src/audio_kit.js へ移した(ゲームの声の加工と共有)
-export { Kit, loadTTS, prepare };
+import { Kit, rng, hash, loadTTS, prepare, ttsBuf, TTS } from '../src/audio_kit.js';
+import { VOICE, REC_GENERIC, recFx, loadRec, voiceSpan, scenesOfLine, REC, REC_FX, REC_FX_DEFAULT, REC_PROFILE } from '../src/audio_voice.js';   // P4b: ゲームと共有する声の場面の加工   // P4b: Kit と声の素材の読み込みは src/audio_kit.js へ移した(ゲームの声の加工と共有)
+export { Kit, loadTTS, prepare, VOICE, REC_GENERIC, recFx, loadRec, scenesOfLine, REC, REC_FX, REC_FX_DEFAULT, REC_PROFILE };
 
 // ================================================================ よく使う形
 function walk(K, n, gap, fn, jit = 0.07, t0 = 0.15) { let t = t0; for (let i = 0; i < n; i++) { fn(t, i, i % 2 ? 0.82 : 1); t += gap * (1 + K.rnd(-jit, jit)); } }
@@ -585,8 +585,8 @@ scene('enemy_breath_door', '管理人', '笑い声・呟き(扉の向こう)', '
     const door = K.filt('peaking', 220, 2, K.muf(650, 1), 6);
     K.vox(1.0, 'mgr_laugh_02', { rate: 0.7, len: 1.6, lp: 900, drive: 1.6, jit: 30, vol: 1, to: door });
   }),
-  PV('b', '「いるのは…わかってるよ」ほか 3 本(声)', 13.5, '扉に口を寄せて、こもった低い声でゆっくり。P4b: メモ「息遣いではなく、笑い声かセリフにして」で、短い笑い「ふふふ…ふふ」と「もうすこし…ちかくに、おいで」を足した 3 本(ゲームでは立ち止まるたびに 1 本ずつ順に)。加工は src/audio_voice.js(仮声)', VOICE.enemy_breath_door.takes.flat(), (K) => {
-    VOICE.enemy_breath_door.takes.forEach((tk, i) => VOICE.enemy_breath_door.fn(new Kit(K.c, K.out, K.t0 + i * 4.5, 101 + i), tk));
+  PV('b', '「いるのは…わかってるよ」ほか 3 本(声)', 16.5, '扉に口を寄せて、こもった低い声でゆっくり。P4b: メモ「息遣いではなく、笑い声かセリフにして」で、短い笑い「ふふふ…ふふ」と「もうすこし…ちかくに、おいで」を足した 3 本(ゲームでは立ち止まるたびに 1 本ずつ順に)。加工は src/audio_voice.js(仮声)', VOICE.enemy_breath_door.takes.flat(), (K) => {
+    VOICE.enemy_breath_door.takes.forEach((tk, i) => VOICE.enemy_breath_door.fn(new Kit(K.c, K.out, K.t0 + i * 5.5, 101 + i), tk));   // P4e-1: 録音は全長を使うので 5.5 秒おき
   }),
   PV('c', '軽いノック→「まだ…おきてるのかい」(声)', 4.5, '指の背で 2 回そっと叩いてから、扉越しに穏やかな声。管理人らしい口調が逆に怖い(仮声)', ['mgr_line_awake_01'], (K) => {
     const door = K.filt('peaking', 220, 2, K.muf(700, 1), 6);
@@ -1067,8 +1067,10 @@ for (const id of Object.keys(ROUND3)) REDONE[id] = 'P4b 3 周目';
 //  演出ごと無くす(動きの削除は P5b-6)ので音はなし扱い。新 312 の 9 場面は未選択のまま(ここに無い = 選ばれたら接続する)
 export const ROUND3_DONE = {
   enemy_step_walk: 'a',
-  pl_flashlight: 'none', door_wood: 'none', enemy_breath_close: 'none', enemy_scream: 'none', enemy_presence: 'none', locker_open_slow: 'none', locker_burst: 'none',
+  pl_flashlight: 'none', door_wood: 'none', enemy_breath_close: 'rec', enemy_scream: 'none', enemy_presence: 'none', locker_open_slow: 'none', locker_burst: 'none',
   room_door_rattle: 'none',
+  // P4e-1(2026-11-02): enemy_breath_close は「なし」のまま(json の pick は none)だが、ユーザーの録音「みぃつけた」(mgr_line_found_01)で復活。
+  //  'rec' = 声の場面として接続(manifest の voice へ。加工は src/audio_voice.js の録音プロファイル)
   // P4d(2026-11-02): 新 312 の 9 場面はすべて「なし」(最終選択では amb_x312_room_loop だけ未選択だったが、その後ユーザーが試聴盤で「なし」を押した)。
   //  'unselected' = 未選択のまま(ゲームでは無音 = なし扱い。選ばれたら接続する)も書き出しと試聴盤が扱える
   x312_clock_tick: 'none', x312_door_open: 'none', x312_door_close: 'none', x312_door_locked: 'none', x312_key_slam: 'none', x312_watcher_lookup: 'none',
@@ -1112,6 +1114,7 @@ export const GAME = {
     amb_corridor: { loop: true, xfade: 2 }, ev_motor: { loop: true, xfade: 1.5 }, amb_x105: { loop: true, xfade: 2 },
     amb_outdoor: { loop: true, xfade: 2 }, amb_roof: { loop: true, xfade: 2 }, amb_b1: { loop: true, xfade: 2 },
     enemy_breath_door: { voice: true }, x105_scream: { voice: true },
+    enemy_breath_close: { voice: true },   // P4e-1: 録音で復活
   },
 };
 for (const sc of S) { if (REDONE[sc.id]) sc.redone = REDONE[sc.id]; if (ROUND2.includes(sc.id)) sc.round = 2; if (ROUND3[sc.id]) { sc.round = 3; sc.r3 = { ...ROUND3[sc.id], ...(ROUND3_DONE[sc.id] ? { done: ROUND3_DONE[sc.id] } : {}) }; } if (ADJUSTED[sc.id]) sc.adjusted = ADJUSTED[sc.id]; if (P4D_DONE[sc.id]) sc.p4d = P4D_DONE[sc.id]; }
@@ -1156,3 +1159,32 @@ export function encodeWav(buf) {
   for (let i = 0; i < n; i++) for (let c = 0; c < ch; c++) { const s = Math.max(-1, Math.min(1, data[c][i])); v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true); o += 2; }
   return ab;
 }
+
+// ================================================================ P4e-1: 録音の聞こえ方(試聴盤の「録音の聞こえ方」)
+// 録音した素材 line を、聞こえ方 f(A 素のまま/B 軽い加工/C 強い加工)で鳴らした 1 本を描いて正規化する(声の場面の空間処理込み)。
+//  scene = その素材を使う声の場面(VOICE。無ければ REC_GENERIC = 空間処理なし)。同じ take の他の素材は今の聞こえ方のまま
+export async function renderRecFx(line, f, sr = SR) {
+  const sid = scenesOfLine(line)[0], V = sid ? VOICE[sid] : null;
+  const take = V ? V.takes.find((tk) => tk.includes(line)) : [line];
+  await loadTTS(take);
+  const P = (l) => (l === line ? f : recFx(l));
+  const len = V ? voiceSpan(sid, take) : (TTS_DUR(line) / 0.7 + 3);
+  const oc = new OfflineAudioContext(1, Math.ceil((len + 0.3) * sr), sr);
+  const K = new Kit(oc, oc.destination, 0, hash(line + ':' + f)); K.trace = [];
+  if (V) V.fn(K, take, P); else REC_GENERIC.fn(K, line, f);
+  const buf = await oc.startRendering();
+  const d = buf.getChannelData(0);
+  let peak = 0; for (const v of d) { if (!Number.isFinite(v)) throw new Error(line + '/' + f + ': NaN'); peak = Math.max(peak, Math.abs(v)); }
+  let end = d.length; while (end > 1 && Math.abs(d[end - 1]) < peak * 5e-4) end--;
+  end = Math.min(d.length, end + Math.round(0.1 * sr));
+  let sum = 0; for (let i = 0; i < end; i++) sum += d[i] * d[i];
+  const rms = Math.sqrt(sum / end), N = NORM[(V && V.kind) || 'sfx'] || NORM.sfx;
+  if (peak < 1e-6) throw new Error(line + '/' + f + ': silent');
+  const g = Math.min(db(N.peakDb) / peak, db(N.rmsDb) / Math.max(rms, 1e-9));
+  const out = new AudioBuffer({ length: end, numberOfChannels: 1, sampleRate: sr }), od = out.getChannelData(0);
+  for (let i = 0; i < end; i++) od[i] = d[i] * g;
+  out.stats = { scene: sid || null, take, vox: K.trace, peakDb: 20 * Math.log10(peak * g), rmsDb: 20 * Math.log10(rms * g) };
+  return out;
+}
+const TTS_DUR = (line) => { const b = TTS.get(line); return b ? b.duration : 3; };
+

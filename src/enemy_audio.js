@@ -1,4 +1,5 @@
 // enemy_audio.js — 管理人の音(P2b のプレースホルダ → P4b で採用した音に接続 → P4c で 3 周目を反映し、合成の仮音を全部外した)。
+//  - P4e-1: 目の前の声(breath = enemy_breath_close)を録音で復活。
 //  - play(名前) は ROUTE で場面へ振り分ける。採用した場面は AudioBank(src/audio_bank.js)の wav／声、「なし」の場面は無音(記録だけ残す)。
 //    ROUTE に無い名前も無音(記録だけ)。対応表は docs/p4b/NOTES.md §2 と docs/p4c/NOTES.md。
 //  - P4a: 常時ループの鼻歌/唸り(hum = enemy_hum_loop_01)は削除(ユーザー所見「ずっと流れているジーという音」の正体)。
@@ -22,7 +23,7 @@ export const ROUTE = {
   latch: null,                     // enemy_door_latch なし
   scream: null,                    // P4c: enemy_scream なし(3 周目。機械音感が強い)
   slam: null,                      // P4c: room_door_rattle なし(扉のガタガタ演出ごと廃止。演出の削除は P5b-6)。クローゼットを開ける時の 'slam' も無音
-  breath: null,                    // P4c: enemy_breath_close なし(3 周目)
+  breath: 'enemy_breath_close',    // P4e-1: 目の前(クローゼットの前で焦らす時)。3 周目は「なし」→ ユーザーの録音「みぃつけた」(mgr_line_found_01)で復活(声)
 };
 
 export const ENEMY_AUDIO = {
@@ -68,11 +69,12 @@ export class EnemyAudio {
     if (this.log.length > 200) this.log.shift();
     if (route === null || !this.bank) return;       // 「なし」の場面
     // 採用した場面(wav / 声)。壁越しは今のこもり(遮蔽の仕組み)を固定の cutoff として渡す
-    const occ = !opts.cutoff;
+    // P4e-1: 目の前の声(breath)は隠れたクローゼットのすぐ前なので、遮蔽のこもり・音量の減衰を掛けない(近さは声の加工に入っている)
+    const occ = !opts.cutoff && route !== ROUTE.breath;
     const o = { pos, vol: volume * (occ ? (1 - this.occluded * (1 - ENEMY_AUDIO.occludedGain)) : 1), ref: opts.ref ?? ENEMY_AUDIO.refDistance, rolloff: ENEMY_AUDIO.rolloff,
       cutoff: opts.cutoff || (this.cutoff && this.cutoff < 17000 ? this.cutoff : 0), dur: opts.dur };
     if (route === ROUTE.step) o.rate = 0.95 + Math.random() * 0.1;   // P4c: 歩きは 1 歩ごとに少しだけ音程を揺らす(P2b の仮音と同じ考え方)
-    if (this.bank.status(route) === 'voice') { if (route === ROUTE.breathDoor) o.cutoff = 0; this.bank.voice(route, o); }   // 扉越しのこもりは声の加工に入っている
+    if (this.bank.status(route) === 'voice') { if (route === ROUTE.breathDoor || route === ROUTE.breath) o.cutoff = 0; this.bank.voice(route, o); }   // 扉越しのこもり・目の前の近さは声の加工に入っている
     else this.bank.play(route, o);
   }
 

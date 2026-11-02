@@ -91,10 +91,11 @@ try {
   const keep = new Set(Object.values(scenes).map((s) => s.file));
   for (const f of fs.readdirSync(OUT)) if (f.endsWith('.wav') && !keep.has(f)) { fs.unlinkSync(path.join(OUT, f)); console.log('removed', f); }
   const manifest = {
-    _note: 'tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。反映済みの場面は scenes か none か unselected へ。P4d で空)、unselected = 未選択(ゲームでは無音 = なし扱い。P4d 時点は amb_x312_room_loop)',
+    _note: 'tools/build_audio.sh が samples/sound_choice.json(試聴盤の選択)から生成。手で直さない。scenes = 採用して wav にした場面、voice = 声の場面(素材 assets/audio/tts＋src/audio_voice.js の加工をゲームが掛ける)、none = 採用なし(ゲーム内で無音)、round3 = 試聴盤 3 周目の選択待ち(ゲームは仮音のまま。反映済みの場面は scenes か none か unselected へ。P4d で空)、unselected = 未選択(ゲームでは無音 = なし扱い。P4d 時点は amb_x312_room_loop)。voice の cand が rec = 録音で復活した場面(P4e-1)。rec_fx = 録音の聞こえ方 A/B/C の写し(正は samples/sound_choice.json の rec_fx)',
     sr: 22050, totalBytes: total, scenes,
     voice: Object.fromEntries(plan.voice.map((v) => [v.id, { cand: v.cand, ...(v.note ? { note: v.note } : {}) }])),
     none: plan.none, round3: plan.round3, unselected: plan.unselected,
+    rec_fx: plan.rec_fx || {},   // P4e-1: 録音の聞こえ方(試聴盤の選択の写し。ゲームは samples/sound_choice.json を先に読み、無い時だけこれを使う)
   };
   fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifest, null, 1) + '\n');
   console.log(`\n${Object.keys(scenes).length} wav ${(total / 1048576).toFixed(2)}MB + 声 ${plan.voice.length} 場面 / なし ${plan.none.length} / 3 周目 ${plan.round3.length} / 未選択 ${plan.unselected.length} → assets/audio/manifest.json`);

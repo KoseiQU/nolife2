@@ -13,11 +13,13 @@ const toB64 = (ab) => { const u = new Uint8Array(ab); let s = ''; for (let i = 0
 async function plan() {
   const doc = await (await fetch('../samples/sound_choice.json', { cache: 'no-store' })).json();
   const ch = doc.choices || doc;
-  const out = { adopted: [], voice: [], none: [], round3: [], unselected: [] };
+  const out = { adopted: [], voice: [], none: [], round3: [], unselected: [], rec_fx: doc.rec_fx && typeof doc.rec_fx === 'object' ? doc.rec_fx : {} };
   for (const sc of SCENES) {
     const e = ch[sc.id] || {}, pick = (e.pick || '').toLowerCase();
     // P4c: 3 周目は A/B/C を選んだら採用。それ以外は反映済み(sound_lib.js の ROUND3_DONE が none)ならなし、まだなら 3 周目の選択待ち
     // P4d: ROUND3_DONE が unselected = 未選択のまま(ゲームでは無音 = なし扱い。manifest の unselected)
+    // P4e-1: ROUND3_DONE が rec = ユーザーの録音で復活した声の場面(manifest の voice。候補は 'rec')
+    if (sc.round === 3 && !['a', 'b', 'c'].includes(pick) && sc.r3.done === 'rec') { out.voice.push({ id: sc.id, cand: 'rec', note: e.note || null }); continue; }
     if (sc.round === 3 && !['a', 'b', 'c'].includes(pick)) { (sc.r3.done === 'none' ? out.none : sc.r3.done === 'unselected' ? out.unselected : out.round3).push(sc.id); continue; }
     if (['a', 'b', 'c'].includes(pick)) {
       const g = GAME.scenes[sc.id] || {};

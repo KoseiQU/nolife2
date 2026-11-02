@@ -68,6 +68,24 @@
   .foot button { font-size: 11.5px; padding: 3px 9px; color: var(--sub); margin: 6px 6px 0 0; }
   .foot textarea { width: 100%; height: 110px; margin-top: 6px; background: #0b0c0e; color: var(--ink); border: 1px solid var(--line); border-radius: 6px; font: 11.5px/1.5 ui-monospace, Menlo, monospace; padding: 8px; display: none; }
   .foot textarea.show { display: block; }
+  /* P4e-1: 録音の聞こえ方 */
+  .rec { max-width: 1320px; margin: 14px auto 0; padding: 0 16px; }
+  .rec h2 { font-size: 13.5px; font-weight: 600; letter-spacing: .1em; color: var(--accent); margin: 8px 0 4px; }
+  .rec h2 small { color: var(--dim); font-weight: 400; letter-spacing: 0; margin-left: 8px; }
+  .rec p.note { color: var(--sub); font-size: 12px; margin: 0 0 6px; }
+  .rec table td { padding: 6px; border-bottom: 1px solid var(--line); vertical-align: middle; background: var(--row); }
+  .rec col.r-name { width: 26%; } .rec col.r-scene { width: 22%; } .rec col.r-fx { width: auto; }
+  .rec .line { color: var(--sub); font-size: 12px; }
+  .rec .scn { font-size: 12px; color: var(--sub); }
+  .rec .scn b { color: var(--ink); font-weight: 600; }
+  .rec .fx { display: flex; gap: 6px; align-items: center; padding: 3px 6px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+  .rec .fx.sel { background: var(--sel); border-color: var(--sel-line); }
+  .rec .fx input { accent-color: var(--accent); margin: 0; }
+  .rec .fx .lb { color: var(--sub); font-size: 12px; cursor: help; }
+  .rec .fx .lb b { color: var(--ink); margin-right: 3px; }
+  .rec .fx.sel .lb { color: var(--ink); }
+  .rec .def { display: inline-block; margin-top: 3px; font-size: 10.5px; color: var(--dim); }
+  .rec .def.on { color: var(--ok); }
   @media (max-width: 860px) {
     table, tbody, tr, td, th { display: block; width: 100%; }
     colgroup { display: none; }
@@ -86,8 +104,12 @@
   <button id="stop" type="button" style="padding:4px 10px;font-size:12px">■ 停止</button>
   <span class="save" id="save">読み込み中…</span>
 </div></div>
-<p class="round2" id="round2"><span>最終選択をゲームに反映しました(P4d)：新しい 312 の場面はすべて「なし」、B1 の標識灯は C を採用して接続。管理人の声の場面は、録音を置くと差し替わります(docs/recording_guide.md)</span></p>
+<p class="round2" id="round2"><span>録音した声をゲームに接続しました(P4e-1)：録音は軽い加工(B)で鳴ります。下の「録音の聞こえ方」で、録音ごとに A 素のまま／B 軽い加工／C 強い加工 を選べます(自動保存・ゲームは再読み込みで反映)。目の前の「みぃつけた」(enemy_breath_close)は録音で復活</span></p>
 <p class="help">▶ で試聴(もう一度押すと止まる)。候補名にマウスを乗せると説明が出ます。右の 5 つから 1 つ押すと選択になり、<b>自動で保存</b>されます(A・B・C=その候補を採用／なし=その場面は無音でよい／作り直し=メモ欄の方向で作り直す)。メモ欄も自動保存です。</p>
+<section class="rec" id="rec" hidden><h2>録音の聞こえ方<small id="recCount"></small></h2>
+  <p class="note">assets/audio/tts/recorded.txt にある録音(tools/import_rec.sh で取り込んだ声)ごとに、ゲームでの聞こえ方を選びます。▶ で試聴、丸を押すと選択になり自動で保存されます。未選択は B。どれを選んでも、場面の空間処理(扉越し・目の前など)は同じで、録音は最後まで切らずに鳴ります。</p>
+  <table><colgroup><col class="r-name"><col class="r-scene"><col class="r-fx"><col class="r-fx"><col class="r-fx"></colgroup><tbody id="recBody"></tbody></table>
+</section>
 <main><table id="tbl">
   <colgroup><col class="c-name"><col class="c-cand"><col class="c-cand"><col class="c-cand"><col class="c-pick"><col class="c-memo"></colgroup>
   <tbody id="body"></tbody>
@@ -97,12 +119,12 @@
   <textarea id="json" readonly></textarea>
 </details></div>
 <script type="module">
-import { SCENES, GROUPS, renderCandidate } from './sound_lib.js';
+import { SCENES, GROUPS, renderCandidate, renderRecFx, loadRec, REC, REC_FX, REC_FX_DEFAULT, REC_PROFILE, VOICE, scenesOfLine, recFx } from './sound_lib.js';
 
 const PICKS = [['A', 'A'], ['B', 'B'], ['C', 'C'], ['none', 'なし'], ['redo', '作り直し']];
 const LS = 'nolife2.sound_choice.v2';
 const DEFAULT_NOTE = '試聴盤の選択。値は A/B/C(採用する候補)、none(採用なし=その場面は無音でよい)、redo(作り直し。note に欲しい方向)。samples/sound.html から自動保存。';
-let doc = { _note: DEFAULT_NOTE, choices: {} };
+let doc = { _note: DEFAULT_NOTE, choices: {}, rec_fx: {} };   // P4e-1: rec_fx = 録音の聞こえ方 { 台詞 ID: 'A' | 'B' | 'C' }
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -113,13 +135,13 @@ const cache = new Map();
 const bufferOf = (c) => { if (!cache.has(c)) cache.set(c, renderCandidate(c)); return cache.get(c); };
 let current = null;
 function stopAll() { if (current) { try { current.src.onended = null; current.src.stop(); } catch (e) { /* */ } if (current.btn) current.btn.classList.remove('on'); current = null; } }
-async function play(c, btn) {
+async function play(c, btn, bufP = null) {
   const was = current && current.btn === btn;
   stopAll();
   if (was) return null;
   const a = ctx();
   if (btn) btn.classList.add('on');
-  const buf = await bufferOf(c);
+  const buf = await (bufP ? bufP() : bufferOf(c));
   const src = a.createBufferSource(); src.buffer = buf; src.connect(a.destination);
   const me = current = { src, btn };
   return new Promise((res) => { src.onended = () => { if (btn) btn.classList.remove('on'); if (current === me) current = null; res(true); }; src.start(); });
@@ -170,7 +192,7 @@ function tidy(id) { const e = doc.choices[id]; if (!e) return; for (const k of O
 // P4c: 3 周目の結果をゲームに反映した場面(s.r3.done)。選択が反映した結果のままなら「反映済み」の札(room_door_rattle は redo のまま = 演出ごと廃止でなし)
 const r3Reflected = (s) => {
   const p = ((doc.choices[s.id] || {}).pick || '').toLowerCase();
-  return !!(s.r3 && s.r3.done) && (s.r3.done === 'none' ? p === 'none' || p === 'redo' : s.r3.done === 'unselected' ? !p : p === s.r3.done);
+  return !!(s.r3 && s.r3.done) && (s.r3.done === 'none' ? p === 'none' || p === 'redo' : s.r3.done === 'unselected' || s.r3.done === 'rec' ? !p || p === 'none' || p === 'redo' : p === s.r3.done);
 };
 // P4d: 3 周目以外でゲームに反映した場面(s.p4d)。選択が反映した結果のままなら「採用済み」の札
 const p4dReflected = (s) => !!s.p4d && ((doc.choices[s.id] || {}).pick || '').toLowerCase() === s.p4d;
@@ -188,7 +210,7 @@ function paint(id) {
   for (const c of tr.querySelectorAll('.cand')) c.classList.toggle('sel', c.dataset.c === e.pick);
   const m = $('.memo', tr); if (document.activeElement !== m) m.value = e.note || '';
   const againLabel = s.round === 3 ? (s.r3.from === 'new' ? '3 周目・新しい場面(312)' : '3 周目・選んでください') : s.round === 2 ? '2 周目・再選択してください' : '作り直し済み・再選択してください';
-  $('.tags', tr).innerHTML = r3Reflected(s) ? `<span class="r3done-tag">${s.r3.done === 'none' ? (s.id === 'room_door_rattle' ? '3 周目・なし(演出ごと廃止)' : '3 周目・なし') : s.r3.done === 'unselected' ? '未選択のまま(ゲームでは無音)' : '3 周目・採用済み(' + s.r3.done.toUpperCase() + ')'}</span>`
+  $('.tags', tr).innerHTML = r3Reflected(s) ? `<span class="r3done-tag">${s.r3.done === 'rec' ? '録音で復活(' + esc(VOICE[s.id] ? VOICE[s.id].takes.flat().join('・') : '') + ')' : s.r3.done === 'none' ? (s.id === 'room_door_rattle' ? '3 周目・なし(演出ごと廃止)' : '3 周目・なし') : s.r3.done === 'unselected' ? '未選択のまま(ゲームでは無音)' : '3 周目・採用済み(' + s.r3.done.toUpperCase() + ')'}</span>`
     : p4dReflected(s) ? `<span class="r3done-tag">採用済み ${s.p4d.toUpperCase()}</span>`
     : s.p4d ? '<span class="again-tag">反映後に変更・書き出しと接続が必要</span>'
     : s.round === 3 && s.r3.done ? '<span class="again-tag">3 周目の反映後に変更・書き出しと接続が必要</span>'
@@ -206,12 +228,68 @@ function paintAll() { for (const s of SCENES) paint(s.id); progress(); }
 $('#onlyOpen').addEventListener('change', (e) => { document.body.classList.toggle('only-open', e.target.checked); try { localStorage.setItem(LS + '.only', e.target.checked ? '1' : ''); } catch (err) { /* */ } });
 $('#stop').addEventListener('click', stopAll);
 
+// ---------------------------------------------------------------- P4e-1: 録音の聞こえ方(recorded.txt の ID ごとに A/B/C。rec_fx[ID] に自動保存。未選択は B)
+const FX_LABEL = { A: '素のまま', B: '軽い加工', C: '強い加工' };
+const FX_DESC = {
+  A: `空間処理だけ(再生速度 ${REC_PROFILE.A.rate}・高域通過 ${REC_PROFILE.A.hp}Hz)。録音の声そのまま`,
+  B: `わずかに低く遅く(再生速度 ${REC_PROFILE.B.rate})＋空間処理。かすれ・揺らぎ・歪みは足さない(既定)`,
+  C: '仮声と同じ加工(低く遅く・かすれ rasp・音程の揺らぎ jit など)＋空間処理。録音は切らない',
+};
+const recBufs = new Map();
+let lines = {};   // 台詞 ID → { scene, text }(docs/lines.md の表)
+async function loadLines() {
+  try {
+    const t = await (await fetch('../docs/lines.md', { cache: 'no-store' })).text();
+    for (const row of t.split('\n')) { const m = /^\|\s*`([a-z0-9_]+)`\s*\|([^|]*)\|([^|]*)\|/.exec(row); if (m) lines[m[1]] = { scene: m[2].replace(/`/g, '').trim(), text: m[3].trim() }; }
+  } catch (e) { /* 台詞表が読めなくても ID だけで並べる */ }
+}
+function recPick(id) { return (doc.rec_fx || {})[id] || null; }
+function paintRec(id) {
+  const tr = document.querySelector(`#recBody tr[data-line="${id}"]`); if (!tr) return;
+  const cur = recPick(id) || REC_FX_DEFAULT;
+  for (const el of tr.querySelectorAll('.fx')) { const on = el.dataset.f === cur; el.classList.toggle('sel', on); $('input', el).checked = on; }
+  const d = $('.def', tr); d.textContent = recPick(id) ? `選択: ${cur} ${FX_LABEL[cur]}` : `未選択(既定 ${REC_FX_DEFAULT} ${FX_LABEL[REC_FX_DEFAULT]})`; d.classList.toggle('on', !!recPick(id));
+}
+function setRecFx(id, f) {
+  if (!REC_FX.includes(f)) return;
+  doc.rec_fx = doc.rec_fx || {}; doc.rec_fx[id] = f;
+  REC.fx[id] = f;   // 同じ素材を使う採用候補(扉の向こう B など)の試聴にも反映
+  cache.clear(); recBufs.clear();
+  paintRec(id); scheduleSave();
+}
+async function buildRec() {
+  await loadRec({ choice: doc.rec_fx || {} });
+  await loadLines();
+  const ids = [...REC.ids];
+  const sec = $('#rec'), tb = $('#recBody');
+  sec.hidden = ids.length === 0;
+  $('#recCount').textContent = `${ids.length} 本`;
+  for (const id of ids) {
+    const sids = scenesOfLine(id), L = lines[id] || {};
+    const scn = sids.length ? sids.map((sid) => `<b>${esc(sid)}</b><br>${esc(VOICE[sid].space || '')}`).join('<br>') : `<b>まだゲームに接続していない</b><br>${esc(L.scene || '')}(空間処理なし)`;
+    const tr = document.createElement('tr'); tr.dataset.line = id;
+    let html = `<td><div class="nm">${esc(L.text || id)}<code>${esc(id)}</code></div><span class="def"></span></td><td class="scn">${scn}</td>`;
+    for (const f of REC_FX) html += `<td><label class="fx" data-f="${f}"><input type="radio" name="rf-${esc(id)}" value="${f}"><button class="pl" type="button" title="試聴">▶</button><span class="lb" title="${esc(f + '. ' + FX_LABEL[f] + '\n' + FX_DESC[f])}"><b>${f}</b>${FX_LABEL[f]}</span></label></td>`;
+    tr.innerHTML = html;
+    for (const el of tr.querySelectorAll('.fx')) {
+      const f = el.dataset.f;
+      $('input', el).addEventListener('change', () => setRecFx(id, f));
+      $('.pl', el).addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); const k = id + '/' + f; play(null, $('.pl', el), () => { if (!recBufs.has(k)) recBufs.set(k, renderRecFx(id, f)); return recBufs.get(k); }); });
+    }
+    tb.appendChild(tr);
+    paintRec(id);
+  }
+}
+
 // ---------------------------------------------------------------- 保存(POST /api/sound_choice。0.5 秒デバウンス)
 function serialize() {
   const choices = {};
   for (const s of SCENES) { const e = doc.choices[s.id]; if (e && (e.pick || e.note)) { const o = {}; if (e.pick) o.pick = e.pick; if (e.note) o.note = e.note; choices[s.id] = o; } }
   for (const [k, e] of Object.entries(doc.choices)) if (!(k in choices) && !SCENES.some((s) => s.id === k)) choices[k] = e;   // 表に無い場面の記録も消さない
-  return { _note: doc._note || DEFAULT_NOTE, choices };
+  const out = { _note: doc._note || DEFAULT_NOTE, choices };
+  const rf = Object.fromEntries(Object.entries(doc.rec_fx || {}).filter(([, v]) => REC_FX.includes(v)));   // P4e-1: 録音の聞こえ方(choices とは別の欄。書き出し tools/build_audio は choices だけを見る)
+  if (Object.keys(rf).length) out.rec_fx = rf;
+  return out;
 }
 const saveEl = $('#save');
 const status = (cls, t) => { saveEl.className = 'save ' + cls; saveEl.textContent = t; };
@@ -252,7 +330,9 @@ function normalize(raw) {
     if (typeof v === 'string') choices[k] = { pick: v.length === 1 ? v.toUpperCase() : v };   // P4a の旧形式 { 場面: 'a' }
     else if (v && typeof v === 'object') { const o = {}; if (v.pick) o.pick = v.pick.length === 1 ? v.pick.toUpperCase() : v.pick; if (v.note) o.note = v.note; choices[k] = o; }
   }
-  return { _note: raw._note || DEFAULT_NOTE, choices };
+  const rec_fx = {};
+  if (raw.rec_fx && typeof raw.rec_fx === 'object') for (const [k, v] of Object.entries(raw.rec_fx)) { const f = String(v || '').toUpperCase(); if (REC_FX.includes(f)) rec_fx[k] = f; }
+  return { _note: raw._note || DEFAULT_NOTE, choices, rec_fx };
 }
 let loadedFrom = '';
 async function load() {
@@ -266,6 +346,7 @@ async function load() {
   loadedFrom = 'empty';
 }
 await load();
+await buildRec();
 try { if (localStorage.getItem(LS + '.only')) { $('#onlyOpen').checked = true; document.body.classList.add('only-open'); } } catch (e) { /* */ }
 paintAll();
 status(loadedFrom === 'file' ? 'ok' : 'busy', loadedFrom === 'file' ? 'sound_choice.json を読み込み済み' : loadedFrom === 'empty' ? 'まだ保存なし' : 'このブラウザの記録から復元');
@@ -283,6 +364,7 @@ $('#file').addEventListener('click', () => {
 // ---------------------------------------------------------------- 検証用(内蔵ブラウザの JS から)
 window.__SB = {
   SCENES, doc: () => JSON.parse(JSON.stringify(doc)), serialize, saveLog, loadedFrom: () => loadedFrom, setPick, setNote,
+  setRecFx, recIds: () => [...REC.ids], recFx, renderRecFx,   // P4e-1
   flush: async () => { clearTimeout(timer); await flush(); },
   // 候補をオフラインで描き、生の AudioContext にも組み、再生の終わり(onended)まで待つ。ids = ['pl_step_corridor/a', ...] で絞れる
   async check({ ids = null, from = 0, to = Infinity, live = true, rate = 1 } = {}) {
