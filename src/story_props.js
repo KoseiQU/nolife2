@@ -1,6 +1,7 @@
 // story_props.js — P5b-1: 物語の小物(すべて実行時の自作メッシュ。ベイクしない＝懐中電灯と共通の環境光で見る)。
 //  鍵(札付き。拾える物は弱い光沢＋細い光の筋がゆっくり瞬く)・メモ・管理室のキーボックス(扉付き・部屋番号の札のフック)・
 //  風除室の鍵スイッチ・410 の隔て板の南京錠・黒い車の開いた扉。文字は架空(部屋番号・「玄関」「車」・手書きのメモ)だけ。
+//  P6b(§3.9 #7): 221 の床のスマートフォン(鳴る間は画面が白く明滅して小さく震える)。
 import * as THREE from 'three';
 
 let ENV = null;
@@ -172,4 +173,46 @@ export function makeCarDoor() {
   }
   for (const o of g.children) { o.castShadow = true; o.receiveShadow = true; }
   return g;
+}
+
+// ---------------------------------------------------------------- P6b #7: 221 の床に落ちたスマートフォン(7 × 14cm)。原点 = 床の接地点。長さ方向 = z
+//  鳴る間: 画面(emissive)が 2Hz で白く明滅・1〜2mm の微振動・画面のまわりに淡い光(加算の板。遠く = 玄関からも見える)。鳴らない間: 暗い画面(0.02)
+export const PHONE = { w: 0.07, l: 0.14, h: 0.008, idle: 0.02, on: 1.8, off: 0.35, hz: 2.0, shake: 0.0015, halo: 0.42 };
+export function makePhone() {
+  const g = new THREE.Group(); g.name = 'Phone221';
+  const body = new THREE.Mesh(new THREE.BoxGeometry(PHONE.w, PHONE.h, PHONE.l), new THREE.MeshStandardMaterial({ color: 0x101114, metalness: 0.3, roughness: 0.3 }));
+  body.position.y = PHONE.h / 2; body.castShadow = true; body.receiveShadow = true;
+  const scr = new THREE.MeshStandardMaterial({ color: 0x050608, roughness: 0.08, metalness: 0.0, emissive: 0xe9f0ff, emissiveIntensity: PHONE.idle });
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(PHONE.w - 0.006, PHONE.l - 0.012).rotateX(-Math.PI / 2), scr);
+  screen.position.y = PHONE.h + 0.0006;
+  // 画面のまわりの淡い光(床と空気に滲む光の代わり。three のライトは足さない)
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const c2 = cv.getContext('2d'); const gr = c2.createRadialGradient(32, 32, 2, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(235,242,255,0.9)'); gr.addColorStop(0.35, 'rgba(220,232,255,0.28)'); gr.addColorStop(1, 'rgba(220,232,255,0)');
+  c2.fillStyle = gr; c2.fillRect(0, 0, 64, 64);
+  const ht = new THREE.CanvasTexture(cv); ht.colorSpace = THREE.SRGBColorSpace;
+  const hm = new THREE.MeshBasicMaterial({ map: ht, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false });
+  const halo = new THREE.Mesh(new THREE.PlaneGeometry(PHONE.halo, PHONE.halo * 1.3).rotateX(-Math.PI / 2), hm);   // 床に落ちる画面の光
+  halo.position.y = 0.002; halo.renderOrder = 3;
+  const glare = new THREE.Sprite(new THREE.SpriteMaterial({ map: ht, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+  glare.scale.set(0.13, 0.13, 1); glare.position.y = PHONE.h + 0.004;   // 画面のにじみ(遠目に光の点として読める)
+  const inner = new THREE.Group(); inner.add(body, screen, glare);
+  g.add(inner, halo);
+  g.userData = { inner, screen: scr, halo, glare, emissive: PHONE.idle };
+  return g;
+}
+// ringing: 鳴っているか。t: 鳴りはじめからの秒
+export function updatePhone(g, ringing, t) {
+  const U = g.userData;
+  let e = PHONE.idle, ho = 0;
+  if (ringing) {
+    const on = Math.sin(t * Math.PI * 2 * PHONE.hz) > -0.2;   // 2Hz の明滅(点いている方を少し長く)
+    e = on ? PHONE.on : PHONE.off;
+    ho = on ? 0.55 : 0.14;
+    U.inner.position.set(Math.sin(t * 157) * PHONE.shake, 0, Math.sin(t * 131 + 1.3) * PHONE.shake);
+    U.inner.rotation.y = Math.sin(t * 97) * 0.012;
+  } else { U.inner.position.set(0, 0, 0); U.inner.rotation.y = 0; }
+  U.screen.emissiveIntensity = e; U.emissive = e;
+  U.halo.material.opacity = ho;
+  U.glare.material.opacity = ho * 1.3;
 }

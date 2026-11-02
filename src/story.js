@@ -28,6 +28,8 @@ export const STORY = {
   //  逃げ切る(追跡が解ける・階を変える)と奥の机に小さな鍵が現れる(sub: null → 'flee' → 'return')
   burst221U: 3.5,
   lureEvery: 11.0,   // P4b: 221 の口実の電話(story_221_lure)が鳴る間隔(部屋に居る間)
+  lureRing: 4.8,     // P6b #7: 1 回鳴っている長さ(story_221_lure の長さ 4.79 秒)。この間スマホの画面が明滅する
+  phoneFromLocker: 0.4,   // P6b #7: スマホ = 221 の奥の窓際のロッカーの東の縁からこれだけ東・ロッカーの手前の縁の線(ベッドとの間の床)
   // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
   introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
@@ -162,6 +164,18 @@ export class Story {
     const bd = this.world.doorById.get('B1DOOR');
     v.position.set(bd.pos[0] - 0.75, levelY('B1') + 1.15, bd.pos[1]); v.visible = false;
     this.group.add(v);
+    // P6b #7: 221 の床のスマートフォン(ベッドの奥の窓側・ロッカー寄りの床。内装の実寸から: ロッカーとベッドの間、ロッカーの手前の縁の線)
+    const r221 = this._room('221');
+    if (r221) {
+      const IT = r221.r.interior.items, lk = IT.find((q) => q.k === 'burstlocker'), bed = IT.find((q) => q.k === 'bed');
+      if (lk && bed) {
+        const ph = this.phone = P.makePhone();
+        const x = Math.min(lk.b[2] + STORY.phoneFromLocker, bed.b[0] - 0.12), z = lk.b[3];
+        ph.position.set(x, levelY(r221.level) + 0.001, z); ph.rotation.y = 0.35;
+        this.phonePos = new THREE.Vector3(x, levelY(r221.level) + 0.02, z);
+        this.group.add(ph);
+      }
+    }
   }
 
   // 見せる物(段・取ったか・階)
@@ -463,6 +477,12 @@ export class Story {
       if (pk.mesh.visible && pk.mesh.userData.glint) P.updateGlint(pk.mesh.userData.glint, this.time);
     }
     this.keybox.visible = this.mode !== 'off' && (lv === 1 || lv === 2 || lv === 'G');
+    if (this.phone) {   // P6b #7: 鳴る間だけ画面が明滅・震える
+      this.phone.visible = this.mode !== 'off' && (lv === 1 || lv === 2 || lv === 3);
+      const L = this._lure, ringing = !!(L && L.ring !== undefined && L.ring < STORY.lureRing);
+      if (L && L.ring !== undefined) L.ring += dt;
+      P.updatePhone(this.phone, ringing, L && L.ring !== undefined ? L.ring : 0);
+    }
     { const piv = this.keybox.userData.pivot, want = this.unlocked.has('KEYBOX') ? -1.9 : 0; piv.rotation.y += (want - piv.rotation.y) * Math.min(1, dt * 5); }
     this.keyswitch.visible = this.mode !== 'off' && (lv === 1 || lv === 'G' || lv === 2);
     this.padlock.visible = this.mode !== 'off' && !this.flags.roofA && typeof lv === 'number' && Math.abs(lv - 4) <= 1;
@@ -548,9 +568,11 @@ export class Story {
     this._lure.t -= dt;
     if (this._lure.t > 0) return;
     this._lure.t = STORY.lureEvery;
+    this._lure.ring = 0;   // P6b #7: 鳴りはじめ(スマホの画面が明滅する)
     const B = this.audio && this.audio.bank;
-    if (B) B.play('story_221_lure', { pos: this.rooms.burstFront ? this.rooms.burstFront('221', 0.4) : null, ref: 2.5 });
-    this.log('lure221');
+    const pos = this.phonePos ? this.phonePos.clone() : (this.rooms.burstFront ? this.rooms.burstFront('221', 0.4) : null);   // P6b #7: 鳴る音はスマホから
+    if (B) B.play('story_221_lure', { pos, ref: 2.5 });
+    this.log('lure221', pos ? { pos: [+pos.x.toFixed(2), +pos.y.toFixed(2), +pos.z.toFixed(2)] } : {});
   }
   _check221(lv, p) {
     if (!this.burst221 && (this.sub === 'memo' || this.sub === null) && lv === 2 && this._roomU('221', p, 2) >= STORY.burst221U) {
@@ -705,6 +727,7 @@ export class Story {
       mode: this.mode, stage: this.stage, sub: this.sub, item: this.item, objective: HUD_TEXT.objective[this.objectiveKey()] || '',
       unlocked: [...this.unlocked].sort(), taken: [...this.taken].sort(), traps: [...this.traps].sort(),
       flags: { roofA: !!this.flags.roofA, entranceOut: !!this.flags.entranceOut }, evDisabled: this.evDisabled,
+      phone: this.phone ? { emissive: +this.phone.userData.emissive.toFixed(2), visible: this.phone.visible, pos: this.phonePos && [+this.phonePos.x.toFixed(2), +this.phonePos.z.toFixed(2)] } : null,   // P6b #7
       level: this.getLevel(), inTransition: !!this.trans, ending: this.ending ? +this.ending.t.toFixed(2) : null, ended: this.ended, siteChased: this.siteChased,
     };
   }

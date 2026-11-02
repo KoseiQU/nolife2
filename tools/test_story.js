@@ -20,6 +20,7 @@
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
 // 13) 目標の文言が段ごとに変わり、章が変わる時だけ強調される(P6b: 3 秒)・持ち物の札
+// 17) P6b #7: 221 の床のスマホ(入ると 3 秒以内に画面が明滅して鳴る・鳴る位置はスマホ 0.3m 以内・玄関から画面へ視線が通る・家具に埋まらない)
 // 16) P6b #6・#8: 目標表示 1.6 倍・半透明の帯・強調 3 秒＋明滅 2 回・持ち物の札も拡大 / 右下の懐中電灯 ON/OFF(文字・色・切替の 1 秒・隠れ中は出さない)
 // 15) P5b-1b → P5b-1c 登場演出: 予兆(扉が揺れる・閉じている間は中が見えない)→ 扉が 1.0〜1.6 秒かけて開く間は管理人が動かず中に見える(視点は管理人へ)→
 //     目が合う → ゆっくり 2 歩で出てくる(見える・遅い)→ 視点が出口へ旋回して操作が戻る(扉の方 ±25°・向きの跳びなし・マウスが続く)→
@@ -818,6 +819,37 @@ export async function run(N) {
       && on1.shown && on1.on && on1.text === '懐中電灯　ON' && amber(on1.color) && on1.pulse && !on2.pulse && on1.op > on2.op
       && off1.shown && !off1.on && off1.text === '懐中電灯　OFF' && grey(off1.color) && !hidingShown && N.hudState().light.shown;
     return { pass, style, em0, em29, em31, off0, on1, on2, off1, hidingShown };
+  });
+
+  // ---------------------------------------------------------------- 17) P6b #7: 221 のスマホ(入ると 3 秒以内に画面が光り鳴る・鳴る位置はスマホ・玄関から画面が見える)
+  await T('17_p6b_221_phone', async () => {
+    S.applyStage(1); quiet(); S.sub = 'memo';
+    await tp(2, 21.65, 21.0, 0);   // 221 の前の廊下
+    N.pump(DT, 30, false);
+    const outside = S.state().phone;
+    const bank0 = N.bank.n;
+    await tp(2, 21.65, 19.6, 0);   // 221 の玄関(戸口の内側)
+    let maxE = 0, firstLitAt = null, minE = 9;
+    for (let i = 0; i < 180; i++) { N.pump(DT, 1, false); const e = S.state().phone.emissive; if (e > 0.5 && firstLitAt === null) firstLitAt = +(i * DT).toFixed(2); maxE = Math.max(maxE, e); if (firstLitAt !== null) minE = Math.min(minE, e); }
+    const ring = N.bank.log.filter((l) => l.n > bank0 && l.id === 'story_221_lure');
+    const ph = S.state().phone, pp = S.phonePos;
+    const ringPos = ring.length ? ring[ring.length - 1].pos : null;
+    const ringDist = ringPos ? +Math.hypot(ringPos[0] - pp.x, ringPos[2] - pp.z).toFixed(3) : null;
+    // 家具に埋まらない(221 の内装の当たり)・玄関(戸口)の目の高さから画面までの視線が通る(建物の面に遮られない)
+    const R = N.building.floors.find((f) => f.level === 2).rooms.find((r) => r.id === '221');
+    const inSolid = R.interior.solids.filter((q) => pp.x + 0.08 > q[0] && pp.x - 0.08 < q[2] && pp.z + 0.08 > q[1] && pp.z - 0.08 < q[3]).length;
+    const eye = new N.THREE.Vector3(21.65, N.player.pos.y + 1.6, 20.2), tgt = pp.clone(); tgt.y += 0.0;
+    const dir = tgt.clone().sub(eye), len = dir.length(); dir.normalize();
+    const rc = new N.THREE.Raycaster(eye, dir, 0.05, len - 0.04);
+    const meshes = []; N.scene.traverseVisible((o) => { if (o.isMesh && !o.isSprite && !o.isSkinnedMesh) { let ph2 = false; for (let q = o; q; q = q.parent) if (q === S.phone) ph2 = true; if (!ph2) meshes.push(o); } });
+    const hits = rc.intersectObjects(meshes, false).map((h) => [h.object.name || h.object.parent && h.object.parent.name, +h.distance.toFixed(2)]);
+    // 対照: 同じ目から 221 の東の壁(浴室の壁の向こう)を狙うと当たる(レイキャストが建物の面を拾えていること)
+    const ctrlT = new N.THREE.Vector3(23.6, eye.y - 0.4, 17.6), cd = ctrlT.clone().sub(eye), cl = cd.length(); cd.normalize();
+    const ctrlHits = new N.THREE.Raycaster(eye, cd, 0.05, cl).intersectObjects(meshes, false).length;
+    // 飛び出し(奥へ進む)の後は鳴らない・暗い画面
+    const pass = outside && outside.emissive <= 0.03 && firstLitAt !== null && firstLitAt <= 3.0 && maxE >= 1.5 && minE <= 0.5 && ring.length >= 1 && ringDist !== null && ringDist <= 0.3
+      && inSolid === 0 && hits.length === 0 && ctrlHits > 0 && ph.visible;
+    return { pass, outside, firstLitAt, maxE, minE, rings: ring.length, ringPos, phone: ph, ringDist, inSolid, sightHits: hits.slice(0, 5), ctrlHits, sightLen: +len.toFixed(2) };
   });
 
   // ---------------------------------------------------------------- 14) 追跡中に外階段で階を変えてもフリーズしない(P5b-1b 差し戻し 1)
