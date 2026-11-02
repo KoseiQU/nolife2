@@ -3,8 +3,9 @@
 //  105_1) 伸びる: 歩いても前の分岐との距離が縮まない期間がある・振り返ると来た道が壁(背後 7m)・伸び終わると近づける
 //  105_2) 分岐と折り返し: F1 の左は施錠・右で R1 へ、F2 の右は施錠・左を抜けると扉が閉まって最初の地点(R0 の入口)へ戻る(継ぎ目なし: 見た目の座標が同じ)・2 回目は左が施錠で右が開く
 //  105_3) 反転: 反転の扉を抜けるとカメラのロールが π に達する・床の高さと当たりは変わらない・A/D が入れ替わる
-//  105_4) 追跡: 管理人が背後に現れて CHASE・壁と天井が歪む・背後から灯りが消える(消えた灯りはすべてプレイヤーの後ろ)・走り続ければ出口 → 105 の扉の前(第5段)
-//  105_5) 止まると捕まる → 105 の扉の前(扉を向く)・次に入ると追跡の区間の前から
+//  105_4) 追跡: R1 の v 72(P6b-A §3.9 #15)で管理人が背後に現れて CHASE・F2 は左が施錠で右が開いている・壁と天井が歪む・背後から灯りが消える(消えた灯りはすべてプレイヤーの後ろ)・
+//         反転の扉を開けて走り続ければ出口 → 105 の扉の前(第5段)
+//  105_5) 止まると捕まる → 105 の扉の前(扉を向く)・次に入ると追跡の区間の前(R1 の始まり)から
 //  312_1) 無限の自室(P5b-4): 312 の中は 410 の複製。窓の扉を開けて 5 部屋(R1〜R5)を抜ける(R2 床の物・R3 白いポスター/止まった時計/閉じたカーテン・R4 乱れた布団/半開きのクローゼット・R5 消灯)。
 //         R5 のベッド脇に管理人が座って見ている(SCRIPTED・追跡しない)・懐中電灯で顔を上げる・奥の扉は開かない・机の 105 の鍵(R5 でだけ拾える)で第4段
 //  312_2) 戻り: 鍵の後は 7 部屋(B1〜B7・鏡像)。各部屋で管理人が出口の扉に近づく(座る → 立つ → 戸口の脇)・襲わない・B7 の玄関の扉 = 312 の扉 → 3F(目標「105号室へ」)
@@ -118,8 +119,10 @@ export async function run(N) {
       walkBackStoppedAt: +stopAt.toFixed(2), finalDistToFork: +(70 - N.player.pos.z).toFixed(2) };
   });
 
+  // P6b-A: 管理人がいると R1 の v 72 で追跡が始まり折り返しは起きない(§3.9 #15)。折り返しの仕組みは管理人なし(?noai と同じ aiControl 偽)で確かめる
   await T('105_2_forks_and_loop', async () => {
-    if (N.level !== 'X105') await enter105();
+    S.aiControl = false;
+    await enter105();
     D105().skip('post');
     await tp('X105', ...W105(0, 66), Math.PI);
     // F1: 左は施錠・右で R1
@@ -142,6 +145,7 @@ export async function run(N) {
     walkTo(...W105(0, 95.1)); face(...W105(0, 96)); const f2L2 = useE();
     walkTo(...W105(2.2, 95.1)); face(...W105(2.2, 96)); const f2R2 = useE(); N.pump(DT, 60, false);
     const door105 = (() => { const d = D105().door('105'); return { locked: true, z: d.z }; })();
+    S.aiControl = true;
     const pass = f1L.toast === '鍵がかかっている' && f1R.hint.includes('開ける') && inR1 === 'R1' && f2R.toast === '鍵がかかっている' && f2L.hint.includes('開ける')
       && !before.loopDone && after.loopDone && jumped && jumped.z > 2.0 && jumped.z < 4.5 && Math.abs(jumped.x - 300) < 0.3 && view && Math.abs(view.delta - 96) < 1e-6
       && f2L2.toast === '鍵がかかっている' && D105().door('F2R').target > 1;
@@ -167,7 +171,11 @@ export async function run(N) {
   });
 
   await T('105_4_chase_escape_exit', async () => {
-    if (N.level !== 'X105' || !D105().state().inverted) return { pass: false, why: 'needs 105_3' };
+    // P6b-A(§3.9 #15): 入り直して、伸びた後の R1 の入口から(追跡は v 72。反転の扉はプレイヤーが開ける)。105_3 の反転(ロール π)を戻してから出る
+    SP.show(null); N.player.invert = false; N.player.object.rotation.z = 0; if (N.player.controls) N.player.controls.pointerSpeed = 1;
+    await enter105();
+    D105().skip('post');
+    await tp('X105', ...W105(1.1, 70.9), Math.PI);
     const t0 = N.ai.time, deaths0 = N.deaths();
     let appearAt = null, chaseAt = null, minDist = 1e9, attacks = 0, maxWarp = 0, offSeen = 0, offAhead = 0, stateSeq = [];
     const each = () => {
@@ -181,25 +189,29 @@ export async function run(N) {
       const lo = D105().lampsOff(); offSeen = Math.max(offSeen, lo.off); if (lo.offZ !== undefined && lo.offZ !== null && lo.offZ > N.player.pos.z) offAhead++;
       return N.level !== 'X105';
     };
-    // 走り続ける: R3 → F3 の右(開いている)→ R4 → 出口
-    const ok = walkPath([W105(2.2, 120), W105(2.2, 137.6), W105(3.3, 139.2), W105(3.3, 141.0), W105(3.3, 166.5)], { run: true, each });
+    // v 72 を越える → 視点固定(2.1 秒・操作できない)が終わるまで待つ → 走り続ける: R1 → F2 の右(開いている)→ R2 → 反転の扉(E)→ R3 → F3 の右 → R4 → 出口
+    walkTo(...W105(1.1, 72.4), { each });
+    const f2 = { leftLocked: D105().door('F2L').locked, rightOpen: D105().door('F2R').target > 1 };
+    for (let i = 0; i < 300 && N.viewLock.active; i++) { N.pump(DT, 1, false); each(); }
+    const ok1 = walkPath([W105(1.1, 93.6), W105(2.2, 95.3), W105(2.2, 97.0), W105(2.2, 109.1)], { run: true, each });
+    face(...W105(2.2, 110)); const inv = useE();
+    const ok = ok1 && walkPath([W105(2.2, 111.0), W105(2.2, 137.6), W105(3.3, 139.2), W105(3.3, 141.0), W105(3.3, 166.5)], { run: true, each });
     waitTrans();
     const b = SP.def('X105').back;
     const at = pos();
     const st = S.state();
-    const pass = appearAt !== null && appearAt >= 121 && chaseAt !== null && stateSeq.includes('CHASE') && attacks === 0 && N.deaths() === deaths0 && minDist > 3
+    const pass = appearAt !== null && appearAt >= 72 && appearAt < 72.6 && f2.leftLocked && f2.rightOpen && inv.hint.includes('開ける') && chaseAt !== null && stateSeq.includes('CHASE') && attacks === 0 && N.deaths() === deaths0 && minDist > 3
       && maxWarp === 1 && offSeen >= 3 && offAhead === 0 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && st.stage === 5 && N.ai.level !== 'X105';
-    return { pass, ran: ok, appearAtZ: appearAt && +appearAt.toFixed(2), chaseAfter_s: chaseAt && +chaseAt.toFixed(2), states: stateSeq, minDist_m: +minDist.toFixed(2), attacks,
+    const di = D105().door('INV');
+    return { pass, ran: ok, f2, invDoor: inv.hint, inv: { angle: +di.angle.toFixed(2), target: di.target, locked: di.locked, col: di.col.disabled, toast: inv.toast }, appearAtZ: appearAt && +appearAt.toFixed(2), chaseAfter_s: chaseAt && +chaseAt.toFixed(2), states: stateSeq, minDist_m: +minDist.toFixed(2), attacks,
       warpMax: maxWarp, lampsOffMax: offSeen, offAheadOfPlayer: offAhead, at, back: { x: b.x, z: b.z }, stage: st.stage, objective: N.hudState().objective, aiLevel: N.ai.level };
   });
 
   await T('105_5_stop_and_die_retry', async () => {
     await enter105();
-    D105().skip('loopDone');
-    const d = D105().door('F2R'); d.target = d.angle = 1.45; d.col.disabled = true; d.pv.rotation.y = -1.45;
-    const di = D105().door('INV'); di.target = di.angle = 1.45; di.col.disabled = true; di.pv.rotation.y = -1.45;
-    await tp('X105', ...W105(2.2, 108.5), Math.PI);
-    walkTo(...W105(2.2, 122.5), { run: true });
+    D105().skip('post');   // P6b-A: 追跡は R1 の v 72 から
+    await tp('X105', ...W105(1.1, 70.9), Math.PI);
+    walkTo(...W105(1.1, 72.6));
     const chased = D105().state().chase;
     // 止まる
     let t = 0, attackAt = null;
@@ -210,13 +222,13 @@ export async function run(N) {
     const at = pos();
     const yawFace = N.player.object.rotation.y;
     const st = S.state();
-    // もう一度入ると追跡の区間の前(R2 の始まり)から
+    // もう一度入ると追跡の区間の前(R1 の始まり。P6b-A)から
     N.doorApi.open('105'); N.pump(DT, 60, false);
     walkTo(8.4, 15.95, { max: 300, tol: 0.1 });
     waitTrans();
     const re = { level: N.level, at: pos(), run: N.level === 'X105' ? D105().state().run : null };
     const pass = chased && died && attackAt !== null && attackAt < 12 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.05 && Math.abs(Math.cos(yawFace - (b.yaw + Math.PI)) - 1) < 1e-3
-      && st.stage === 4 && N.player.object.rotation.z === 0 && re.level === 'X105' && re.run === 'R2';
+      && st.stage === 4 && N.player.object.rotation.z === 0 && re.level === 'X105' && re.run === 'R1';
     return { pass, chased, died, attackAfterStop_s: attackAt && +attackAt.toFixed(2), respawn: at, back: b, stage: st.stage, reenter: re };
   });
 

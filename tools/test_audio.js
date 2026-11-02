@@ -16,7 +16,7 @@
 //  10) まとめ: 採用 25 場面(wav 22＋声 3)すべてが 1 回以上呼ばれ、採用以外の場面(なしの 47 場面を含む)は 1 回も呼ばれていない
 // P4e-1: 目の前の声 enemy_breath_close を録音「みぃつけた」で復活(なし 48 → 47、声 2 → 3、採用 24 → 25)
 //  0b) 録音プロファイル: recorded.txt の ID(録音)は rate が A 1.0/B 0.9(未選択は B)・素材の全長(len で切らない)・rasp/jit/歪みなし、C は全長＋かすれ。録音でない素材(mgr_door_line_02)は仮声の加工のまま
-//  5b) 目の前: 410 のクローゼットに隠れて管理人が前で焦らす → enemy_breath_close が声として鳴る(遮蔽で弱めない)
+//  5b) 目の前: 410 のクローゼットに隠れて管理人が前で焦らす → 焦らしの間は無音、開けると決まった瞬間に enemy_breath_close が声として 1 回鳴る(遮蔽で弱めない。P6b-A §3.9 #2)
 const DT = 1 / 60;
 const ADOPTED = ['pl_step_room', 'amb_corridor', 'pl_closet', 'room_fall', 'ev_chime', 'ev_motor', 'enemy_step_run', 'enemy_breath_door', 'enemy_door_smash', 'enemy_hit',
   'death', 'story_221_lure', 'pickup_key', 'pickup_paper', 'amb_x105', 'x105_scream', 'amb_outdoor', 'amb_roof', 'x705_lights_off', 'amb_b1', 'car_engine', 'ending_gate',
@@ -258,7 +258,8 @@ export async function run(N) {
     return { pass, walkSteps, walkStepsCountedAsRun: walkAsRun, runSteps, breathDoor: breath, breathDoorKind: voiceKind, burst, ...got };
   });
 
-  // 5b) P4e-1: 目の前(enemy_breath_close)。410 のクローゼットに隠れ、管理人が入って前で焦らす → 録音の声が鳴る。必ず入り・開けない(焦らして去る)
+  // 5b) P4e-1: 目の前(enemy_breath_close)。410 のクローゼットに隠れ、管理人が入って前で焦らす。P6b-A(§3.9 #2): 焦らしの間は無音、
+  //  開けると決まった瞬間(hide_roll closet = open)に録音の声が 1 回鳴る。必ず入り・必ず開ける(声の後は襲われて死ぬので流し切る)
   await T('5b_enemy_breath_close_recorded', async () => {
     S.applyStage(2); quiet(); resetKeys();
     N.ai.dormant = false; N.ai.lurkEnabled = false;
@@ -270,26 +271,30 @@ export async function run(N) {
     N.setView(H.out[0], H.out[1], 0, 0); N.pump(DT, 2, false);
     const hid = N.rooms.hide('410'); pumpS(1.5);
     const odds0 = { ...N.ai.hideOdds };
-    N.ai.setHideOdds({ enter: 1, closet: 0 });
+    N.ai.setHideOdds({ enter: 1, closet: 1 });
     N.enemy.place(6.9, 12.5, Math.PI);
     N.ai.knownRoomId = '410'; N.ai.lastKnown = { x: 8.7, z: 7.4, lv: 4 };
     N.ai.setState('PATROL', { force: true, log: true, react: false });
     const c0 = cnt('enemy_breath_close'), ev0 = N.ai.events.length, ea0 = N.enemyAudio.logCount || 0;
-    let tease = false;
-    pumpS(45, () => { if (!tease) tease = N.ai.events.slice(ev0).some((e) => e.ev === 'locker_tease'); return tease && cnt('enemy_breath_close') > c0; });
+    let tease = false, beforeOpen = 0, rolled = false;
+    pumpS(45, () => {
+      if (!tease) tease = N.ai.events.slice(ev0).some((e) => e.ev === 'locker_tease');
+      if (!rolled) { rolled = N.ai.events.slice(ev0).some((e) => e.ev === 'hide_roll' && e.kind === 'closet' && e.result === 'open'); if (!rolled) beforeOpen = cnt('enemy_breath_close') - c0; }
+      return tease && cnt('enemy_breath_close') > c0;
+    });
     const n = cnt('enemy_breath_close') - c0;
     const rec = B.log.filter((l) => l.id === 'enemy_breath_close').pop() || {};
     const ea = N.enemyAudio.log.filter((l) => l.n > ea0 && l.name === 'breath');
-    pumpS(8, () => N.ai.events.slice(ev0).some((e) => e.ev === 'locker_spare'));
+    pumpS(8, () => !!N.deathState());
     const dead = !!N.deathState();
     N.ai.setHideOdds(odds0);
     if (N.rooms.hidden) N.rooms.forceUnhide();
     N.player.frozen = false; N.viewLock.cancel(); N.movie.end();   // クローゼットから出した後の後始末(test_enemy の harness.reset と同じ)
     settleDeath(); quiet(); N.ai.lurkEnabled = true;
-    d.angle = 0; d.target = 0; if (d.collision) d.collision.disabled = false; d.node.rotation.y = 0;
+    d.angle = 0; d.target = 0; if (d.collision) d.collision.disabled = false; if (d.node) d.node.rotation.y = 0;   // P6b-A: 死んで別の階へ戻った後は 4F の扉板が無いことがある
     const profOK = !B.running || (Array.isArray(rec.prof) && rec.take && rec.take[0] === 'mgr_line_found_01' && ['A', 'B', 'C'].includes(rec.prof[0]));
-    const pass = hid && tease && n === 1 && rec.kind === 'voice' && Math.abs(rec.vol - 0.9) < 1e-6 && profOK && ea.length === 1 && ea[0].scene === 'enemy_breath_close' && !ea[0].silent && !dead;
-    return { pass, hidden: hid, tease, breathClose: n, kind: rec.kind, vol: rec.vol, take: rec.take, prof: rec.prof, running: B.running, enemyAudioLog: ea.map((l) => l.scene || 'silent'), dead };
+    const pass = hid && tease && rolled && beforeOpen === 0 && n === 1 && rec.kind === 'voice' && Math.abs(rec.vol - 0.9) < 1e-6 && profOK && ea.length === 1 && ea[0].scene === 'enemy_breath_close' && !ea[0].silent && dead;
+    return { pass, hidden: hid, tease, openRolled: rolled, breathBeforeOpen: beforeOpen, breathClose: n, kind: rec.kind, vol: rec.vol, take: rec.take, prof: rec.prof, running: B.running, enemyAudioLog: ea.map((l) => l.scene || 'silent'), dead };
   });
 
   // 6) 物語: 221 の電話・メモ・鍵
@@ -318,12 +323,12 @@ export async function run(N) {
     const lv = openAndEnter('105');
     pumpS(1.5);
     const amb = cnt('amb_x105') >= 1 && B.playingLoops().some((h) => h.id === 'amb_x105');
-    // 段取りを飛ばして(折り返し後・反転後)、R3 の追跡の始まりの手前から歩く
+    // 段取りを飛ばして(伸びた後)、R1 の追跡の始まり(v 72。P6b-A §3.9 #15)の手前から歩く
     const D = SP.debug('X105');
-    D.skip('loopDone'); D.st.inverted = true;
-    await tp('X105', 302.2, 118.5, Math.PI);
+    D.skip('post');
+    await tp('X105', 301.1, 70.9, Math.PI);
     const s0 = cnt('x105_scream');
-    walkTo(302.2, 123.0, { max: 400 });
+    walkTo(301.1, 73.0, { max: 400 });
     const scream = cnt('x105_scream') - s0;
     const kind = (B.log.filter((l) => l.id === 'x105_scream').pop() || {}).kind;
     quiet(); SP.show(null); S.applyStage(1); N.player.invert = false; N.player.object.rotation.z = 0;
