@@ -16,6 +16,7 @@
 #   5) スキンなしアニメ FBX を読み、骨名(mixamorig:)を照合(違えば ":" 以降で対応付け)、アクション名=ファイル名
 #   6) ハンマー: 右手の掌(握り)に原点、柄(+Y)は小指側→人差し指側、頭(+X)は指先方向。RightHand ボーン空間の
 #      オフセットを meta に記録し、.blend ではボーンの子にする(GLB には入れない)
+#   6b) ハンマーの向きの補正(P5b-5b): 腕の交差をほどき、柄が体の右・前・下へ向くよう肩・肘・前腕・手首のキーを焼き直す
 #   7) テクスチャを縮める(肌 4096・他 2048)→ GLB 書き出し(スキン・形状キー・アクションを NLA から)
 #   8) 検証: 再読込で三角形数・形状キー 2 本・アクション数・各長さ>0 / 重みなし 0 / RightHand / 帽子と髪の追従 /
 #      服の貫通 / GLB のノード階層から計算したハンマー位置が Blender と一致
@@ -312,6 +313,339 @@ def hammer_matrix(arm, grip):
     return Mh, off_m
 
 
+# ハンマーの向きの補正(P5b-5b、2026-11-02 ユーザー指摘「手が交差して崩れている」)。
+#   原因は 2 つ: ①look_idle・walk_standard・walk_hurried・turn_* などで、この大柄な体に移した Mixamo の腕が腹の前で
+#   左右交差している(右の拳が左の拳より左。look_idle は全フレーム)。②手首の向きは Mixamo のままで、前腕が内へ回ると
+#   拳に固定した柄が体の前を横切る(握り→頭 = 小指→人差し指の向きが上・左を向く)。3 段で直す(各フレームにキー):
+#   (a) elbow_max のクリップ(walk_oldman: 手が胸の前に上がったまま)は右肘の曲げを開いて手を腰の高さへ下ろす
+#   (b) 腕の交差をほどく: 上腕を肩まわりに 外転(体の前後軸まわり)＋外旋(上腕の軸まわり)で回し、右の握りを骨盤の正中より
+#       右 r_lat 以上・左の握りを左 l_lat 以上へ(肘が肩より elbow_out 以上外へ張り出すのは罰。補正量・前フレームとの差も罰)
+#   (c) 手首: 右手に「前腕まわりのひねり Δs」と「掌の法線まわりの尺屈 Δu」を足し、柄を体の右・前・下(target)へできるだけ
+#       向ける。ひねり・尺屈は解剖学的な絶対範囲(sup・dev)の中だけ(元のクリップが範囲外ならその値までは許す)
+#         回外 s = 前腕まわりに「中立(肘の曲げ軸から決める親指の向き。肘が伸びていれば親指が前)」から柄までの角(+ = 親指が外へ)
+#         尺屈 u = asin(柄 · 前腕の向き)(+ = 頭が指先側へ垂れる)
+#       罰: 頭の中心が骨盤・胸の正中より右へ head_lat 未満 / 左手の握り(懐中電灯)と柄の線分が left_gap 未満 /
+#           柄が真横へ突き出す(右向き成分 > side_max) / 補正量 / 前フレームの補正との差(ループするクリップは 2 周回す)
+#       ひねりは前腕の骨と手の骨で分ける(twist_forearm = 前腕の受け持ち)。尺屈は手の骨だけ
+#   弱める所(重み 0、元のクリップで決める): attack_* の両手で柄を持つフレーム・手が胸より上のフレーム、
+#   door_open_in の取っ手〜押し開け区間(door_grab、クリップ長の割合。前後 0.08 でなだらかにつなぐ)
+HAMMER_FIX = dict(target=(0.12, 0.60, -0.80), sup=(-15.0, 50.0), side_max=0.45, dev=(-10.0, 40.0), lam=5e-5, lam_t=2e-3,
+                  head_lat=0.06, left_gap=0.15, head_len=0.30, twist_forearm=0.5,
+                  ds=range(-90, 91, 5), du=range(-30, 61, 5),
+                  loop=('walk_standard', 'walk_oldman', 'walk_hurried', 'walk_careful', 'walk_brutal', 'run_intent'),
+                  attack=('attack_downward', 'attack_bash'), door_grab={'door_open_in': (0.25, 0.51)}, two_hand=(0.07, 0.12),
+                  r_lat=0.14, l_lat=0.06, elbow_out=0.16, arm_lam=1e-4,
+                  arm_abd=range(-10, 51, 3), arm_ext=range(-20, 61, 4),
+                  elbow_max={'walk_oldman': 95.0})
+
+
+def _rot_np(axis, ang):
+    """軸 axis(3,)まわりに角 ang(N,) の回転行列 (N,3,3)。"""
+    k = np.asarray(axis, np.float64); k = k / np.linalg.norm(k)
+    K = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+    s, c = np.sin(ang)[:, None, None], np.cos(ang)[:, None, None]
+    return np.eye(3)[None] + s * K[None] + (1 - c) * (K @ K)[None]
+
+
+def hammer_frame_state(arm, hp_r, hp_l):
+    """今のフレームの右腕・柄・左手の状態(ワールド)。hp_r/hp_l は hand_pose の結果(レストの握り)。"""
+    MW = arm.matrix_world; MW3 = MW.to_3x3().normalized(); pb = arm.pose.bones; B = arm.data.bones
+    W = lambda n: MW @ pb[n].head   # noqa: E731
+    Hr, Lr = B[HAND].matrix_local, B['mixamorig:LeftHand'].matrix_local
+    Mh = pb[HAND].matrix
+    H3 = (MW3 @ Mh.to_3x3()).normalized()
+    d = (H3 @ (Hr.to_3x3().inverted() @ hp_r['axis'])).normalized()          # 柄の向き(握り→頭)
+    n = (H3 @ (Hr.to_3x3().inverted() @ hp_r['frame'][2])).normalized()      # 掌の法線(掌側)
+    h = (H3 @ (Hr.to_3x3().inverted() @ hp_r['frame'][1])).normalized()      # 指先の向き
+    grip = MW @ Mh @ (Hr.inverted() @ hp_r['grip'])
+    lgrip = MW @ pb['mixamorig:LeftHand'].matrix @ (Lr.inverted() @ hp_l['grip'])
+    S, E, Wr = W('mixamorig:RightArm'), W('mixamorig:RightForeArm'), W(HAND)
+    f = (Wr - E).normalized(); ua = (E - S).normalized()
+    rl, ll = W('mixamorig:RightUpLeg'), W('mixamorig:LeftUpLeg')
+    U = Vector((0, 0, 1))
+    R = rl - ll; R.z = 0; R.normalize(); F = U.cross(R).normalized()
+    rs, ls = W('mixamorig:RightArm'), W('mixamorig:LeftArm')
+    Rc = rs - ls; Rc.z = 0; Rc.normalize()
+    el = math.degrees(ua.angle(f)) if ua.length > 0 and f.length > 0 else 0.0
+    eb = ua.cross(f)
+    n0b = eb.cross(f).normalized() if eb.length > 1e-4 else F
+    w = min(1.0, max(0.0, (el - 10) / 20))                                    # 肘が伸びていれば「親指が前」が中立
+    n0 = F * (1 - w) + n0b * w; n0 = (n0 - f * n0.dot(f)).normalized()
+    return dict(d=d, n=n, h=h, grip=grip, wrist=Wr, f=f, n0=n0, lgrip=lgrip, R=R, F=F, U=U, Rc=Rc,
+                mid=(rl + ll) / 2, midc=(rs + ls) / 2, chest_z=W('mixamorig:Spine2').z, elbow=el)
+
+
+def _sup_dev(st, d):
+    f, n0 = st['f'], st['n0']
+    dp = d - f * d.dot(f)
+    dp = dp.normalized() if dp.length > 1e-6 else n0
+    s = math.degrees(math.atan2(f.dot(n0.cross(dp)), n0.dot(dp)))
+    u = math.degrees(math.asin(max(-1.0, min(1.0, d.dot(f)))))
+    return s, u
+
+
+def _seg_dist(p, a, b):
+    ab = b - a; t = max(0.0, min(1.0, (p - a).dot(ab) / max(ab.dot(ab), 1e-12)))
+    return (a + ab * t - p).length
+
+
+def hammer_metrics(st, cfg=HAMMER_FIX):
+    d, g = st['d'], st['grip']
+    head = g + d * cfg['head_len']
+    lat = min((head - st['mid']).dot(st['R']), (head - st['midc']).dot(st['Rc']))
+    s, u = _sup_dev(st, d)
+    return dict(head_lat=lat, left_gap=_seg_dist(st['lgrip'], g, head), sup=s, dev=u,
+                d_body=(d.dot(st['R']), d.dot(st['F']), d.z), grip_lat=(g - st['mid']).dot(st['R']))
+
+
+def hammer_fix_weights(arm, act, hp_r, hp_l, cfg=HAMMER_FIX):
+    """補正の重み(0〜1)。元のクリップで決める: 両手で柄を持つ所・attack_* で手が胸より上・door_open_in の取っ手区間は 0。"""
+    f0, f1 = int(act.frame_range[0]), int(act.frame_range[1])
+    frames, wts = list(range(f0, f1 + 1)), []
+    grab = cfg['door_grab'].get(act.name)
+    for fr in frames:
+        set_action(arm, act, fr)
+        st = hammer_frame_state(arm, hp_r, hp_l)
+        m = hammer_metrics(st, cfg)
+        t0_, t1_ = cfg['two_hand']
+        w = 1.0
+        if act.name in cfg['attack']:                                         # 両手で柄を持つ所・手が胸より上は触らない
+            w = min(1.0, max(0.0, (m['left_gap'] - t0_) / (t1_ - t0_)))
+            w *= min(1.0, max(0.0, (st['chest_z'] - 0.05 - st['grip'].z) / 0.20))
+        if grab:
+            x = (fr - f0) / max(1, f1 - f0); a_, b_ = grab
+            w *= min(1.0, max(0.0, abs(x - (a_ + b_) / 2) - (b_ - a_) / 2) / 0.08)
+        wts.append(w)
+    return frames, np.array(wts)
+
+
+def _frame_order(n, loop):
+    return list(range(n)) * (2 if loop else 1)
+
+
+def arm_sep_solve(arm, act, frames, wts, hp_r, hp_l, cfg=HAMMER_FIX):
+    """腕の交差をほどく: 上腕を肩まわりに「外転(体の前後軸まわり)」と「外旋(上腕の軸まわり)」で回し、
+    右の握りを正中より右 r_lat 以上・左の握りを左 l_lat 以上(左右の握りの間を gap 以上)へ。返り値 (N,2,2)=[左右][外転,外旋](度)。"""
+    A = np.array([(a_, b_) for a_ in cfg['arm_abd'] for b_ in cfg['arm_ext']], np.float64)
+    sts = []
+    for fr in frames:
+        set_action(arm, act, fr)
+        sts.append(hammer_frame_state(arm, hp_r, hp_l))
+    pb = arm.pose.bones; MW = arm.matrix_world
+    out = np.zeros((len(frames), 2, 2))
+    for si, side in enumerate(('Left', 'Right')):
+        sgn_side = 1.0 if side == 'Right' else -1.0
+        prev = None
+        geo = []
+        for i, fr in enumerate(frames):
+            set_action(arm, act, fr)
+            S = MW @ pb[f'mixamorig:{side}Arm'].head; E = MW @ pb[f'mixamorig:{side}ForeArm'].head
+            geo.append((np.array(S), np.array(E)))
+        for k, i in enumerate(_frame_order(len(frames), act.name in cfg['loop'])):
+            st = sts[i]; w = wts[i]
+            if w <= 1e-6:
+                out[i, si] = 0; prev = out[i, si]; continue
+            S, E = geo[i]
+            Rv = np.array(st['R']); Fv = np.array(st['F']); mid = np.array(st['mid'])
+            g = np.array(st['grip'] if side == 'Right' else st['lgrip'])
+            ua = (E - S) / np.linalg.norm(E - S)
+            # 外向きが正になる符号(小さく回して握りが外へ動く向き)
+            def lat_after(axis, ang):
+                C = _rot_np(axis, np.array([np.radians(ang)]))[0]
+                return (S + C @ (g - S) - mid) @ Rv * sgn_side
+            s_abd = 1.0 if lat_after(Fv, 3) > lat_after(Fv, -3) else -1.0
+            s_ext = 1.0 if lat_after(ua, 3) > lat_after(ua, -3) else -1.0
+            C = _rot_np(Fv, np.radians(A[:, 0] * s_abd)) @ _rot_np(ua, np.radians(A[:, 1] * s_ext))
+            g2 = S + (C @ (g - S)); e2 = S + (C @ (E - S))
+            lat = ((g2 - mid) @ Rv) * sgn_side
+            elb = ((e2 - S) @ Rv) * sgn_side                                   # 肘が肩より外へ張り出す量
+            need = cfg['r_lat'] if side == 'Right' else cfg['l_lat']
+            cost = cfg['arm_lam'] * (A ** 2).sum(1) + (0 if prev is None else cfg['lam_t'] * ((A - prev) ** 2).sum(1))
+            cost += 300 * np.maximum(0, need - lat) ** 2 + 300 * np.maximum(0, elb - cfg['elbow_out']) ** 2
+            out[i, si] = A[int(np.argmin(cost))] * w * np.array([s_abd, s_ext])
+            prev = out[i, si] * np.array([s_abd, s_ext])
+    return out
+
+
+def arm_sep_apply(arm, act, frames, sol, hp_r, hp_l):
+    """arm_sep_solve の結果を LeftArm・RightArm の回転キーに焼く。"""
+    MW3 = arm.matrix_world.to_3x3().normalized(); MWi = MW3.inverted()
+    pb = arm.pose.bones
+    qs = {'Left': [], 'Right': []}
+    for i, fr in enumerate(frames):
+        set_action(arm, act, fr)
+        st = hammer_frame_state(arm, hp_r, hp_l)
+        for si, side in enumerate(('Left', 'Right')):
+            b = pb[f'mixamorig:{side}Arm']
+            S = arm.matrix_world @ b.head; E = arm.matrix_world @ pb[f'mixamorig:{side}ForeArm'].head
+            ua = (E - S).normalized()
+            abd, ext = sol[i, si]
+            Cw = (Quaternion(st['F'], math.radians(abd)) @ Quaternion(ua, math.radians(ext))).to_matrix()
+            C = MWi @ Cw @ MW3
+            M = b.matrix.to_3x3().normalized(); L = b.rotation_quaternion.to_matrix()
+            qs[side].append((L @ M.inverted() @ C @ M).to_quaternion().normalized())
+    for side in ('Left', 'Right'):
+        _write_rot_keys(act, f'mixamorig:{side}Arm', frames, qs[side])
+
+
+def elbow_open_apply(arm, act, frames, wts, el_max):
+    """右肘の曲げを el_max(度)まで開く(手が胸の前に上がったままのクリップで、腕を下ろしてハンマーを垂らす)。
+    前腕の骨を肘の曲げ軸(上腕 × 前腕)まわりに回す。返り値: 開いた角の最大(度)。"""
+    MW3 = arm.matrix_world.to_3x3().normalized(); MWi = MW3.inverted()
+    pb = arm.pose.bones; b = pb['mixamorig:RightForeArm']
+    qs, mx = [], 0.0
+    for i, fr in enumerate(frames):
+        set_action(arm, act, fr)
+        S = arm.matrix_world @ pb['mixamorig:RightArm'].head; E = arm.matrix_world @ b.head; W = arm.matrix_world @ pb[HAND].head
+        ua, f = (E - S).normalized(), (W - E).normalized()
+        el = math.degrees(ua.angle(f)); k = ua.cross(f)
+        ang = max(0.0, el - el_max) * wts[i]
+        mx = max(mx, ang)
+        C = MWi @ Quaternion(k.normalized() if k.length > 1e-6 else Vector((1, 0, 0)), -math.radians(ang)).to_matrix() @ MW3
+        M = b.matrix.to_3x3().normalized(); L = b.rotation_quaternion.to_matrix()
+        qs.append((L @ M.inverted() @ C @ M).to_quaternion().normalized())
+    _write_rot_keys(act, 'mixamorig:RightForeArm', frames, qs)
+    return round(mx, 1)
+
+
+def _write_rot_keys(act, bn, frames, qs):
+    for i in range(1, len(qs)):                                              # 四元数の符号をそろえる(補間の反転防止)
+        if qs[i].dot(qs[i - 1]) < 0:
+            qs[i].negate()
+    bags = [cb for layer in getattr(act, 'layers', []) for st_ in layer.strips for cb in getattr(st_, 'channelbags', [])]
+    dp = f'pose.bones["{bn}"].rotation_quaternion'
+    bag = next((b for b in bags if any(fc.data_path == dp for fc in b.fcurves)), bags[0])
+    for fc in [fc for fc in bag.fcurves if fc.data_path == dp]:
+        bag.fcurves.remove(fc)
+    for i in range(4):
+        fc = bag.fcurves.new(dp, index=i)
+        fc.group = bag.groups.get(bn) or bag.groups.new(bn)
+        fc.keyframe_points.add(len(frames))
+        co = np.empty(2 * len(frames), np.float32)
+        co[0::2] = frames; co[1::2] = [q[i] for q in qs]
+        fc.keyframe_points.foreach_set('co', co)
+        fc.keyframe_points.foreach_set('interpolation', [2] * len(frames))   # LINEAR
+        fc.update()
+
+
+def hammer_fix_solve(arm, act, hp_r, hp_l, cfg=HAMMER_FIX, frames=None, wts=None):
+    """1 アクションの各フレームの手首の補正 (Δs, Δu)(度)と重み、補正前の指標を返す。"""
+    if frames is None:
+        frames, wts = hammer_fix_weights(arm, act, hp_r, hp_l, cfg)
+    G = np.array([(a_, b_) for a_ in cfg['ds'] for b_ in cfg['du']], np.float64)
+    sts = []
+    for fr in frames:
+        set_action(arm, act, fr)
+        st = hammer_frame_state(arm, hp_r, hp_l)
+        sts.append((st, hammer_metrics(st, cfg)))
+    loop = act.name in cfg['loop']
+    tgt = np.array(cfg['target'], np.float64); tgt /= np.linalg.norm(tgt)
+    sol = [None] * len(frames)
+    prev = None                                                              # 最初のフレームは前との差を問わない
+    order = list(range(len(frames))) * (2 if loop else 1)
+    for k, i in enumerate(order):
+        st, m = sts[i]
+        if wts[i] <= 1e-6:
+            sol[i] = np.zeros(2); prev = sol[i]
+            continue
+        d = np.array(st['d']); g = np.array(st['grip']); wr = np.array(st['wrist'])
+        sgn = 1.0 if st['n'].cross(st['d']).dot(st['h']) > 0 else -1.0       # +Δu で頭が指先側へ
+        Rf = _rot_np(st['f'], np.radians(G[:, 0])); Rn = _rot_np(st['n'], np.radians(G[:, 1] * sgn))
+        C = Rf @ Rn
+        d2 = C @ d; g2 = wr + C @ (g - wr); hd = g2 + d2 * cfg['head_len']
+        Rb = np.array([st['R'], st['F'], st['U']])
+        db = d2 @ Rb.T
+        ang = np.arccos(np.clip(db @ tgt, -1, 1))
+        lat = np.minimum((hd - np.array(st['mid'])) @ np.array(st['R']), (hd - np.array(st['midc'])) @ np.array(st['Rc']))
+        lg = np.array(st['lgrip']); ab = hd - g2
+        t = np.clip(((lg - g2) * ab).sum(1) / np.maximum((ab * ab).sum(1), 1e-12), 0, 1)
+        gap = np.linalg.norm(g2 + ab * t[:, None] - lg, axis=1)
+        fv = np.array(st['f']); n0 = np.array(st['n0'])
+        dp = d2 - np.outer(d2 @ fv, fv); dp /= np.maximum(np.linalg.norm(dp, axis=1, keepdims=True), 1e-9)
+        s2 = np.degrees(np.arctan2(np.cross(n0, dp) @ fv, dp @ n0)); u2 = np.degrees(np.arcsin(np.clip(d2 @ fv, -1, 1)))
+        slo, shi = min(cfg['sup'][0], m['sup']), max(cfg['sup'][1], m['sup'])
+        ulo, uhi = min(cfg['dev'][0], m['dev']), max(cfg['dev'][1], m['dev'])
+        cost = ang ** 2 + cfg['lam'] * (G ** 2).sum(1) + (0 if prev is None else cfg['lam_t'] * ((G - prev) ** 2).sum(1))
+        cost += 200 * np.maximum(0, cfg['head_lat'] - lat) ** 2 + 200 * np.maximum(0, cfg['left_gap'] - gap) ** 2
+        cost += 5 * np.maximum(0, np.abs(db[:, 0]) - cfg['side_max']) ** 2                # 真横へ突き出す向きは避ける
+        cost += 1e3 * (s2 < slo - 1) + 1e3 * (s2 > shi + 1) + 1e3 * (u2 < ulo - 1) + 1e3 * (u2 > uhi + 1)
+        sol[i] = G[int(np.argmin(cost))] * wts[i]
+        prev = sol[i]
+    return frames, np.array(sol), np.array(wts), [m for _, m in sts]
+
+
+def hammer_fix_apply(arm, act, frames, sol, hp_r, hp_l, cfg=HAMMER_FIX):
+    """補正 (Δs, Δu) を RightForeArm・RightHand の回転キーに焼く(各フレームにキー、LINEAR)。"""
+    MW3 = arm.matrix_world.to_3x3().normalized(); MWi = MW3.inverted()
+    pbf, pbh = arm.pose.bones['mixamorig:RightForeArm'], arm.pose.bones[HAND]
+    qf, qh = [], []
+    for fr, (ds, du) in zip(frames, sol):
+        set_action(arm, act, fr)
+        st = hammer_frame_state(arm, hp_r, hp_l)
+        sgn = 1.0 if st['n'].cross(st['d']).dot(st['h']) > 0 else -1.0
+        Cf = MWi @ Quaternion(st['f'], math.radians(ds * cfg['twist_forearm'])).to_matrix() @ MW3
+        C = MWi @ (Quaternion(st['f'], math.radians(ds)) @ Quaternion(st['n'], math.radians(du * sgn))).to_matrix() @ MW3
+        Mf = pbf.matrix.to_3x3().normalized(); Mh = pbh.matrix.to_3x3().normalized()
+        Lf = pbf.rotation_quaternion.to_matrix(); Lh = pbh.rotation_quaternion.to_matrix()
+        qf.append((Lf @ Mf.inverted() @ Cf @ Mf).to_quaternion().normalized())
+        qh.append((Lh @ Mh.inverted() @ Cf.inverted() @ C @ Mh).to_quaternion().normalized())
+    _write_rot_keys(act, 'mixamorig:RightForeArm', frames, qf)
+    _write_rot_keys(act, HAND, frames, qh)
+
+
+def _hand_lats(st):
+    return ((st['grip'] - st['mid']).dot(st['R']), (st['lgrip'] - st['mid']).dot(st['R']))
+
+
+def hammer_fix_all(arm, acts, hp_r, hp_l, cfg=HAMMER_FIX):
+    """全アクションに補正を焼き、クリップごとの補正量と補正前後の指標を返す。"""
+    arm.data.pose_position = 'POSE'
+    report = {}
+    for act in acts:
+        frames, wts = hammer_fix_weights(arm, act, hp_r, hp_l, cfg)
+        before, lat_before = [], []
+        for fr in frames:
+            set_action(arm, act, fr)
+            st = hammer_frame_state(arm, hp_r, hp_l)
+            before.append(hammer_metrics(st, cfg)); lat_before.append(_hand_lats(st))
+        el_open = 0.0
+        if act.name in cfg['elbow_max']:
+            el_open = elbow_open_apply(arm, act, frames, wts, cfg['elbow_max'][act.name])
+        asol = arm_sep_solve(arm, act, frames, wts, hp_r, hp_l, cfg)
+        if np.abs(asol).max() > 0:
+            arm_sep_apply(arm, act, frames, asol, hp_r, hp_l)
+        _, sol, _, _ = hammer_fix_solve(arm, act, hp_r, hp_l, cfg, frames, wts)
+        hammer_fix_apply(arm, act, frames, sol, hp_r, hp_l, cfg)
+        after, lat_after = [], []
+        for fr in frames:
+            set_action(arm, act, fr)
+            st = hammer_frame_state(arm, hp_r, hp_l)
+            after.append(hammer_metrics(st, cfg)); lat_after.append(_hand_lats(st))
+        lb, la = np.array(lat_before), np.array(lat_after)
+        act_w = wts > 0.99
+        def stat(ms, key, sel=None):
+            v = np.array([m[key] for m in ms]); v = v[sel] if sel is not None and sel.any() else v
+            return [round(float(v.min()), 3), round(float(v.max()), 3)]
+        report[act.name] = dict(
+            frames=[frames[0], frames[-1]], weighted=int(act_w.sum()), elbow_open_deg=el_open,
+            r_abd_deg=[round(float(asol[:, 1, 0].min()), 1), round(float(asol[:, 1, 0].max()), 1)],
+            r_ext_deg=[round(float(asol[:, 1, 1].min()), 1), round(float(asol[:, 1, 1].max()), 1)],
+            l_abd_deg=[round(float(asol[:, 0, 0].min()), 1), round(float(asol[:, 0, 0].max()), 1)],
+            l_ext_deg=[round(float(asol[:, 0, 1].min()), 1), round(float(asol[:, 0, 1].max()), 1)],
+            r_grip_lat=[[round(float(lb[:, 0].min()), 3), round(float(lb[:, 0].max()), 3)], [round(float(la[:, 0].min()), 3), round(float(la[:, 0].max()), 3)]],
+            l_grip_lat=[[round(float(lb[:, 1].min()), 3), round(float(lb[:, 1].max()), 3)], [round(float(la[:, 1].min()), 3), round(float(la[:, 1].max()), 3)]],
+            crossed=[int((lb[act_w, 0] <= lb[act_w, 1]).sum()), int((la[act_w, 0] <= la[act_w, 1]).sum())],
+            dsup_deg=[round(float(sol[:, 0].min()), 1), round(float(sol[:, 0].mean()), 1), round(float(sol[:, 0].max()), 1)],
+            ddev_deg=[round(float(sol[:, 1].min()), 1), round(float(sol[:, 1].mean()), 1), round(float(sol[:, 1].max()), 1)],
+            head_lat_before=stat(before, 'head_lat', act_w), head_lat_after=stat(after, 'head_lat', act_w),
+            left_gap_before=stat(before, 'left_gap', act_w), left_gap_after=stat(after, 'left_gap', act_w),
+            sup_after=stat(after, 'sup', act_w), dev_after=stat(after, 'dev', act_w),
+            d_up_after=[round(float(min(m['d_body'][2] for m in after)), 2), round(float(max(m['d_body'][2] for m in after)), 2)])
+        log(f'hammer_fix {act.name}: {report[act.name]}')
+    arm.animation_data.action = None
+    return report
+
+
 def main():
     assert ARGS['rigged'], '--rigged <Mixamo のスキン付き FBX> を指定'
     for o in list(bpy.data.objects):
@@ -476,6 +810,15 @@ def main():
     hands = {sd: hand_pose(arm, sd, HAND_POSE[sd]) for sd in ('Right', 'Left')}
     for sd, hp in hands.items():
         log(f'{sd}: 角度 {hp["angles"]} / 軸からの距離 cm {hp["radius"]} / 隣の指との最短 cm {hp["gaps"]}')
+    # 6b) ハンマーの向きの補正(P5b-5b): 腕の交差をほどき、柄を体の右・前・下へ(肩・肘・前腕・手首の回転キーを焼き直す)
+    hfix = hammer_fix_all(arm, acts, hands['Right'], hands['Left'])
+    arm.data.pose_position = 'REST'; arm.animation_data.action = None; bpy.context.view_layer.update()
+    hl = {k: v['head_lat_after'][0] for k, v in hfix.items()}
+    rec('ハンマー: 頭の中心が正中(骨盤・胸)より右 m(補正の重み 1 のフレームの最小)', min(hl.values()) >= 0.03, hl, '≥0.03')
+    cr = {k: v['crossed'][1] for k, v in hfix.items()}
+    rec('左右の手が交差しない(補正の重み 1 のフレームで右の握りが左の握りより左にある数)', sum(cr.values()) == 0, cr, '0')
+    lg = {k: v['left_gap_after'][0] for k, v in hfix.items()}
+    rec('ハンマー: 柄と左手(懐中電灯)の握りの最短距離 m(同上の最小)', min(lg.values()) >= 0.12, lg, '≥0.12')
     hammer = None
     MW = arm.matrix_world
     if ARGS['hammer'] and os.path.exists(P(ARGS['hammer'])):
@@ -568,7 +911,7 @@ def main():
     rep = P(ARGS['report']) if ARGS['report'] else os.path.splitext(out)[0] + '_report.json'
     os.makedirs(os.path.dirname(rep), exist_ok=True)
     json.dump(dict(rigged=os.path.basename(ARGS['rigged']), out=os.path.basename(out), mb=round(mb, 2), keys=keys,
-                   results=results), open(rep, 'w'), indent=1, ensure_ascii=False)
+                   results=results, hammer_fix=hfix), open(rep, 'w'), indent=1, ensure_ascii=False, default=float)
     ng = [r for r in results if not r['ok']]
     log(f'merge: {len(results) - len(ng)}/{len(results)} 通過 → {out} ({mb:.1f} MB)')
     sys.exit(1 if ng else 0)
