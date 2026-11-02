@@ -2,12 +2,18 @@
 // rAF に依存せず window.__N2.pump(dt, n) で本物のループと同じ順に進める。キーは keydown/keyup をペアで送る。
 // 結果: window.__N2.testResult と画面左上の <pre>。?test=enemy&fps=1 で 1080p の fps 実測も行う(タブが前面にあること)。
 
+import { HIDE_ODDS, HIDE_FORGET, hideOddsFrom } from '../src/enemy_ai.js';
+
 const DT = 1 / 60;
 // 消灯時の黒つぶれ判定(画面中央 50% 領域の平均輝度、表示値 0..1)。P2b 時点: 410 室内 0.007 / 廊下 0.16
 const DARK_MIN = { room: 0.035, corridor: 0.12 };
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
+  // P5b-6: 起動時の逃げ込みの確率(URL の ?pEnter/?pCloset の反映を 25 番で見る)。以後のテストは W.reset で 1/1(従来の「必ず入る・必ず開ける」)に固定し、
+  //  確率のテスト(25〜33)は自分で値と乱数を決める
+  const ODDS0 = { ...N.ai.hideOdds };
+  N.ai._rand0 = N.ai._rand;
   const pre = document.createElement('pre');
   pre.style.cssText = 'position:fixed;left:8px;top:8px;z-index:9;color:#9fe39f;background:rgba(0,0,0,.75);font:11px/1.35 monospace;padding:8px;max-width:46vw;max-height:94vh;overflow:auto;white-space:pre-wrap;';
   document.body.appendChild(pre);
@@ -697,6 +703,272 @@ export async function run(N) {
       autoShownUnderTest: autoShown, cards: first.count, titles: N.tutorial.cards.map((c) => c.title), afterEsc: second.index, afterClick: third.index, closed: !end.active };
   });
 
+  // ------------------------------------------------------------ P5b-6: 逃げ込みの確率(DESIGN §3.4.1)
+  const room410 = N.building.floors.find((f) => f.level === 4).rooms.find((r) => r.id === '410');
+  const H410 = room410.interior.hide;
+  const evOf = (ev0) => N.ai.events.slice(ev0);
+  const rolls = (ev0) => evOf(ev0).filter((e) => e.ev === 'hide_roll').map((e) => ({ kind: e.kind, p: e.p, r: e.r, result: e.result }));
+  // 乱数を差し替える: v を返す。switchTo = { after: 'enter', v } なら enter の判定の後で値を変える(扉前と開ける判定は別に引く)
+  const fixRand = (v, switchTo = null) => {
+    const s = { v };
+    N.ai._rand = () => {
+      if (switchTo && !s.switched && N.ai.events.some((e) => e.ev === 'hide_roll' && e.kind === switchTo.after && e.t >= s.t0)) { s.v = switchTo.v; s.switched = true; }
+      return s.v;
+    };
+    s.t0 = N.ai.time;
+    return s;
+  };
+  // 410 に逃げ込んだ状況を作る: 扉は閉める(open なら開けたまま)、hide ならクローゼットの中。管理人は廊下の南 5m で「410 にいる」と知っている
+  const setupHide = ({ hide = false, open = false } = {}) => {
+    W.reset(); N.ai.lurkEnabled = false;
+    if (open) { N.doorApi.open('410'); N.pump(DT, 60, false); }
+    N.setFlashlight(false);
+    if (hide) {
+      N.setView(H410.out[0], H410.out[1], 0, 0); N.pump(DT, 2, false);
+      N.rooms.hide('410');
+      for (let i = 0; i < 90; i++) N.pump(DT, 1, false);
+    } else {
+      N.setView(8.75, 7.3, Math.PI / 2, 0); N.pump(DT, 2, false);
+    }
+    N.enemy.place(6.9, 12.5, Math.PI);
+    N.ai.knownRoomId = '410';
+    N.ai.lastKnown = { x: 8.7, z: 7.4, lv: 4 };
+    N.ai.setState(hide ? 'PATROL' : 'ALERT', { force: true, log: true, react: false });   // 隠れていれば update が LOCKER へ
+    return N.ai.events.length;
+  };
+  // 進める。stop(evs) が真になるか死んで 0.5 秒で止める。扉の揺れ(閉じたまま扉板が動いた最大角)と死亡時刻を記録
+  const runHide = (ev0, maxSec, stop = null) => {
+    let t = 0, deadAt = null, rattleMax = 0, doorMax = 0;
+    const d = W.door410();
+    for (let i = 0; i < Math.round(maxSec / DT); i++) {
+      N.pump(DT, 1, false); t += DT;
+      rattleMax = Math.max(rattleMax, d.rattle || 0);   // P5b-6: 扉は揺らさない(door.rattle は常に 0)
+      doorMax = Math.max(doorMax, d.angle);
+      if (deadAt === null && N.deathState()) deadAt = t;
+      if (deadAt !== null && t - deadAt > 0.5) break;
+      if (stop && stop(evOf(ev0))) break;
+    }
+    return { t, deadAt, rattleMax, doorMax, evs: evOf(ev0).map((e) => e.ev) };
+  };
+  const tline = (ev0, keep) => evOf(ev0).filter((e) => keep.includes(e.ev)).map((e) => `${e.t.toFixed(1)} ${e.ev}${e.kind ? ':' + e.kind + '=' + e.result : ''}${e.to ? ':' + e.to : ''}`);
+  const KEEP = ['hide_roll', 'hide_stand', 'hide_forget', 'hide_left', 'hide_grace_end', 'door_open_in', 'entered', 'locker_start', 'locker_tease', 'locker_spare', 'locker_open', 'attack_start', 'hit', 'door_closed', 'seen', 'scope_stare', 'scope_knob', 'door_opened'];
+
+  // 25) 定数と URL の上書き: 起動時の値 = ?pEnter/?pCloset(無ければ HIDE_ODDS = 0.7/0.5)。数でない値は既定、範囲外は 0..1。開ける確率 = closet/enter
+  await T('25_hide_odds_params', () => {
+    const want = hideOddsFrom(location.search);
+    const near = (a, b) => Math.abs(a - b) < 1e-9;
+    const startOk = near(ODDS0.enter, want.enter) && near(ODDS0.closet, want.closet) && near(N.hideOdds.start.enter, want.enter) && near(N.hideOdds.start.closet, want.closet);
+    const p1 = hideOddsFrom('?pEnter=0.3&pCloset=0.2'), p2 = hideOddsFrom('?pEnter=2&pCloset=-1'), p3 = hideOddsFrom('?pEnter=abc&pCloset='), p4 = hideOddsFrom('?pCloset=0.25');
+    N.ai.setHideOdds({ ...HIDE_ODDS });
+    const def = N.hideOdds, st = N.ai.stats().hideOdds;
+    const pass = startOk && HIDE_ODDS.enter === 0.7 && HIDE_ODDS.closet === 0.5
+      && near(p1.enter, 0.3) && near(p1.closet, 0.2) && p2.enter === 1 && p2.closet === 0 && p3.enter === 0.7 && p3.closet === 0.5 && p4.enter === 0.7 && p4.closet === 0.25
+      && Math.abs(def.open - 0.5 / 0.7) < 0.001 && st && st.enter === 0.7 && st.closet === 0.5;
+    return { pass, url: location.search, startOdds: ODDS0, fromUrl: want, HIDE_ODDS, parsed: { p1, p2, p3, p4 }, openOdds: def.open, statsHideOdds: st, grace_s: HIDE_FORGET.grace };
+  });
+
+  // 26) 扉を閉めるだけ・入らない(30% 側): 扉の前で 1 回引いて外れ → 足音を止めて 1.5〜2.5 秒立ち止まり、無言で立ち去る(扉は揺らさない)・部屋を忘れる・猶予
+  await T('26_hide_door_refuse', () => {
+    const ev0 = setupHide();
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.95);
+    const a0 = N.enemyAudio.log.length;
+    const r = runHide(ev0, 40, (evs) => evs.some((e) => e.ev === 'hide_forget'));
+    const stand = evOf(ev0).find((e) => e.ev === 'hide_stand'), fg = evOf(ev0).find((e) => e.ev === 'hide_forget');
+    const standSec = stand && fg ? +(fg.t - stand.t).toFixed(2) : null;
+    const rattleSounds = N.enemyAudio.log.slice(a0).filter((l) => l.name === 'rattle').length;
+    const atForget = { state: N.ai.state, known: N.ai.knownRoomId, grace: N.ai.stats().grace };
+    let away = 0; for (let i = 0; i < Math.round(8 / DT); i++) { N.pump(DT, 1, false); away = Math.hypot(N.enemyObj.pos.x - 7.8, N.enemyObj.pos.z - 7.25); }
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const pass = rl.length === 1 && rl[0].kind === 'enter' && rl[0].p === 0.7 && rl[0].result === 'refuse' && r.evs.includes('hide_stand') && standSec >= 1.45 && standSec <= 2.6
+      && r.rattleMax === 0 && rattleSounds === 0
+      && !r.evs.includes('door_open_in') && r.doorMax < 0.01 && atForget.state === 'PATROL' && atForget.known === null && atForget.grace && atForget.grace.room === '410'
+      && r.deadAt === null && !N.deathState() && away > 3.0;
+    return { pass, rolls: rl, standBeforeLeaving_s: standSec, doorRattleMax: r.rattleMax, rattleSounds, doorMaxAngle: +r.doorMax.toFixed(3), atForget, enemyFromDoorAfter8s_m: +away.toFixed(2), timeline: tline(ev0, KEEP) };
+  });
+
+  // 27) 猶予: 忘れた部屋は猶予の間、光漏れ・物音で再発見しない → 猶予が切れたら通常どおり(光漏れで知る)。扉を開けた・部屋を出たら猶予は即終わる
+  await T('27_hide_grace', () => {
+    const ev0 = setupHide();
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.95);
+    runHide(ev0, 40, (evs) => evs.some((e) => e.ev === 'hide_forget'));
+    N.ai._rand = N.ai._rand0;
+    const forgetAt = N.ai.time;
+    // 猶予の間: 管理人を扉の前 1.5m に戻し(巡回)、室内で点灯・物音(扉の聴覚半径の音・落ちる物)
+    N.enemy.place(6.9, 8.6, Math.PI); N.ai.setState('PATROL', { force: true });
+    N.setFlashlight(true);
+    N.ai.noise(8.75, 7.3, 9.0);
+    const fell = N.ai.noiseRoom('410', 8.75, 7.3, 4);
+    let learnedIn = null, alertIn = false;
+    while (N.ai.time - forgetAt < HIDE_FORGET.grace - 0.3) {
+      N.pump(DT, 1, false);
+      if (N.ai.knownRoomId) learnedIn = learnedIn || +(N.ai.time - forgetAt).toFixed(2);
+      if (N.ai.state === 'ALERT') alertIn = true;
+      if (N.enemyObj.pos.z > 10.5) { N.enemy.place(6.9, 8.6, Math.PI); }   // 巡回で離れたら戻す(6m 以内に置き続ける)
+    }
+    const graceStill = !!N.ai.stats().grace;
+    // 猶予が切れる → 光漏れで知る
+    let endWhy = null, learnedAfter = null;
+    for (let i = 0; i < 120; i++) {
+      N.pump(DT, 1, false);
+      if (N.enemyObj.pos.z > 10.5) N.enemy.place(6.9, 8.6, Math.PI);
+      const ge = evOf(ev0).find((e) => e.ev === 'hide_grace_end'); if (ge) endWhy = ge.why;
+      if (N.ai.knownRoomId) { learnedAfter = (evOf(ev0).filter((e) => e.ev === 'room_known').pop() || {}).why; break; }
+    }
+    N.setFlashlight(false);
+    // 扉を開けたら即終わる / 部屋を出たら即終わる
+    N.ai.setState('SCRIPTED', { force: true });
+    N.ai._forgetRoom('410', 'test'); N.pump(DT, 2, false);
+    N.doorApi.open('410'); N.pump(DT, 1, false);
+    const byDoor = (evOf(ev0).filter((e) => e.ev === 'hide_grace_end').pop() || {}).why;
+    N.doorApi.close('410'); N.pump(DT, 60, false);
+    N.ai._forgetRoom('410', 'test'); N.pump(DT, 2, false);
+    N.setView(6.9, 7.3, 0, 0); N.pump(DT, 1, false);
+    const byLeave = (evOf(ev0).filter((e) => e.ev === 'hide_grace_end').pop() || {}).why;
+    const pass = fell === false && learnedIn === null && !alertIn && graceStill && endWhy === 'time' && learnedAfter === 'light' && byDoor === 'door' && byLeave === 'left';
+    return { pass, noiseRoomDuringGrace: fell, learnedDuringGrace_s: learnedIn, alertDuringGrace: alertIn, graceAliveAt9_7s: graceStill, graceEnd: endWhy, learnedAfterGraceWhy: learnedAfter, endByDoorOpen: byDoor, endByLeavingRoom: byLeave };
+  });
+
+  // 28) 扉を閉めるだけ・入ってくる(70% 側): 入って → 襲撃(従来どおり)
+  await T('28_hide_door_enter_attack', () => {
+    const ev0 = setupHide();
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.1);
+    const r = runHide(ev0, 45);
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const order = ['hide_roll', 'door_open_in', 'entered', 'attack_start', 'hit'];
+    let k = 0; for (const e of r.evs) if (e === order[k]) k++;
+    const pass = rl.length === 1 && rl[0].kind === 'enter' && rl[0].result === 'enter' && k === order.length && r.deadAt !== null && !r.evs.includes('hide_forget');
+    return { pass, rolls: rl, deadAt_s: r.deadAt && +r.deadAt.toFixed(1), timeline: tline(ev0, KEEP) };
+  });
+
+  // 29) 扉を閉めてクローゼット・入らない(30% 側): 扉の前で外れ → 立ち止まって立ち去る。クローゼットの前の焦らしは無い・隠れたまま
+  await T('29_hide_closet_refuse_at_door', () => {
+    const ev0 = setupHide({ hide: true });
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.95);
+    const r = runHide(ev0, 40, (evs) => evs.some((e) => e.ev === 'hide_forget'));
+    for (let i = 0; i < Math.round(4 / DT); i++) N.pump(DT, 1, false);
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const stillHidden = !!N.rooms.state().hidden;
+    const pass = r.evs.includes('locker_start') && rl.length === 1 && rl[0].kind === 'enter' && rl[0].result === 'refuse' && r.evs.includes('hide_stand') && r.rattleMax === 0
+      && !r.evs.includes('locker_tease') && !r.evs.includes('door_open_in') && r.deadAt === null && stillHidden && N.ai.knownRoomId === null && N.ai.state !== 'LOCKER';
+    return { pass, rolls: rl, stillHidden, stateAfter: N.ai.state, timeline: tline(ev0, KEEP) };
+  });
+
+  // 30) 扉を閉めてクローゼット・入るが去る(20% 側): 入る(0.5 < 0.7)→ 焦らす → 開けるかは別に引く(0.9 ≥ 0.714)→ 手を掛けたまま離れ、部屋を出て扉を閉める・忘れる
+  await T('30_hide_closet_spare', () => {
+    const ev0 = setupHide({ hide: true });
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.5, { after: 'enter', v: 0.9 });
+    const r = runHide(ev0, 60, (evs) => evs.some((e) => e.ev === 'hide_left'));
+    N.pump(DT, 60, false);   // 扉が閉じ切るまで
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const e = N.enemyObj.pos;
+    const away = Math.hypot(e.x - H410.feet[0], e.z - H410.feet[1]);
+    const order = ['hide_roll', 'door_open_in', 'entered', 'locker_tease', 'hide_roll', 'locker_spare', 'hide_forget', 'door_closed', 'hide_left'];
+    let k = 0; for (const ev of r.evs) if (ev === order[k]) k++;
+    const spare = evOf(ev0).find((x) => x.ev === 'locker_spare'), tease = evOf(ev0).find((x) => x.ev === 'locker_tease');
+    const pass = rl.length === 2 && rl[0].kind === 'enter' && rl[0].result === 'enter' && rl[1].kind === 'closet' && Math.abs(rl[1].p - 0.714) < 0.001 && rl[1].result === 'spare'
+      && rl[0].r !== rl[1].r && k === order.length && !r.evs.includes('locker_open') && !r.evs.includes('attack_start') && r.deadAt === null
+      && !!N.rooms.state().hidden && N.ai.knownRoomId === null && W.door410().angle < 0.01 && away > 2.0;
+    return { pass, rolls: rl, teaseToSpare_s: spare && tease && +(spare.t - tease.t).toFixed(2), enemyFromCloset_m: +away.toFixed(2), doorAngleAfter: +W.door410().angle.toFixed(3), stillHidden: !!N.rooms.state().hidden, timeline: tline(ev0, KEEP) };
+  });
+
+  // 31) 扉を閉めてクローゼット・捕まる(50% 側): 入る → 焦らす → 開ける → OUT
+  await T('31_hide_closet_open_out', () => {
+    const ev0 = setupHide({ hide: true });
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.5);
+    const r = runHide(ev0, 60);
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const order = ['hide_roll', 'door_open_in', 'locker_tease', 'hide_roll', 'locker_open', 'attack_start', 'hit'];
+    let k = 0; for (const ev of r.evs) if (ev === order[k]) k++;
+    const pass = rl.length === 2 && rl[0].result === 'enter' && rl[1].kind === 'closet' && rl[1].result === 'open' && k === order.length && r.deadAt !== null;
+    return { pass, rolls: rl, deadAt_s: r.deadAt && +r.deadAt.toFixed(1), timeline: tline(ev0, KEEP) };
+  });
+
+  // 32) 扉を開けたまま: 入室率は 100%(enter の判定を引かない。pEnter=0 でも入る)。クローゼットの判定は引く(enter=0 の時は closet そのまま)
+  await T('32_hide_open_door_always_enters', () => {
+    const ev0 = setupHide({ hide: true, open: true });
+    N.ai.setHideOdds({ enter: 0, closet: 1 }); fixRand(0.5);
+    const r = runHide(ev0, 60);
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    const pass = rl.length === 1 && rl[0].kind === 'closet' && rl[0].p === 1 && rl[0].result === 'open' && r.evs.includes('locker_tease') && r.deadAt !== null && !r.evs.includes('hide_stand');
+    return { pass, rolls: rl, deadAt_s: r.deadAt && +r.deadAt.toFixed(1), timeline: tline(ev0, KEEP) };
+  });
+
+  // 33) 去る前に出てくると見つかる: 開けずに離れた直後にクローゼットから出る → 目撃(通常の視認)→ 追跡 → 猶予は終わる
+  await T('33_hide_spare_come_out_seen', () => {
+    const ev0 = setupHide({ hide: true });
+    N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.5, { after: 'enter', v: 0.9 });
+    runHide(ev0, 60, (evs) => evs.some((e) => e.ev === 'locker_spare'));
+    N.ai._rand = N.ai._rand0;
+    for (let i = 0; i < Math.round(HIDE_FORGET.letGo / DT) + 6; i++) N.pump(DT, 1, false);   // 手を離して振り向く
+    N.rooms.unhide();
+    let seenAt = null, t = 0;
+    for (let i = 0; i < Math.round(6 / DT) && seenAt === null; i++) { N.pump(DT, 1, false); t += DT; if (evOf(ev0).some((e) => e.ev === 'seen')) seenAt = t; }
+    const ge = evOf(ev0).filter((e) => e.ev === 'hide_grace_end').pop();
+    const pass = seenAt !== null && (N.ai.state === 'CHASE' || N.ai.state === 'ATTACK') && ge && ge.why === 'chase';
+    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
+    return { pass, seenAfterUnhide_s: seenAt && +seenAt.toFixed(2), state: N.ai.state, graceEnd: ge && ge.why, timeline: tline(ev0, KEEP) };
+  });
+
+  // 34) スコープ演出①も確率に従う: 覗き返しの後、扉を開ける直前に enter を引く。外れ → 顔を離し、立ち止まって無言で去る(覗き穴は開いたまま・扉は閉じたまま)
+  await T('34_scope_refuse', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    N.ai.setHideOdds({ ...HIDE_ODDS });
+    N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false); N.pump(DT, 2, false);
+    N.enemy.place(6.9, 11.5, Math.PI);
+    N.ai.knownRoomId = '410';
+    N.ai.setState('PATROL', { force: true, log: true });
+    N.peephole(true);
+    const ev0 = N.ai.events.length;
+    fixRand(0.95);
+    const r = runHide(ev0, 60, (evs) => evs.some((e) => e.ev === 'hide_forget'));
+    const peep = N.peepholeObj.active;
+    let away = 0; for (let i = 0; i < Math.round(6 / DT); i++) { N.pump(DT, 1, false); away = Math.hypot(N.enemyObj.pos.x - 7.8, N.enemyObj.pos.z - 7.25); }
+    const rl = rolls(ev0);
+    N.ai._rand = N.ai._rand0;
+    N.peephole(false);
+    const pass = r.evs.includes('scope_stare') && rl.length === 1 && rl[0].kind === 'scope' && rl[0].p === 0.7 && rl[0].result === 'refuse' && r.evs.includes('hide_stand') && r.rattleMax === 0
+      && !r.evs.includes('scope_knob') && !r.evs.includes('door_opened') && r.doorMax < 0.01 && peep && r.deadAt === null && N.ai.knownRoomId === null && N.enemyObj.lean === 0 && away > 2.0;
+    return { pass, rolls: rl, peepholeStillOpen: peep, enemyFromDoorAfter6s_m: +away.toFixed(2), timeline: tline(ev0, KEEP) };
+  });
+
+  // 35) 管理人は扉を揺らさない(2026-11-02 ユーザー指示「扉のガタガタ演出も無しにします」): 4F の扉の door.rattle が常に 0・'rattle' の再生 0 回。
+  //  場面: 知らない部屋(410・プレイヤーは中・扉は閉)の前で立ち止まって去る(旧: ノブを鳴らす)＋巡回で扉を順に回る(旧: 30% で揺らす。乱数を 0.9/0.1 で交互)
+  //  ＋逃げ込みで入らない(旧: 3 回揺らす)。空室の「ガタガタ扉」(door_fx・20 番)は別の演出で、この指示の対象外として残している
+  await T('35_no_door_rattle', () => {
+    W.reset(); N.ai.lurkEnabled = false;
+    const doors4 = N.doors.filter((d) => d.level === 4);
+    const a0 = N.enemyAudio.log.length;
+    let maxR = 0, frames = 0;
+    const watch = (sec, stop = null) => { for (let i = 0; i < Math.round(sec / DT); i++) { N.pump(DT, 1, false); frames++; for (const d of doors4) maxR = Math.max(maxR, d.rattle || 0); if (stop && stop()) break; } };
+    // a) 知らない部屋の前(door_skip_unknown)
+    N.setView(8.75, 7.3, Math.PI / 2, 0); N.setFlashlight(false); N.pump(DT, 2, false);
+    N.enemy.place(6.9, 11.5, Math.PI);
+    N.ai.setState('PATROL', { force: true, log: true }); N.ai.patrolIdx = 5;
+    const ev0 = N.ai.events.length;
+    N.ai._rand = () => 0.1;
+    watch(30, () => N.ai.events.slice(ev0).some((e) => e.ev === 'door_skip_unknown'));
+    const skipped = N.ai.events.slice(ev0).some((e) => e.ev === 'door_skip_unknown');
+    watch(3);
+    // b) 巡回で扉を回る(旧 30% の揺らしの分岐を通る乱数)
+    let k = 0; N.ai._rand = () => ((k++ % 2) ? 0.1 : 0.9);
+    N.ai.setState('PATROL', { force: true, log: true }); N.ai.patrolIdx = 0;
+    watch(60);
+    // c) 逃げ込みで入らない
+    const ev1 = setupHide(); N.ai.setHideOdds({ ...HIDE_ODDS }); fixRand(0.95);
+    watch(40, () => N.ai.events.slice(ev1).some((e) => e.ev === 'hide_forget'));
+    const refused = N.ai.events.slice(ev1).some((e) => e.ev === 'hide_stand');
+    N.ai._rand = N.ai._rand0;
+    const rattleSounds = N.enemyAudio.log.slice(a0).filter((l) => l.name === 'rattle').length;
+    const pass = skipped && refused && maxR === 0 && rattleSounds === 0 && !N.deathState();
+    return { pass, unknownDoorSkip: skipped, refusedAtDoor: refused, doorRattleMax: maxR, rattleSounds, framesWatched: frames, doorsWatched: doors4.length };
+  });
+
   W.reset();
   N.render();
   if (new URLSearchParams(location.search).get('fps') === '1') { out.fps = await measureFps(N); show(); }
@@ -739,6 +1011,9 @@ function harness(N) {
       d.angle = 0; d.target = 0; d.locked = false; d.speedMul = 1; if (d.collision) d.collision.disabled = false;
       d.node.rotation.y = 0;
       N.player.frozen = false;
+      if (N.rooms.hidden) N.rooms.forceUnhide();   // P5b-6: クローゼットに隠れたままのテストの後
+      N.ai.setHideOdds({ enter: 1, closet: 1 });  // P5b-6: 従来のテストは「知っている部屋には必ず入る・必ず開ける」で書いてある(確率は 25〜34 番)
+      if (N.ai._rand0) N.ai._rand = N.ai._rand0;
       N.movie.end();
       // 死亡演出が残っていれば流し切る
       for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);

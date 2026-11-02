@@ -167,6 +167,7 @@ export async function run(N) {
     const hidden = N.rooms.state().hidden;
     const ai = N.ai;
     ai.reset(6.9, 20.9, Math.PI, level);
+    ai.setHideOdds({ enter: 1, closet: 1 });   // P5b-6: 演出②の通し(必ず入って開ける)。確率は ?test=enemy 25〜34 番
     if (known) ai.knownRoomId = roomId; else ai.knownRoomId = null;
     const ev0 = ai.events.length;
     const log = [];
