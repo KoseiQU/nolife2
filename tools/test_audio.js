@@ -13,14 +13,18 @@
 //  8) 705: 鍵で灯りが消える(x705_lights_off)
 //  8b) P4d: B1 のトンネルで標識灯を 3 回通って気づく瞬間(xb1_loop_notice C。1 回だけ。仮音は無い)
 //  9) エンディング: エンジン(car_engine)→ 門を抜ける(ending_gate)
-//  10) まとめ: 採用 24 場面(wav 22＋声 2)すべてが 1 回以上呼ばれ、採用以外の場面(なしの 48 場面を含む)は 1 回も呼ばれていない
+//  10) まとめ: 採用 25 場面(wav 22＋声 3)すべてが 1 回以上呼ばれ、採用以外の場面(なしの 47 場面を含む)は 1 回も呼ばれていない
+// P4e-1: 目の前の声 enemy_breath_close を録音「みぃつけた」で復活(なし 48 → 47、声 2 → 3、採用 24 → 25)
+//  0b) 録音プロファイル: recorded.txt の ID(録音)は rate が A 1.0/B 0.9(未選択は B)・素材の全長(len で切らない)・rasp/jit/歪みなし、C は全長＋かすれ。録音でない素材(mgr_door_line_02)は仮声の加工のまま
+//  5b) 目の前: 410 のクローゼットに隠れて管理人が前で焦らす → enemy_breath_close が声として鳴る(遮蔽で弱めない)
 const DT = 1 / 60;
 const ADOPTED = ['pl_step_room', 'amb_corridor', 'pl_closet', 'room_fall', 'ev_chime', 'ev_motor', 'enemy_step_run', 'enemy_breath_door', 'enemy_door_smash', 'enemy_hit',
   'death', 'story_221_lure', 'pickup_key', 'pickup_paper', 'amb_x105', 'x105_scream', 'amb_outdoor', 'amb_roof', 'x705_lights_off', 'amb_b1', 'car_engine', 'ending_gate',
   'enemy_step_walk',   // P4c: 3 周目 A
-  'xb1_loop_notice'];   // P4d: B1 の標識灯 C
+  'xb1_loop_notice',   // P4d: B1 の標識灯 C
+  'enemy_breath_close'];   // P4e-1: 目の前(録音で復活)
 // P4c: 3 周目でなしになった 8 場面(room_door_rattle は演出ごと廃止 = なし扱い)＋ P4d: 新 312 の 9 場面(最終選択でなし。amb_x312_room_loop は最終選択の直後に未選択 → なしに変わった)
-const R3_NONE = ['pl_flashlight', 'door_wood', 'enemy_presence', 'enemy_breath_close', 'room_door_rattle', 'enemy_scream', 'locker_open_slow', 'locker_burst',
+const R3_NONE = ['pl_flashlight', 'door_wood', 'enemy_presence', 'room_door_rattle', 'enemy_scream', 'locker_open_slow', 'locker_burst',
   'x312_clock_tick', 'x312_door_open', 'x312_door_close', 'x312_door_locked', 'x312_key_slam', 'x312_watcher_lookup', 'x312_room_shift', 'x312_bed_creak', 'amb_x312_room_loop'];
 const UNSELECTED = [];   // P4d: 未選択は無い(amb_x312_room_loop は最終選択の後に「なし」になった)
 
@@ -85,18 +89,42 @@ export async function run(N) {
     const vg = Object.fromEntries(vo.map((id) => [id, (B.voiceGain[id] || []).map((g) => +g.toFixed(2))]));
     const statusOK = ADOPTED.every((id) => ['wav', 'voice'].includes(B.status(id)));
     const r3None = R3_NONE.every((id) => B.status(id) === 'none'), unsel = M.unselected.join() === UNSELECTED.join() && UNSELECTED.every((id) => B.status(id) === 'unselected');
-    const pass = B.ready && !B.error && sc.length === 22 && vo.length === 2 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
-      && statusOK && r3None && unsel && M.none.length === 48 && M.round3.length === 0
+    const pass = B.ready && !B.error && sc.length === 22 && vo.length === 3 && lens.every((l) => l.ok) && Object.values(vg).every((a) => a.length > 0 && a.every((g) => g > 0 && g < 100))
+      && statusOK && r3None && unsel && M.none.length === 47 && M.round3.length === 0 && B.status('enemy_breath_close') === 'voice' && M.voice.enemy_breath_close.cand === 'rec'
       && sc.concat(vo).sort().join() === [...ADOPTED].sort().join();
     return { pass, wav: sc.length, voice: vo, voiceGain: vg, badLength: lens.filter((l) => !l.ok).map((l) => l.id), none: M.none.length, round3: M.round3, noneListOK: r3None, unselected: M.unselected, unselectedOK: unsel,
       totalMB: +(M.totalBytes / 1048576).toFixed(2), ctx: N.enemyAudio.ctx.state };
+  });
+
+  // 0b) P4e-1: 録音プロファイル(読み込み時の音量合わせで描いた時に Kit.vox へ渡った数値)
+  await T('0b_recorded_profile', async () => {
+    const R = B.rec, want = ['mgr_door_laugh_01', 'mgr_line_found_01', 'mgr_line_know_01'];
+    const rows = [];
+    for (const [sid, takes] of Object.entries(B.voiceTrace)) takes.forEach((tr, ti) => tr.take.forEach((line, j) => {
+      const f = tr.prof[j], vs = tr.vox.filter((v) => v.name === line);
+      if (!vs.length) return;
+      const v = vs[0], full = vs.every((x) => Math.abs(x.srcLen - x.bufDur) < 0.002 && x.len === null && !x.loop);
+      let ok = true;
+      if (f === 'A' || f === 'B') ok = full && vs.length === 1 && v.rate === (f === 'A' ? 1 : 0.9) && v.rasp === 0 && v.jit === 0 && v.drive === 0;
+      else if (f === 'C') ok = full && v.rasp > 0;
+      rows.push({ scene: sid, line, prof: f, rate: v.rate, len: v.len, srcLen: v.srcLen, bufDur: v.bufDur, rasp: v.rasp, jit: v.jit, gain: +(B.voiceGain[sid][ti] || 0).toFixed(2), ok });
+    }));
+    const recRows = rows.filter((r) => r.prof);
+    const expectProf = (id) => { const x = String(R.fx[id] || '').toUpperCase(); return ['A', 'B', 'C'].includes(x) ? x : 'B'; };
+    const profOK = recRows.every((r) => r.prof === expectProf(r.line));
+    const tts = rows.find((r) => r.line === 'mgr_door_line_02');
+    const ttsOK = R.ids.has('mgr_door_line_02') || (!!tts && tts.prof === null && tts.rate === 0.74 && tts.len === 3 && tts.rasp === 0.3 && tts.jit === 25);
+    const scenes = new Set(recRows.map((r) => r.scene));
+    const pass = R.loaded && want.every((id) => R.ids.has(id)) && want.every((id) => recRows.some((r) => r.line === id)) && recRows.every((r) => r.ok && r.gain > 0)
+      && profOK && ttsOK && scenes.has('enemy_breath_door') && scenes.has('enemy_breath_close');
+    return { pass, recorded: [...R.ids], fxFrom: R.from, fx: R.fx, profOK, ttsOK, rows };
   });
 
   // 1) なし = 無音(呼んでも AudioBank に行かない)
   await T('1_none_scenes_silent', async () => {
     const n0 = B.n, p = new N.THREE.Vector3(6.9, 12.1, 13);
     const ea0 = N.enemyAudio.logCount || 0;
-    const EA_NONE = ['rattle', 'handle', 'latch', 'scream', 'breath', 'slam'];   // P4c: scream・breath・slam(3 周目でなし)
+    const EA_NONE = ['rattle', 'handle', 'latch', 'scream', 'slam'];   // P4c: scream・slam(3 周目でなし)。P4e-1: breath は録音で復活したので外した
     for (const nm of EA_NONE) N.enemyAudio.play(nm, p, 0.8);
     for (const nm of ['unlock', 'rattle', 'car', 'decoy']) S._sfx(nm);
     for (const nm of ['slide', 'climb', 'lockerRattle', 'lockerCreak']) N.rooms._sfx(nm, p, 0.6);
@@ -228,6 +256,40 @@ export async function run(N) {
     N.doorApi.repairDoor('407'); N.ai.lurkEnabled = true;
     const pass = walkSteps >= 1 && walkAsRun === 0 && walkLog.kind === 'play' && runSteps >= 1 && runLog >= 1 && breath >= 1 && voiceKind === 'voice' && burst && got.smash >= 1 && got.hit >= 1 && got.death >= 1;
     return { pass, walkSteps, walkStepsCountedAsRun: walkAsRun, runSteps, breathDoor: breath, breathDoorKind: voiceKind, burst, ...got };
+  });
+
+  // 5b) P4e-1: 目の前(enemy_breath_close)。410 のクローゼットに隠れ、管理人が入って前で焦らす → 録音の声が鳴る。必ず入り・開けない(焦らして去る)
+  await T('5b_enemy_breath_close_recorded', async () => {
+    S.applyStage(2); quiet(); resetKeys();
+    N.ai.dormant = false; N.ai.lurkEnabled = false;
+    await tp(4, 9.6, 7.3, -Math.PI / 2);
+    const d = N.doors.find((x) => x.roomId === '410');
+    d.angle = 0; d.target = 0; d.locked = false; if (d.collision) d.collision.disabled = false; d.node.rotation.y = 0;
+    const H = N.building.floors.find((f) => f.level === 4).rooms.find((r) => r.id === '410').interior.hide;
+    N.setFlashlight(false);
+    N.setView(H.out[0], H.out[1], 0, 0); N.pump(DT, 2, false);
+    const hid = N.rooms.hide('410'); pumpS(1.5);
+    const odds0 = { ...N.ai.hideOdds };
+    N.ai.setHideOdds({ enter: 1, closet: 0 });
+    N.enemy.place(6.9, 12.5, Math.PI);
+    N.ai.knownRoomId = '410'; N.ai.lastKnown = { x: 8.7, z: 7.4, lv: 4 };
+    N.ai.setState('PATROL', { force: true, log: true, react: false });
+    const c0 = cnt('enemy_breath_close'), ev0 = N.ai.events.length, ea0 = N.enemyAudio.logCount || 0;
+    let tease = false;
+    pumpS(45, () => { if (!tease) tease = N.ai.events.slice(ev0).some((e) => e.ev === 'locker_tease'); return tease && cnt('enemy_breath_close') > c0; });
+    const n = cnt('enemy_breath_close') - c0;
+    const rec = B.log.filter((l) => l.id === 'enemy_breath_close').pop() || {};
+    const ea = N.enemyAudio.log.filter((l) => l.n > ea0 && l.name === 'breath');
+    pumpS(8, () => N.ai.events.slice(ev0).some((e) => e.ev === 'locker_spare'));
+    const dead = !!N.deathState();
+    N.ai.setHideOdds(odds0);
+    if (N.rooms.hidden) N.rooms.forceUnhide();
+    N.player.frozen = false; N.viewLock.cancel(); N.movie.end();   // クローゼットから出した後の後始末(test_enemy の harness.reset と同じ)
+    settleDeath(); quiet(); N.ai.lurkEnabled = true;
+    d.angle = 0; d.target = 0; if (d.collision) d.collision.disabled = false; d.node.rotation.y = 0;
+    const profOK = !B.running || (Array.isArray(rec.prof) && rec.take && rec.take[0] === 'mgr_line_found_01' && ['A', 'B', 'C'].includes(rec.prof[0]));
+    const pass = hid && tease && n === 1 && rec.kind === 'voice' && Math.abs(rec.vol - 0.9) < 1e-6 && profOK && ea.length === 1 && ea[0].scene === 'enemy_breath_close' && !ea[0].silent && !dead;
+    return { pass, hidden: hid, tease, breathClose: n, kind: rec.kind, vol: rec.vol, take: rec.take, prof: rec.prof, running: B.running, enemyAudioLog: ea.map((l) => l.scene || 'silent'), dead };
   });
 
   // 6) 物語: 221 の電話・メモ・鍵
