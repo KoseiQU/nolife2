@@ -17,6 +17,7 @@
 //  8) P3c 外観と外環境: 読み込み前後の負荷・屋上A/屋上B/エントランス前から見える・屋内の奥では描かない・敷地の境で止まる・玄関の出入り
 //  7) 管理人が別の階へ(EV/階段)移っても状態機械が破綻しない。読み込まれていない階でも論理が進み、描画はされない
 //  11) P5b-3: 食堂のガラス扉・シアターの二重扉(前室)を E で開けて通る・段床を登る・管理人が 2 枚を抜けて来る
+// 8c) P6b #12: 敷地の外周と車 3 台の周りを 0.25m 刻み × 16 方向に走って、敷地 'G' の外・1F の当たり・床の高さの異常に出ない(自転車置き場で 1F に化けていた)
 //  10) P3c-2 廊下端の窓: 各窓の正面でガラスが透明・開口が抜けている・外を描く・窓越しに外が見える(画素の差)・1フレームの時間
 
 const DT = 1 / 60;
@@ -587,6 +588,49 @@ export async function run(N) {
   //  イ) 外観・外環境を描いている(exterior.shown)
   //  ウ) 外を出した画と隠した画で、窓の領域の画素が変わる(窓越しに外が見えている)
   //  エ) 1080p の1フレームの時間を記録(4F は ≤ 16.7ms)
+  // P6b #12(駐車場で裏世界): 敷地の外周の内側と車 3 台の周りを 0.25m 刻みの起点にして、16 方向へ走って(0.5 秒)、敷地 'G' のまま・敷地の矩形の外へ出ない・床の高さ 0 を確かめる
+  await T('8c_site_bruteforce_no_escape', async () => {
+    const Sd = N.building.site, R = Sd.footprint;
+    const inSite = (x, z, m = 0.0) => R.some(([rx, rz, rw, rd]) => x > rx - m && x < rx + rw + m && z > rz - m && z < rz + rd + m);
+    const pts = [];
+    for (const [rx, rz, rw, rd] of R) {
+      for (let x = rx + 0.45; x <= rx + rw - 0.45 + 1e-6; x += 0.25) { pts.push([x, rz + 0.45]); pts.push([x, rz + rd - 0.45]); }
+      for (let z = rz + 0.45; z <= rz + rd - 0.45 + 1e-6; z += 0.25) { pts.push([rx + 0.45, z]); pts.push([rx + rw - 0.45, z]); }
+    }
+    for (const c of Sd.cars) {
+      const [cx, cz, cw, cd] = c.rect;
+      for (let x = cx - 0.45; x <= cx + cw + 0.45 + 1e-6; x += 0.25) { pts.push([x, cz - 0.45]); pts.push([x, cz + cd + 0.45]); }
+      for (let z = cz - 0.45; z <= cz + cd + 0.45 + 1e-6; z += 0.25) { pts.push([cx - 0.45, z]); pts.push([cx + cw + 0.45, z]); }
+    }
+    const cols = N.world.collisions('G');
+    const free = (x, z) => inSite(x, z) && !cols.some((c) => !c.disabled && x + 0.29 > c.minX && x - 0.29 < c.maxX && z + 0.29 > c.minZ && z - 0.29 < c.maxZ);
+    const starts = pts.filter(([x, z]) => free(x, z));
+    const bad = []; let runs = 0;
+    const fix0 = N.story.siteFix || 0;
+    await N.teleport('G', starts[0][0], starts[0][1], 0); await settle('1,2');
+    key('ShiftLeft', true);
+    try {
+      for (let i = 0; i < starts.length; i++) {
+        const [x0, z0] = starts[i];
+        for (let k = 0; k < 16; k++) {
+          if (N.level !== 'G') await N.teleport('G', x0, z0, 0);
+          N.player.setPose(x0, z0, k * Math.PI / 8, 0);
+          key('KeyW', true);
+          for (let f = 0; f < 30; f++) {
+            N.pump(DT, 1, false);
+            const p = N.player.pos;
+            if (N.level !== 'G' || !inSite(p.x, p.z, 0.05) || Math.abs(p.y) > 1e-3) { bad.push({ from: [+x0.toFixed(2), +z0.toFixed(2)], dir: k, f, level: N.level, at: [+p.x.toFixed(2), +p.z.toFixed(2), +p.y.toFixed(3)] }); break; }
+          }
+          key('KeyW', false); N.pump(DT, 1, false); runs++;
+        }
+        if (i % 60 === 0) await sleep(0);
+      }
+    } finally { key('ShiftLeft', false); key('KeyW', false); }
+    N.pump(DT, 2, false);
+    const pass = starts.length > 800 && runs === starts.length * 16 && bad.length === 0;
+    return { pass, starts: starts.length, runs, bad: bad.length, sample: bad.slice(0, 8), siteLevelFixes: (N.story.siteFix || 0) - fix0 };
+  });
+
   await T('10_corridor_windows', async () => {
     const THREE = N.THREE;
     await N.loadExterior();

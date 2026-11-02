@@ -513,6 +513,7 @@ export class Story {
         if (v < (e.depth ?? 0.45) && v > -1.0 && u < (e.half ?? 0.6)) { this.leaveSpace(e); break; }
       }
     }
+    this._fixSiteLevel(lv, p);   // P6b #12
     if (!this.active) { this.hud.setObjective(''); this.hud.setItem(''); return; }
     // P5b-1b 221: 奥へ進むと奥の窓際のロッカーから管理人(初回)→ 逃げ切ると机に小さな鍵
     if (this.stage === 1) { this._lure221(lv, p, dt); this._check221(lv, p); }
@@ -560,6 +561,23 @@ export class Story {
     const [nx, nz] = FACING_N[R.r.door.facing];
     return -((p.x - R.r.door.pos[0]) * nx + (p.z - R.r.door.pos[1]) * nz);
   }
+  // P6b #12(駐車場で裏世界): 敷地 'G' の自転車置き場(建物の北東 x 14.9〜19.5・z 3〜13)は、正面玄関の線の x の範囲(15.6〜19.6)と重なる。
+  //  main.js の updatePortal は x の範囲と「玄関の線より北か」だけを見るので、そこで 'G' → 1F に切り替わり、1F の当たり(建物の外は壁なし・外を描かない)で
+  //  暗闇を歩けてしまっていた。屋外(1F の外形の外・敷地の中)にいるのに 1F になっていたら、同じ位置のまま敷地 'G' に戻す(向きも保つ)。
+  //  根本の直し(updatePortal が玄関の線の近くだけを見る)は main.js の担当外なので docs/p6b-b/NOTES.md に差分を書いた。
+  _fixSiteLevel(lv, p) {
+    if (lv !== 1 || this.trans || this.ending) return false;
+    const S = this.building.site; if (!S) return false;
+    const F1 = this._fp1 || (this._fp1 = this.building.floors.find((f) => f.level === 1).footprint);
+    const inR = (R, m) => R.some(([x, z, w, d]) => p.x > x - m && p.x < x + w + m && p.z > z - m && p.z < z + d + m);
+    if (inR(F1, 0.05) || !inR(S.footprint, 0)) return false;
+    const o = this.player.object.rotation, yaw = o.y, pitch = o.x, x = p.x, z = p.z;
+    this.teleport('G', x, z, yaw);
+    this.player.setPose(x, z, yaw, pitch);
+    this.siteFix = (this.siteFix || 0) + 1;
+    return true;
+  }
+
   // P4b: 221 の口実(story_221_lure 採用 A「壁越しの電話」)。221 に入ると奥の窓際のロッカーの方で電話が鳴り、居る間は間を置いてまた鳴る(飛び出しの後は鳴らない)
   _lure221(lv, p, dt) {
     const inside = lv === 2 && !this.burst221 && (this.sub === 'memo' || this.sub === null) && this._roomU('221', p, 2) >= 0;
