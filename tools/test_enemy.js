@@ -566,37 +566,34 @@ export async function run(N) {
       text: shown1, arrive4F_s: +t1.toFixed(1), countAfterArrival: c1, countSameStay12s: c1b, hiddenAfter3s: hidAfter, countAfter5F: c2, countAfterReturn: c3 };
   });
 
-  // 20) ガタガタ扉: 激しく揺れて鳴るが絶対に出てこない(扉は開かない・当たりは閉じたまま・管理人はそのまま)。潜伏中の部屋では起こさない。発生は 4〜15m の扉
-  await T('20_rattle_door_never_opens', () => {
+  // 20) ガタガタ扉は存在しない(2026-11-02 ユーザー指示で廃止・P5b-6b): door_fx に rattle の API・タイマー・stats 項目が無い。
+  //  10 分(旧: 初回 90〜160 秒・以後 150〜300 秒おき)進めても、プレイヤーの階の空室の扉は一度も揺れず(扉板の回転 0)・開かず・
+  //  doorFx の rattle イベントも 'slam' の再生も無い。隙間(帯)は残っている
+  await T('20_no_rattle_door', () => {
     W.reset(); N.ai.lurkEnabled = false;
     N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 20.6, Math.PI);
     N.setView(6.9, 8.0, Math.PI, 0);
-    const a0 = aud0(), e0 = evMark();
-    const ok = N.doorFx.rattle('403', 4.0);
-    const d = N.doorApi.get('403');
-    let maxRot = 0, maxAngle = 0, opened = false;
-    for (let i = 0; i < Math.round(5 / DT); i++) {
-      N.pump(DT, 1, false);
-      maxRot = Math.max(maxRot, Math.abs(d.node ? d.node.rotation.y : 0)); maxAngle = Math.max(maxAngle, d.angle);
-      if (d.collision.disabled) opened = true;
+    const F = N.doorFx;
+    const noApi = typeof F.rattle === 'undefined' && typeof F._scheduleRattle === 'undefined' && !('rattleT' in F) && !('rattling' in F)
+      && !('rattleIn' in F.stats()) && !('rattling' in F.stats());
+    const lurkDoors = N.doors.filter((d) => d.level === 4 && d.lurkable);
+    const a0 = aud0(), r0 = F.time;
+    let maxRot = 0, maxAngle = 0, shakeSeen = false, opened = false;
+    const FR = 6000, STEP = 0.1;   // 600 秒
+    for (let i = 0; i < FR; i++) {
+      N.pump(STEP, 1, false);
+      for (const d of lurkDoors) {
+        if (d.shake !== undefined) shakeSeen = true;
+        maxAngle = Math.max(maxAngle, d.angle);
+        if (d.collision && d.collision.disabled) opened = true;
+        if (d.node) maxRot = Math.max(maxRot, Math.abs(d.node.rotation.y));
+      }
     }
-    const enemyPos = N.ai.stats().pos;
-    const restRot = d.node ? Math.abs(d.node.rotation.y) : 0;
-    // 潜伏中の部屋では起こさない
-    N.ai.lurkEnabled = false; lurkIn('402'); N.pump(DT, 2, false);
-    const okLurk = N.doorFx.rattle('402', 3.0);
-    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(6.9, 20.6, Math.PI);
-    // 自然発生: プレイヤーから 4〜15m の空室の扉を選ぶ
-    N.doorFx.rattleT = 0; const r0 = N.doorFx.time;
-    N.pump(DT, 3, false);
-    const pick = N.doorFx.events.filter((x) => x.t >= r0 - 0.01).find((x) => x.ev === 'rattle');
-    const pd = pick ? N.doorApi.get(pick.room) : null;
-    const pdist = pd ? Math.hypot(pd.pos[0] - N.player.pos.x, pd.pos[1] - N.player.pos.z) : null;
-    for (let i = 0; i < Math.round(6 / DT); i++) N.pump(DT, 1, false);
-    N.ai.lurkEnabled = true;
-    return { pass: ok && maxRot > 0.01 && maxAngle === 0 && !opened && restRot < 1e-6 && sounds(a0).includes('slam') && !evSince(e0).some((x) => x.ev === 'lurk_burst') && enemyPos[1] === 20.6 && !okLurk
-      && pick && pdist >= 4 && pdist <= 15,
-      shakeMaxRad: +maxRot.toFixed(3), doorOpenAngleMax: maxAngle, collisionOpened: opened, restAfter: restRot, sound: sounds(a0).includes('slam'), notInLurkRoom: !okLurk, scheduled: pick && { room: pick.room, dist_m: +pdist.toFixed(1), dur: pick.dur } };
+    const rattleEv = F.events.filter((x) => x.t >= r0 - 0.01 && x.ev === 'rattle').length;
+    const slam = sounds(a0).includes('slam');
+    const strips = F.stats().strips.reduce((n, [, c]) => n + c, 0);
+    return { pass: noApi && !shakeSeen && maxRot < 1e-6 && maxAngle === 0 && !opened && rattleEv === 0 && !slam && strips > 0,
+      noRattleApi: noApi, doors: lurkDoors.length, simulated_s: +(FR * STEP).toFixed(0), doorLeafRotationMax: maxRot, doorOpenAngleMax: maxAngle, collisionOpened: opened, shakeFieldSeen: shakeSeen, rattleEvents: rattleEv, slamPlayed: slam, gapStrips: strips };
   });
 
   // 21) 窓越しの管理人: 本体が別の階にいる時、廊下端の窓の外(敷地)に現れ、3 秒見続けると消える/見た後に視線を外すと消える。本体が同じ階なら出ない
@@ -941,7 +938,7 @@ export async function run(N) {
 
   // 35) 管理人は扉を揺らさない(2026-11-02 ユーザー指示「扉のガタガタ演出も無しにします」): 4F の扉の door.rattle が常に 0・'rattle' の再生 0 回。
   //  場面: 知らない部屋(410・プレイヤーは中・扉は閉)の前で立ち止まって去る(旧: ノブを鳴らす)＋巡回で扉を順に回る(旧: 30% で揺らす。乱数を 0.9/0.1 で交互)
-  //  ＋逃げ込みで入らない(旧: 3 回揺らす)。空室の「ガタガタ扉」(door_fx・20 番)は別の演出で、この指示の対象外として残している
+  //  ＋逃げ込みで入らない(旧: 3 回揺らす)。空室の「ガタガタ扉」(door_fx)は P5b-6b で廃止(20 番は不在の確認)
   await T('35_no_door_rattle', () => {
     W.reset(); N.ai.lurkEnabled = false;
     const doors4 = N.doors.filter((d) => d.level === 4);
