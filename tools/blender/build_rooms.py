@@ -60,6 +60,7 @@ def build_materials(ctx):
     pm('MR_Alu', base=(0.42, 0.43, 0.42), rough=0.45, metal=0.0)       # アルミの枠(つや消しの塗装に近い見え方)
     pm('MR_OfficeFloor', files=tf('floor_sheet'), size=1.0, rough=0.6, normal_strength=0.5); MT['MR_OfficeFloor']['tint'] = [0.86, 0.87, 0.85]
     pm('MR_OfficeCeil', files=tf('ceiling_tile'), size=3.0, rough=0.9)
+    _furniture_materials(ctx)
     # ライトマップなし(動く・透明・細い・遠景)
     pm('MX_Alu', base=(0.42, 0.43, 0.42), rough=0.45, metal=0.0)
     pm('MX_WinGlass', base=(0.55, 0.62, 0.66), rough=0.05, alpha=0.16)
@@ -69,6 +70,87 @@ def build_materials(ctx):
     pm('MX_Void', base=(0.0, 0.0, 0.0), rough=1.0)
     pm('MX_SecMon', base=(0.2, 0.2, 0.2), rough=0.2, emit_tex=img(tex('room_prints.png'), False), emit_strength=0.6)
     pm('MX_Ground', files=tf('paving', rough=False), size=2.0, rough=0.9)
+
+
+# ---------------------------------------------------------------- P6b-E2: 居室の家具の質感(DESIGN §3.11 #2)
+#  木部(机の天板・ベッドのフレーム/脚/頭の板・シューズケースの天板・壁の棚板) = ニス仕上げ: 木目の albedo(door_wood)は従来のまま、
+#    粗さ = furn_wood_roughness(0.31〜0.39、木目の濃い筋ほど粗い)・法線は木目を弱めに(0.35。ニスが導管を埋める)・クリアコート 0.4(粗さ 0.18)
+#  金属脚(机の脚・椅子の支柱と脚・倒れた椅子の脚) = roughness 0.35・metal 1.0
+#  シーツ・布団・枕・マットレス = 布: 平織りの albedo(無彩色)× 色ごとの tint・法線に織りの凹凸・roughness 0.85・sheen 0.3(sheenColorFactor)
+#  形(面の数・並び)は従来と同じ(色見本の面を同じ面のまま材質だけ替える)→ 部屋の組のライトマップ UV は変わらず、再ベイク不要
+#  食堂・管理室・シアターの什器と玄関の框は従来の MR_DeskWood のまま(対象外)
+VARNISH_WOOD = ('MR_VarnishWood', 'MR_VarnishWoodLight')
+CLOTH_KEYS = ('white', 'mattress', 'blue', 'charcoal', 'terracotta', 'sage', 'beige', 'lavender', 'navy', 'gray', 'olive', 'wine',
+              'lightblue', 'brown', 'teal', 'oldgray', 'rust', 'green', 'cream', 'denim', 'pink', 'khaki')
+CLOTH_SIZE = 0.40        # tools/room_textures.py の CLOTH_SIZE と同じ(織りの1枚 = 0.25m 角)
+CLOTH_USED = set()
+
+
+def _bsdf(m):
+    return m.node_tree.nodes.get('Principled BSDF')
+
+
+def _srgb2lin(c):
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _img_mean_lin(path, rect=None):
+    """画像(sRGB)の矩形(Blender の UV 0..1)の平均を線形で。"""
+    im = bpy.data.images.load(path, check_existing=False)
+    w, h = im.size
+    px = list(im.pixels)
+    bpy.data.images.remove(im)
+    u0, v0, u1, v1 = rect or (0, 0, 1, 1)
+    x0, x1 = int(u0 * w), max(int(u0 * w) + 1, int(u1 * w))
+    y0, y1 = int(v0 * h), max(int(v0 * h) + 1, int(v1 * h))
+    acc = [0.0, 0.0, 0.0]; n = 0
+    for y in range(y0, y1, max(1, (y1 - y0) // 64)):
+        for x in range(x0, x1, max(1, (x1 - x0) // 64)):
+            i = (y * w + x) * 4
+            for c in range(3):
+                acc[c] += _srgb2lin(px[i + c])
+            n += 1
+    return [a / n for a in acc]
+
+
+def _furniture_materials(ctx):
+    pm, tf, tex = ctx.pbr_material, ctx.tex_files, ctx.tex
+    MT = ctx.MAT_TEX
+    wood = {'albedo': tex('door_wood_albedo.jpg'), 'normal': tex('door_wood_normal.jpg'), 'roughness': tex('furn_wood_roughness.jpg')}
+    for name, tint in (('MR_VarnishWood', [1.1, 1.02, 0.92]), ('MR_VarnishWoodLight', [1.3, 1.25, 1.15])):
+        m = pm(name, files=wood, size=1.0, rough=0.35, normal_strength=0.35)
+        MT[name]['tint'] = tint
+        b = _bsdf(m)
+        b.inputs['Coat Weight'].default_value = 0.4
+        b.inputs['Coat Roughness'].default_value = 0.18
+    # 金属は実行時に共通の環境(明るいスタジオ)を metalEnv で映すので、地の色(F0)が明るいと暗い部屋で脚が光って見える
+    #  → 黒い焼付の鋼管に近い暗い F0。懐中電灯の当たる面だけ鈍く光る
+    pm('MR_LegMetal', base=(0.10, 0.10, 0.105), rough=0.35, metal=1.0)    # 机の脚・椅子の脚(黒い鋼管)
+    pm('MR_SteelMetal', base=(0.22, 0.22, 0.225), rough=0.35, metal=1.0)  # 椅子の支柱・倒れた椅子の脚(鋼のガス圧支柱)
+    base = _img_mean_lin(tex('cloth_weave_albedo.jpg'))
+    pal = json.load(open(os.path.join(ctx.TEX, 'room_palette.json')))   # init() より先に呼ばれるので自前で読む
+    for k in CLOTH_KEYS:
+        if k not in pal:
+            continue
+        name = 'MR_Cloth_' + k
+        m = pm(name, files={'albedo': tex('cloth_weave_albedo.jpg'), 'normal': tex('cloth_weave_normal.jpg')}, size=CLOTH_SIZE, rough=0.85,
+               normal_strength=0.8)
+        cell = _img_mean_lin(tex('room_palette.png'), pal[k])
+        MT[name]['tint'] = [round(cell[c] / max(base[c], 1e-4), 4) for c in range(3)]
+        b = _bsdf(m)
+        # sheen 0.3 = sheenColorFactor の最大成分を 0.3 にした布の色(白い sheen だと濃い色の布が白っぽく褪せて見える)
+        mx = max(max(cell), 1e-4)
+        b.inputs['Sheen Weight'].default_value = 1.0
+        b.inputs['Sheen Tint'].default_value = (0.3 * cell[0] / mx, 0.3 * cell[1] / mx, 0.3 * cell[2] / mx, 1.0)
+        b.inputs['Sheen Roughness'].default_value = 0.6
+
+
+def cloth(key):
+    """寝具の色見本キー → 布の材質(無ければ None = 従来の色見本)。"""
+    if key in CLOTH_KEYS and key in PALUV:
+        CLOTH_USED.add(key)
+        return 'MR_Cloth_' + key
+    return None
 
 
 # ---------------------------------------------------------------- 幾何の道具
@@ -100,8 +182,9 @@ class B:
         mn, mx = _mm(mn, mx)
         return self.mb.box(mn, mx, mat, keep=keep, mats=mats)
 
-    def pbox(self, mn, mx, key, gloss=False, keep=None, front=None, front_uv=None, front_mat=None, cull=()):
+    def pbox(self, mn, mx, key, gloss=False, keep=None, front=None, front_uv=None, front_mat=None, cull=(), tile=None):
         """全面を色見本 key で。front=('+x'…) の面だけアトラス(front_mat, front_uv)に。
+        P6b-E2: tile = 材質名を渡すと色見本の代わりにその材質(世界座標の UV)で張る。面の数・並びは同じ(ライトマップの UV を変えない)。
         容量のため、床から 0.95m より低い箱の底面(下から見えない)と天井に接する上面は張らない。cull = 張らない面(壁に付く背面など)。"""
         mn, mx = _mm(mn, mx)
         if keep is None:
@@ -116,6 +199,8 @@ class B:
             if front is not None and k == front and front_uv is not None:
                 f = self.mb.quad(pts, n, front_mat)
                 C.set_uv(f, self.mb, uv_rect(front_uv))
+            elif tile is not None:
+                self.mb.quad(pts, n, tile)
             else:
                 f = self.mb.quad(pts, n, mat)
                 C.set_uv(f, self.mb, uv_rect(PALUV[key]))
@@ -198,10 +283,10 @@ class IL:
         """正面と反対(奥)の向きのキー。"""
         return {'+x': '-x', '-x': '+x', '+z': '-z', '-z': '+z'}[self.front]
 
-    def pbox(self, b, a0, a1, y0, y1, d0, d1, key, gloss=False, keep=None, atlas=None, atlas_mat='MR_Appl', back=False):
+    def pbox(self, b, a0, a1, y0, y1, d0, d1, key, gloss=False, keep=None, atlas=None, atlas_mat='MR_Appl', back=False, tile=None):
         mn, mx = self.mm(a0, a1, y0, y1, d0, d1)
         b.pbox(mn, mx, key, gloss=gloss, keep=keep, front=self.front if atlas else None, front_uv=atlas, front_mat=atlas_mat,
-               cull=(self.back_key(),) if back else ())
+               cull=(self.back_key(),) if back else (), tile=tile)
 
 
 # ---------------------------------------------------------------- 壁の面(穴あき)
@@ -373,21 +458,21 @@ def window_unit(room, col, operable, curtain_key=None):
 def _bed(b, it, base, var):
     L = IL(it, base)
     W, D = L.W, L.D
-    L.box(b, 0.0, W, 0.08, 0.30, 0.0, D, 'MR_DeskWood', keep=lambda k, c, n: k != '-y')            # フレーム
+    L.box(b, 0.0, W, 0.08, 0.30, 0.0, D, 'MR_VarnishWood', keep=lambda k, c, n: k != '-y')            # フレーム(P6b-E2: ニスの木部)
     for (a, d) in ((0.04, 0.06), (W - 0.08, 0.06), (0.04, D - 0.1), (W - 0.08, D - 0.1)):
-        L.box(b, a, a + 0.04, 0.0, 0.08, d, d + 0.04, 'MR_DeskWood', keep=lambda k, c, n: k not in ('+y', '-y'))
-    L.box(b, 0.0, W, 0.0, 0.78, 0.0, 0.04, 'MR_DeskWood')                                             # 頭の板(外壁側)
-    L.pbox(b, 0.03, W - 0.03, 0.30, 0.50, 0.05, D - 0.03, 'mattress', keep=lambda k, c, n: k != '-y')
+        L.box(b, a, a + 0.04, 0.0, 0.08, d, d + 0.04, 'MR_VarnishWood', keep=lambda k, c, n: k not in ('+y', '-y'))
+    L.box(b, 0.0, W, 0.0, 0.78, 0.0, 0.04, 'MR_VarnishWood')                                             # 頭の板(外壁側)
+    L.pbox(b, 0.03, W - 0.03, 0.30, 0.50, 0.05, D - 0.03, 'mattress', keep=lambda k, c, n: k != '-y', tile=cloth('mattress'))
     bed = var.get('bedding')
     if bed:
         made = var.get('type') == 'tidy'
         if made:
-            L.pbox(b, 0.0, W, 0.48, 0.58, 0.55, D - 0.02, bed, keep=lambda k, c, n: k != '-y')
-            L.pbox(b, 0.12, W - 0.12, 0.5, 0.63, 0.1, 0.45, 'white', keep=lambda k, c, n: k != '-y')
+            L.pbox(b, 0.0, W, 0.48, 0.58, 0.55, D - 0.02, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))
+            L.pbox(b, 0.12, W - 0.12, 0.5, 0.63, 0.1, 0.45, 'white', keep=lambda k, c, n: k != '-y', tile=cloth('white'))
         else:
-            L.pbox(b, 0.02, W - 0.05, 0.48, 0.60, 0.9, D - 0.1, bed, keep=lambda k, c, n: k != '-y')
-            L.pbox(b, 0.1, W - 0.2, 0.55, 0.70, 0.75, 1.3, bed, keep=lambda k, c, n: k != '-y')      # めくれた掛け布団の山
-            L.pbox(b, 0.18, W - 0.1, 0.5, 0.64, 0.08, 0.42, 'white', keep=lambda k, c, n: k != '-y')
+            L.pbox(b, 0.02, W - 0.05, 0.48, 0.60, 0.9, D - 0.1, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))
+            L.pbox(b, 0.1, W - 0.2, 0.55, 0.70, 0.75, 1.3, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))      # めくれた掛け布団の山
+            L.pbox(b, 0.18, W - 0.1, 0.5, 0.64, 0.08, 0.42, 'white', keep=lambda k, c, n: k != '-y', tile=cloth('white'))
     else:
         L.pbox(b, 0.03, W - 0.03, 0.50, 0.505, 0.05, D - 0.03, 'trashbag', gloss=True, keep=lambda k, c, n: k == '+y')   # 空室: ビニールを掛けたマットレス
 
@@ -580,24 +665,24 @@ def build_unit_items(room, col):
             _burst_locker(col, it, base, rid)
         elif k == 'desk':
             W, D = L.W, L.D
-            L.box(b, 0, W, 0.69, 0.72, 0, D, 'MR_DeskWood')
+            L.box(b, 0, W, 0.69, 0.72, 0, D, 'MR_VarnishWood')                                          # 天板(P6b-E2: ニス)
             for a in (0.02, W - 0.05):
-                L.pbox(b, a, a + 0.03, 0.0, 0.69, 0.02, D - 0.02, 'darkgray')
+                L.pbox(b, a, a + 0.03, 0.0, 0.69, 0.02, D - 0.02, 'darkgray', tile='MR_LegMetal')         # 脚(P6b-E2: 金属)
             L.pbox(b, 0.05, W - 0.05, 0.3, 0.66, D - 0.03, D - 0.01, 'darkgray')
         elif k == 'chair':
             W, D = L.W, L.D
             L.pbox(b, 0.02, W - 0.02, 0.42, 0.49, 0.04, D - 0.04, 'chair')
             L.pbox(b, 0.04, W - 0.04, 0.52, 0.88, D - 0.07, D - 0.02, 'chair')
-            L.pbox(b, W / 2 - 0.025, W / 2 + 0.025, 0.06, 0.42, D / 2 - 0.025, D / 2 + 0.025, 'steel', gloss=True)
-            L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray')
-            L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray')
+            L.pbox(b, W / 2 - 0.025, W / 2 + 0.025, 0.06, 0.42, D / 2 - 0.025, D / 2 + 0.025, 'steel', gloss=True, tile='MR_SteelMetal')
+            L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray', tile='MR_LegMetal')
+            L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray', tile='MR_LegMetal')
         elif k == 'chairfallen':
             # P5b-1(220): 横倒しの椅子。椅子の「上」= a(0→0.88)、横幅 = y(0.44)、前後 = d(0.38)
             L.pbox(b, 0.42, 0.49, 0.02, 0.42, 0.0, 0.36, 'chair')               # 座面(縦になった)
             L.pbox(b, 0.52, 0.88, 0.04, 0.40, 0.32, 0.37, 'chair')              # 背もたれ(床に寝た)
             for yy in (0.03, 0.37):
                 for dd in (0.02, 0.31):
-                    L.pbox(b, 0.0, 0.42, yy, yy + 0.03, dd, dd + 0.03, 'steel', gloss=True)   # 脚(横向き)
+                    L.pbox(b, 0.0, 0.42, yy, yy + 0.03, dd, dd + 0.03, 'steel', gloss=True, tile='MR_SteelMetal')   # 脚(横向き)
         elif k == 'pillar':
             mn, mx = L.mm(0, L.W, 0, L.H, 0, L.D)
             b.box(mn, mx, 'MR_Wall', keep=lambda kk, c, n, Bk=L.back_key(): kk not in ('+y', '-y', Bk))
@@ -605,7 +690,7 @@ def build_unit_items(room, col):
             L.pbox(b, 0.0, L.W, 0.0, L.H, 0.0, L.D - 0.005, 'appliance', gloss=True, atlas=APPUV['acin'], back=True)
         elif k == 'shoecase':
             L.pbox(b, 0, L.W, 0, 0.93, 0.0, L.D, 'woodlight', atlas=APPUV['shoecase'], back=True)
-            L.box(b, -0.01, L.W + 0.01, 0.93, 0.95, -0.01, L.D, 'MR_DeskWood')
+            L.box(b, -0.01, L.W + 0.01, 0.93, 0.95, -0.01, L.D, 'MR_VarnishWood')                         # 天板(P6b-E2: ニス)
         elif k in ('toilet', 'bath'):
             _wetroom(b, it, base, k, rid)
         elif k == 'bed':
@@ -672,7 +757,7 @@ def build_unit_decor(room, col):
         elif k == 'snack':
             L.pbox(b, 0, W, 0, H, 0, D, 'orange', gloss=True)
         elif k == 'shelf':
-            L.pbox(b, 0, W, 0, 0.02, 0, D, 'woodlight')
+            L.pbox(b, 0, W, 0, 0.02, 0, D, 'woodlight', tile='MR_VarnishWoodLight')                        # 棚板(P6b-E2: ニス)
             for a in (0.04, W - 0.06):
                 L.pbox(b, a, a + 0.02, -0.12, 0.0, D - 0.04, D, 'steel')
             n = it.get('books', 5)

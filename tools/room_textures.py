@@ -6,6 +6,8 @@
 #   room_prints.png / .json              … 架空のポスター 6 種(図柄のみ・文字なし)・掲示板・本の背・書類・カレンダー・監視モニター・段ボール
 #   room_wreck.jpg / .json               … P5b-1: 220(前作の痕跡の部屋)の壁の文字・引っかき傷・顔のない風景の写真。地は壁のクロス(wall_cloth)を
 #                                          同じ縮尺で敷く(壁に直に書いた見え方)。文字は架空(「でられない」など。実在の名前・住所・日付は書かない)
+#   furn_wood_roughness.jpg              … P6b-E2: ニス仕上げの木部の粗さ(0.30〜0.40)。door_wood_albedo の木目から作る(同じ UV で木目に沿う)
+#   cloth_weave_{albedo,normal}.jpg      … P6b-E2: シーツ・布団の平織り(0.40m 角でタイル可能。色は材質ごとの tint)
 #   実在の製品・ブランド・ロゴ・文字は描かない(room_wreck の架空の落書きを除く)。JSON の UV は Blender の規約(左下原点)。
 import json, math, os
 import numpy as np
@@ -41,6 +43,7 @@ def run(save, n2tex, normal_from_height, OUT):
     _appliances(save, OUT)
     _prints(save, OUT)
     _wreck(save, OUT)
+    _furniture(save, OUT)
 
 
 # ---------------------------------------------------------------- フローリング
@@ -469,3 +472,84 @@ def _wreck(save, OUT):
         im.paste(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(0.5)), (x, y))
     save('room_wreck.jpg', im, q=88)
     _uvjson(WRECK, W, H, OUT, 'room_wreck.json')
+
+
+# ---------------------------------------------------------------- P6b-E2: 家具の質感(ニスの木部・布団の織り)
+def _blur_wrap(a, sigma):
+    """周期境界のガウスぼかし(FFT)。タイル可能なテクスチャの高域を取り出すため。"""
+    h, w = a.shape
+    fy = np.fft.fftfreq(h)[:, None]; fx = np.fft.fftfreq(w)[None, :]
+    g = np.exp(-2 * (math.pi * sigma) ** 2 * (fx * fx + fy * fy))
+    return np.real(np.fft.ifft2(np.fft.fft2(a) * g)).astype(np.float32)
+
+
+def _normal_wrap(h, k):
+    gx = (np.roll(h, -1, 1) - np.roll(h, 1, 1)) * 0.5
+    gy = (np.roll(h, -1, 0) - np.roll(h, 1, 0)) * 0.5
+    nx, ny, nz = -gx * k, gy * k, np.ones_like(h, np.float32)
+    l = np.sqrt(nx * nx + ny * ny + nz * nz)
+    return np.stack([nx / l * 0.5 + 0.5, ny / l * 0.5 + 0.5, nz / l * 0.5 + 0.5], axis=2)
+
+
+def _value_noise_wrap(n, cells, seed):
+    rng = np.random.default_rng(seed)
+    g = rng.random((cells, cells)).astype(np.float32)
+    t = np.arange(n) * cells / n
+    i0 = t.astype(int); f = t - i0; f = f * f * (3 - 2 * f); i1 = (i0 + 1) % cells
+    a = g[i0][:, i0]; b = g[i0][:, i1]; c = g[i1][:, i0]; d = g[i1][:, i1]
+    fy = f[:, None]; fx = f[None, :]
+    return a * (1 - fx) * (1 - fy) + b * fx * (1 - fy) + c * (1 - fx) * fy + d * fx * fy
+
+
+CLOTH_SIZE = 0.40        # cloth_weave_* の1枚が覆う長さ(m)。build_rooms.py の MR_Cloth_* の size と同じ
+CLOTH_ALB = 0.84         # 織りの albedo の基準(sRGB)。build_rooms.py が tint を割り戻す
+
+
+def _furniture(save, OUT):
+    # 1) ニスの木部の粗さ: door_wood_albedo(1024)の木目の高域。濃い筋(導管・晩材)ほどニスが薄く少し粗い
+    src = Image.open(os.path.join(OUT, 'door_wood_albedo.jpg')).convert('L').resize((512, 512), Image.LANCZOS)
+    lum = np.asarray(src, np.float32) / 255.0
+    hp = lum - _blur_wrap(lum, 12)
+    lo, hi = np.percentile(hp, 3), np.percentile(hp, 97)
+    z = np.clip((hp - lo) / max(hi - lo, 1e-6), 0, 1)              # 0 = 濃い筋 … 1 = 明るい地
+    wipe = _value_noise_wrap(512, 6, 41)                            # 拭きムラ(ごく弱い)
+    r = 0.302 + 0.085 * (1 - z) + 0.012 * (wipe - 0.5)
+    r = np.clip(r, 0.31, 0.39)   # JPEG の誤差(±0.02)を見込んで内側に
+    save('furn_wood_roughness.jpg', np.repeat(r[..., None], 3, 2), q=90)
+    # 2) 平織り: 512px = 0.40m(糸の間隔 8px ≒ 6.3mm。実物より粗いが、1m の距離・720p で織りの凹凸として読める大きさ。細かいと mip で消える)
+    N, P = 512, 8
+    yy, xx = np.mgrid[0:N, 0:N].astype(np.float32)
+    rng = np.random.default_rng(57)
+    tx, ty = xx / P, yy / P
+    i, j = np.floor(tx), np.floor(ty)
+    fx, fy = tx - i, ty - j
+    jit_w = (0.85 + 0.3 * rng.random(N // P).astype(np.float32))[(i.astype(int)) % (N // P)]   # 糸ごとの太さのむら
+    jit_f = (0.85 + 0.3 * rng.random(N // P).astype(np.float32))[(j.astype(int)) % (N // P)]
+    prof_w = np.sin(math.pi * fx) ** 0.7 * jit_w
+    prof_f = np.sin(math.pi * fy) ** 0.7 * jit_f
+    und_w = 0.55 + 0.45 * np.sin(math.pi * (ty + i))                # 経糸の上下(1目ごとに浮き沈み)
+    und_f = 0.55 - 0.45 * np.sin(math.pi * (tx + j))
+    hw, hf = prof_w * und_w, prof_f * und_f
+    h = np.maximum(hw, hf)
+    slub = _value_noise_wrap(N, 32, 58)                              # 糸のむら(太い所)
+    wrinkle = _value_noise_wrap(N, 3, 59) * 0.6 + _value_noise_wrap(N, 7, 60) * 0.4   # ゆるいしわ(13〜6cm。布の柔らかさ)
+    height = h * (0.85 + 0.3 * slub) + 9.0 * wrinkle
+    save('cloth_weave_normal.jpg', np.clip(_normal_wrap(_blur_wrap(height, 0.6), 2.2), 0, 1), q=90)
+    shade = (h - h.mean()) / (h.std() + 1e-6)
+    v = CLOTH_ALB + 0.06 * shade + 0.03 * (slub - 0.5)
+    v = np.clip(v, 0, 1)
+    save('cloth_weave_albedo.jpg', np.repeat(v[..., None], 3, 2), q=88)
+
+
+if __name__ == '__main__':
+    # P6b-E2: 家具の質感テクスチャだけを作る(make_textures.py を全部回すと他のテクスチャも書き直すため)。python3 tools/room_textures.py --furniture
+    import sys
+    if '--furniture' in sys.argv:
+        OUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'build', 'tex')
+
+        def _save(name, arr_or_img, q=86, size=None):
+            im = arr_or_img if isinstance(arr_or_img, Image.Image) else Image.fromarray((np.clip(arr_or_img, 0, 1) * 255 + 0.5).astype(np.uint8))
+            path = os.path.join(OUT_DIR, name)
+            im.convert('RGB').save(path, quality=q, subsampling=0 if q >= 90 else 2, optimize=True)
+            print(f'  {name:28s} {im.size[0]}x{im.size[1]}  {os.path.getsize(path) / 1024:7.1f} KB')
+        _furniture(_save, OUT_DIR)
