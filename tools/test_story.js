@@ -16,7 +16,8 @@
 //  6) 第6段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312(無限の自室)→ R5 の机の正面玄関の鍵 → 312 の扉から 3F。中身は test_spaces.js)
 //  7) 第7段: 正面玄関(鍵スイッチの前は外側の自動ドアが開かない→鍵で開く)→ 駐車場の車 3 台(2 台は鍵・黒い車のグローブボックスに南京錠の鍵)
 //  8) 第8段: 410 の隔て板の南京錠(鍵なしでは越えられない→鍵で roofA)→ 屋上A の 705 の鍵
-//  9) 第9段: 705 → X705(P5b-2b: 柱の広間。机まで歩く)→ 地下の鉄扉の鍵 → 灯りが消え、反対側(南)の出口から管理人 → 西の壁際を回って南の出口へ → 追跡(EV は反応しない・管理人は階段で追う経路)→ 7F へ戻ると管理人も出てくる → 1F で第10段
+//  9) 第9段: 705 → X705(P5b-2b: 柱の広間。机まで歩く)→ 地下の鉄扉の鍵 → 灯りが消え、反対側(南)の出口から管理人 → 西の壁際を回って南の出口へ → 7F へ戻ると管理人も出てくる →
+//     P6b-D: 階段は鎖のまま、7F に止めてあるカゴを呼ぶとすぐ開く → 乗って 1 → 扉が閉まると追跡は終わり(管理人は 4F へ・1F を避ける)→ 1F で第10段
 // 10) 第10段: 地下の鉄扉(鍵)→ XB1 → 車のキー(管理人は地下へ来ない。P5b-2b: ループ・迷路は test_spaces.js、ここでは抜けたことにして作業場へ)
 // 11) 第11段: 敷地へ出ると管理人が玄関から敷地へ追ってくる → 黒い車まで走って間に合う → エンディング(運転席の視点 → 「脱出した」)
 // 12) チェックポイント: 死亡 → 段の開始位置へ。段・持ち物・解放・壊れた扉が残る
@@ -27,7 +28,7 @@
 //     目が合う → ゆっくり 2 歩で出てくる(見える・遅い)→ 視点が出口へ旋回して操作が戻る(扉の方 ±25°・向きの跳びなし・マウスが続く)→
 //     grace(≥2.5 秒、221 が最長)の後に歩いて追い始める。ライト消灯なら中で自分の懐中電灯。221(点灯)と 606(消灯)。
 //     611: 視点固定中〜grace に管理人の目の前に置いても・ATTACK を直接要求しても死なない。609: 同じロッカーがあるが開かない
-// 19) P6b-C #3: 外階段・北階段の鉄扉の鎖(第3段〜第9段の追跡の前。開いていた扉も閉じる・管理人も開けない・追跡の開始で外れる)
+// 19) P6b-C #3 → P6b-D 改訂: 外階段・北階段の鉄扉の鎖(第5段 = 220 の鍵から恒久。開いていた扉も閉じる・管理人も開けない・追跡でも外れない)
 // 20) P6b-C #3: 異空間(105・312)から出たら管理人は追跡を終え、出た階に 30 秒来ない(走る音でも)
 // 21) P6b-C #5: 地下への階段の口の灯り(2 灯・影なし・札「地下」・1F の通路の端から見ると口が周囲より明るい)
 // 14) P5b-1b フリーズの再現: 追跡中に外階段で 1F へ逃げても描画・視点・操作が戻る、段の途中で死んでも復帰後に歩ける、空振りでムービーが畳まれる
@@ -140,7 +141,7 @@ export async function run(N) {
       const okPos = N.level === sp.level && Math.hypot(N.player.pos.x - sp.x, N.player.pos.z - sp.z) < 0.05;
       const okObj = N.hudState().objective === st.objective && !!st.objective;
       const okEV = st.evDisabled === (n >= 10);
-      const chainWant = n >= 3 && n <= 9, mst = N.doorApi.get('MST2');   // P6b-C(§3.10 #3): 第3段〜第9段(追跡の前)は外階段・北階段の鎖
+      const chainWant = n >= 5, mst = N.doorApi.get('MST2');   // P6b-C(§3.10 #3)→ P6b-D 改訂: 第5段(220 の鍵)から恒久で外階段・北階段の鎖
       const okChain = S.chained === chainWant && !!mst.chained === chainWant && !!N.doorApi.get('NST3').chained === chainWant;
       const ok = st.stage === n && okItem && okUn && okNot && okFlags && okAI && okPos && okObj && okEV && okChain;
       if (!ok) pass = false;
@@ -408,7 +409,7 @@ export async function run(N) {
     const st = S.state();
     const pass = hintNoKey.includes('調べる') && toastNoKey.includes('錠') && stillLocked && hintKey.includes('鍵を使う') && open
       && ['105', '220', '312', '705', 'B1', '玄関', '車'].every((k) => hooks.includes(k)) && hooks.length >= 9 && onlyKey.join() === 'k105'
-      && pickHint.includes('拾う') && st.stage === 3 && st.item === '105' && N.hudState().objective === '105号室へ' && S.chained;
+      && pickHint.includes('拾う') && st.stage === 3 && st.item === '105' && N.hudState().objective === '105号室へ' && !S.chained;   // P6b-D: 鎖は第5段から
     return { pass, hintNoKey, toastNoKey, stillLocked, hintKey, open, hooks, keysOnFloor1: onlyKey, pickHint, stage: st.stage, item: st.item, events: evs(n0) };
   });
 
@@ -638,7 +639,6 @@ export async function run(N) {
     const t0 = N.ai.time;
     const pickHint = pickAt(pk('kB1'));
     const objChase = (N.pump(DT, 2, false), N.hudState().objective);
-    const evDis = S.evDisabled && N.ai.noEV && N.ai.allowStairs;
     N.pump(DT, 40, false);
     const appear = N.ai.events.find((e) => e.t > t0 && e.ev === 'appear_705');
     const ePos = { x: N.enemyObj.pos.x, z: N.enemyObj.pos.z, lv: N.ai.level };
@@ -662,29 +662,38 @@ export async function run(N) {
     let enemyOn7 = null;
     walkTo(16.0, 21.2, 300, 0.2, true);
     for (let i = 0; i < 60 * 8 && enemyOn7 === null; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 && !N.ai.transit) enemyOn7 = +(N.ai.time - t0).toFixed(2); if (N.ai.state === 'ATTACK') { dead = true; break; } }
-    // EV は反応しない(呼びボタン)
-    quiet();
+    // P6b-D(§3.10 #3 改訂): 階段は鎖のまま。EV で下りる: カゴは 7F に止まっている(呼ぶとすぐ開く)→ 乗って 1 → 扉が閉まると追跡は終わり(管理人は乗れない)→ 1F で第10段
+    const chainedChase = S.chained && N.doorApi.get('MST7').chained;
+    const evOn = !S.evDisabled && N.ai.noEV && !N.ai.allowStairs;
+    const car0 = { level: N.elevator.car.level, state: N.elevator.car.state };
+    N.enemyObj.place(30.0, 21.2, -Math.PI / 2);   // 追跡は続けたまま、管理人を東の端へ離して遅くする(呼んで乗る間に捕まらないよう)
+    N.ai._chaseSlowUntil = N.ai.time + 30; N.ai._chaseSlowSpeed = 0.4;
+    const chasing0 = N.ai.state === 'CHASE' || N.ai.state === 'APPEAR';
     const panel = N.world.floors.get(7).panel;
-    { const ex = panel.x - 0.18, ez = panel.z - 0.9; await tp(7, ex, ez, Math.atan2(-(panel.x - ex), -(panel.z - ez))); }
-    N.pump(DT, 2, false);
+    walkTo(panel.x - 0.18, panel.z - 0.9, 600, 0.15, true);
+    face(panel.x, panel.z, 0); N.pump(DT, 2, false);
     const callHint = N.hudState().hint;
-    const ev0 = N.elevator.events.length ? N.elevator.events[N.elevator.events.length - 1].n : 0;
     tap('KeyE'); N.pump(DT, 4, false);
     const evToast = N.hudState().toast;
-    const evCalled = N.elevator.events.some((e) => e.n > ev0 && e.ev === 'call');
-    // 管理人の経路: 7F → 1F は階段(EV を使わない)
-    N.ai.allowStairs = true; N.ai.noEV = true;
-    const route = N.ai._route(16.0, 21.2, 17.6, 23.5, 7, 1);
-    const vias = [...new Set(route.map((w) => w.via))];
-    // 1F へ下りたら第10段「地下へ」
-    await tp(1, 17.6, 23.5, 0);
+    for (let i = 0; i < 120 && N.elevator.car.state !== 'open'; i++) N.pump(DT, 1, false);
+    const openedAt7 = N.elevator.car.level === 7 && N.elevator.car.state === 'open';
+    const g = N.elevator.rooms[7].geom.inner, cx = (g[0] + g[2]) / 2, cz = (g[1] + g[3]) / 2;
+    walkTo(7.15, g[1] - 0.6, 300, 0.15); walkTo(7.15, cz, 300, 0.15);   // カゴの戸口は東寄り(x 6.7〜7.7)
+    const inCar = N.elevator.inCar(N.player.pos.x, N.player.pos.z, 7);
+    const atCar = { ...pos(), car: N.elevator.car.state, ai: N.ai.state, e: [+N.enemyObj.pos.x.toFixed(2), +N.enemyObj.pos.z.toFixed(2)], frozen: N.player.frozen, movie: N.movie.active, vl: N.viewLock.active };
+    tap('Digit1');
+    let endAt = null, endState = null;
+    const n0 = S.logCount;
+    for (let i = 0; i < 60 * 6 && endAt === null; i++) { N.pump(DT, 1, false); if (S.events.some((e) => e.n > n0 && e.ev === 'final_chase_ev')) { endAt = +(N.ai.time - t0).toFixed(2); endState = { open: N.elevator.car.open, state: N.elevator.car.state, ai: N.ai.state, aiLevel: N.ai.level, avoid: N.ai.avoid && N.ai.avoid.lv }; } }
+    for (let i = 0; i < 60 * 25 && N.level !== 1; i++) { N.pump(DT, 1, false); if (i % 20 === 0) await new Promise((r) => setTimeout(r, 10)); if (N.ai.state === 'ATTACK') dead = true; }
     N.pump(DT, 4, false);
     const st = S.state();
-    const pass = evBefore && noKey.toast === '鍵がかかっている' && ent.level === 'X705' && pickHint.includes('拾う') && objChase === '逃げろ' && evDis && !!appear && behind
-      && !dead && on7 && enemyOn7 !== null && callHint.includes('呼ぶ') && evToast === '反応がない' && !evCalled
-      && vias.includes('stair') && !vias.includes('ev') && st.stage === 10 && st.item === 'b1' && N.hudState().objective === '食堂の奥の階段から地下へ' && !N.ai.allowStairs;
-    return { pass, evBefore, noKey, enter: ent, pickHint, objChase, evDisabled: evDis, appear: appear || null, enemyAt: ePos, behind, dead, on7, enemyOn7_s: enemyOn7,
-      callHint, evToast, evCalled, routeVias: vias, stage: st.stage, item: st.item, objective: N.hudState().objective };
+    const pass = evBefore && noKey.toast === '鍵がかかっている' && ent.level === 'X705' && pickHint.includes('拾う') && objChase === '逃げろ' && evOn && chainedChase && !!appear && behind
+      && !dead && on7 && enemyOn7 !== null && car0.level === 7 && chasing0 && callHint.includes('呼ぶ') && evToast === '扉が開く' && openedAt7 && inCar
+      && endAt !== null && endState.open <= 0.001 && endState.ai !== 'CHASE' && endState.aiLevel !== 7 && endState.avoid === 1
+      && N.level === 1 && st.stage === 10 && st.item === 'b1' && N.hudState().objective === '食堂の奥の階段から地下へ' && !N.ai.allowStairs && !N.ai.noEV;
+    return { pass, evBefore, noKey, enter: ent, pickHint, objChase, evOn, chainedChase, appear: appear || null, enemyAt: ePos, behind, dead, on7, enemyOn7_s: enemyOn7,
+      car0, chasing0, callHint, evToast, openedAt7, inCar, atCar, chaseEndAt_s: endAt, chaseEnd: endState, level: N.level, stage: st.stage, item: st.item, objective: N.hudState().objective };
   });
 
   // ---------------------------------------------------------------- 10) 地下の鉄扉 → XB1 → 車のキー
@@ -1156,8 +1165,8 @@ export async function run(N) {
     return { pass, rooms: res };
   });
 
-  // ---------------------------------------------------------------- 19) P6b-C(§3.10 #3): 外階段・北階段の鉄扉の鎖(第3段〜第9段の追跡の前)。第2段は開く/第3段は「鎖がかかっている」・開かない・通れない/
-  //  開いていた扉も鎖で閉じる/第9段の追跡の開始で外れて開く/第10段は鎖なし/管理人の扉 API でも開かない
+  // ---------------------------------------------------------------- 19) P6b-C(§3.10 #3)→ P6b-D 改訂: 外階段・北階段の鉄扉の鎖は第5段(220 の鍵)から恒久。第2〜4段は開く/第5段から「鎖がかかっている」・開かない・通れない/
+  //  開いていた扉も鎖で閉じる/第9段の追跡の開始でも外れない/第10・11段も鎖/管理人の扉 API でも開かない/第4段へ戻すと外れる
   await T('19_p6bc_chains_stair_doors', async () => {
     const tryDoor = async (lv, x, z, yaw, id, look) => {
       await tp(lv, x, z, yaw); N.setView(x, z, yaw, 0); N.pump(DT, 2, false);
@@ -1172,35 +1181,47 @@ export async function run(N) {
       return r;
     };
     const westOfMST = (p) => p.x < 5.9, eastOfNST = (p) => p.x > 7.9;
+    for (const id of CHAIN_IDS) { const d = door(id); d.target = 0; d.angle = 0; if (d.node) d.node.rotation.y = 0; if (d.collision) d.collision.disabled = false; }   // 前のケースで開いたままの扉を閉じておく
+    // P6b-D 改訂: 鎖は第5段の開始(6F で 220 の鍵を取った時)から恒久。第3・4段(105・6F の捜索)は外階段・北階段が使える
     S.applyStage(2); quiet();
     const s2 = await tryDoor(2, 6.6, 21.2, Math.PI / 2, 'MST2', westOfMST);
-    // 開いたまま第3段になる(105 の鍵を取った瞬間)→ 閉じて鎖
+    S.applyStage(3); quiet();
+    const s3 = await tryDoor(3, 7.0, 0.725, -Math.PI / 2, 'NST3', eastOfNST);
+    S.applyStage(4); quiet();
+    const s4 = await tryDoor(6, 6.6, 21.2, Math.PI / 2, 'MST6', westOfMST);
+    // 開いたまま第5段になる(6F の 609 で 220 の鍵を取った瞬間)→ 閉じて鎖・画面中央に 3.5 秒「ガチャン。どこかで鎖がかけられた音がした。」
     N.doorApi.open('MST2'); N.pump(DT, 60, false);
     const openBefore = N.doorApi.isOpen('MST2');
-    S.setStage(3); N.pump(DT, 2, false);
-    const closedByChain = !N.doorApi.isOpen('MST2') && door('MST2').angle === 0 && door('MST2').chained;
-    S.applyStage(3); quiet();
-    const s3m = await tryDoor(2, 6.6, 21.2, Math.PI / 2, 'MST2', westOfMST);
-    const s3n = await tryDoor(3, 7.0, 0.725, -Math.PI / 2, 'NST3', eastOfNST);
+    S.pick('k220'); N.pump(DT, 2, false);
+    const closedByChain = S.stage === 5 && !N.doorApi.isOpen('MST2') && door('MST2').angle === 0 && door('MST2').chained;
+    const ban0 = N.hudState().banner;
+    N.pump(DT, 60 * 3.3, false); const ban33 = N.hudState().banner;
+    N.pump(DT, 60 * 0.4, false); const ban37 = N.hudState().banner;
+    const bannerEl = document.getElementById('hud-banner'); for (const an of bannerEl.getAnimations()) an.finish();
+    const banner = { at0: ban0, at3_3: ban33, at3_7: ban37 };
+    S.applyStage(5); quiet();
+    const s5m = await tryDoor(2, 6.6, 21.2, Math.PI / 2, 'MST2', westOfMST);
+    const s5n = await tryDoor(3, 7.0, 0.725, -Math.PI / 2, 'NST3', eastOfNST);
     const allChained = CHAIN_IDS.every((id) => door(id).chained && door(id).locked && door(id).storyLock);
     N.doorApi.open('MST4'); N.pump(DT, 30, false);
     const npcOpen = N.doorApi.isOpen('MST4');
-    // 第5段(220)も鎖(死亡 → 復帰で残ることは 12 番)
-    S.applyStage(5); quiet();
-    const s5 = await tryDoor(5, 6.6, 21.2, Math.PI / 2, 'MST5', westOfMST);
-    // 第9段: 追跡の前は鎖 → 地下の鍵(追跡の開始)で外れる
+    // 第9段: 追跡の前も、地下の鍵(追跡の開始)の後も鎖のまま
     S.applyStage(9); quiet();
     const s9before = await tryDoor(7, 6.6, 21.2, Math.PI / 2, 'MST7', westOfMST);
     S.pick('kB1'); N.pump(DT, 2, false); S.pending = []; quiet();
-    const chase = S.sub === 'chase' && !S.chained && !door('MST7').chained && !door('NST2').locked;
+    const chase = S.sub === 'chase' && S.chained && door('MST7').chained && door('NST2').locked;
     const s9chase = await tryDoor(7, 6.6, 21.2, Math.PI / 2, 'MST7', westOfMST);
     S.applyStage(10); quiet();
     const s10 = await tryDoor(1, 6.6, 21.2, Math.PI / 2, 'MST1', westOfMST);
-    const ok2 = s2.hint.includes('開ける') && s2.open && s2.through && !s2.propVisible;
+    S.applyStage(11); quiet();
+    const s11 = await tryDoor(3, 7.0, 0.725, -Math.PI / 2, 'NST3', eastOfNST);
+    S.applyStage(4); quiet(); N.pump(DT, 2, false);
+    const rewind = !S.chained && !door('MST2').chained && !door('MST2').locked;
+    const okOpen = (r) => r.hint.includes('開ける') && r.open && r.through && !r.propVisible;
     const okC = (r) => r.hint.includes('鎖がかかっている') && r.toast === '鎖がかかっている' && !r.open && r.angle === 0 && r.rattle && !r.through && r.propVisible;
-    const pass = ok2 && openBefore && closedByChain && okC(s3m) && okC(s3n) && allChained && !npcOpen && okC(s5) && okC(s9before) && chase
-      && s9chase.hint.includes('開ける') && s9chase.open && s9chase.through && !s9chase.propVisible && s10.open && s10.through;
-    return { pass, stage2: s2, openBefore, closedByChain, stage3: { MST2: s3m, NST3: s3n }, allChained, npcOpen, stage5: s5, stage9: { before: s9before, chase, after: s9chase }, stage10: s10 };
+    const pass = okOpen(s2) && okOpen(s3) && okOpen(s4) && openBefore && closedByChain && banner.at0 === 'ガチャン。どこかで鎖がかけられた音がした。' && banner.at3_3 === banner.at0 && banner.at3_7 === '' && okC(s5m) && okC(s5n) && allChained && !npcOpen && okC(s9before) && chase && okC(s9chase)
+      && okC(s10) && okC(s11) && rewind;
+    return { pass, stage2: s2, stage3: s3, stage4: s4, openBefore, closedByChain, banner, stage5: { MST2: s5m, NST3: s5n }, allChained, npcOpen, stage9: { before: s9before, chase, after: s9chase }, stage10: s10, stage11: s11, rewindTo4: rewind };
   });
 
   // ---------------------------------------------------------------- 20) P6b-C(§3.10 #3): 異空間から出たら管理人は追跡を終え、出た階には 30 秒現れない(走って音を立てても)。312 から出た時に 3F にいた管理人は別の階へ
