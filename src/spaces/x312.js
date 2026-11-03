@@ -126,7 +126,8 @@ async function loadTemplate(ctx) {
       if (tu > 5.88 && mat.name === 'MR_Base') return;
       if (mat.name === 'MR_Pal' && inBox(B.curtain, c, 0.05)) { put('curtain', mat, P, N, UV); return; }
       if (mat.name === 'MR_Print' && inBox(B.poster, c)) { put('poster', mat, P, N, UV); return; }
-      if (mat.name === 'MR_Pal' && inBox({ ...B.bed, y1: 0.9 }, c, 0.08) && bedKeys.some((k) => inCell(k, UV[0].x, UV[0].y))) { put('bedding', mat, P, N, UV); return; }
+      const bedMat = (mat.name === 'MR_Pal' && bedKeys.some((k) => inCell(k, UV[0].x, UV[0].y))) || bedKeys.some((k) => mat.name === 'MR_Cloth_' + k);   // P6b-E2: 寝具は布の材質 MR_Cloth_<色>
+      if (bedMat && inBox({ ...B.bed, y1: 0.9 }, c, 0.08)) { put('bedding', mat, P, N, UV); return; }
       if (inBox(B.ac, c, 0.02)) for (const p of P) p.y += 0.1;   // エアコンは扉の枠と重ならないよう 10cm 上へ(天井まで)
       if (mat.name === 'MR_PalGloss' && inBox(B.cup, c)) put('cup', mat, P, N, UV);
       put('static', mat, P, N, UV);
