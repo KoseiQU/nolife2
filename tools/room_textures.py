@@ -7,6 +7,7 @@
 #   room_wreck.jpg / .json               … P5b-1: 220(前作の痕跡の部屋)の壁の文字・引っかき傷・顔のない風景の写真。地は壁のクロス(wall_cloth)を
 #                                          同じ縮尺で敷く(壁に直に書いた見え方)。文字は架空(「でられない」など。実在の名前・住所・日付は書かない)
 #   furn_wood_roughness.jpg              … P6b-E2: ニス仕上げの木部の粗さ(0.30〜0.40)。door_wood_albedo の木目から作る(同じ UV で木目に沿う)
+#   cloth_quilt_normal.jpg               … P6b-E2 2巡目: マットレスのキルトの縫い目(10cm 角)＋平織り(0.40m 角)
 #   cloth_weave_{albedo,normal}.jpg      … P6b-E2: シーツ・布団の平織り(0.40m 角でタイル可能。色は材質ごとの tint)
 #   実在の製品・ブランド・ロゴ・文字は描かない(room_wreck の架空の落書きを除く)。JSON の UV は Blender の規約(左下原点)。
 import json, math, os
@@ -535,6 +536,13 @@ def _furniture(save, OUT):
     wrinkle = _value_noise_wrap(N, 3, 59) * 0.6 + _value_noise_wrap(N, 7, 60) * 0.4   # ゆるいしわ(13〜6cm。布の柔らかさ)
     height = h * (0.85 + 0.3 * slub) + 9.0 * wrinkle
     save('cloth_weave_normal.jpg', np.clip(_normal_wrap(_blur_wrap(height, 0.6), 2.2), 0, 1), q=90)
+    # P6b-E2 2巡目: マットレスのキルト(縫い目の溝 10cm 角＝1 枚に 4×4、縫い目の間はふくらむ)＋平織り
+    cell = N // 4
+    fx2 = (xx % cell) / cell; fy2 = (yy % cell) / cell
+    puff = np.sin(math.pi * fx2) ** 0.5 * np.sin(math.pi * fy2) ** 0.5                     # 縫い目で 0、間で 1
+    seam = np.exp(-((np.minimum(fx2, 1 - fx2) * cell) / 1.6) ** 2) + np.exp(-((np.minimum(fy2, 1 - fy2) * cell) / 1.6) ** 2)
+    qh = 10.0 * puff - 3.0 * np.clip(seam, 0, 1) + h * 0.8
+    save("cloth_quilt_normal.jpg", np.clip(_normal_wrap(_blur_wrap(qh, 0.8), 1.1), 0, 1), q=90)
     shade = (h - h.mean()) / (h.std() + 1e-6)
     v = CLOTH_ALB + 0.06 * shade + 0.03 * (slub - 0.5)
     v = np.clip(v, 0, 1)

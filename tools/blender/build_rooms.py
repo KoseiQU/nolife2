@@ -131,7 +131,8 @@ def _furniture_materials(ctx):
         if k not in pal:
             continue
         name = 'MR_Cloth_' + k
-        m = pm(name, files={'albedo': tex('cloth_weave_albedo.jpg'), 'normal': tex('cloth_weave_normal.jpg')}, size=CLOTH_SIZE, rough=0.85,
+        nrm = 'cloth_quilt_normal.jpg' if k == 'mattress' else 'cloth_weave_normal.jpg'   # 2巡目: マットレスはキルトの縫い目
+        m = pm(name, files={'albedo': tex('cloth_weave_albedo.jpg'), 'normal': tex(nrm)}, size=CLOTH_SIZE, rough=0.85,
                normal_strength=0.8)
         cell = _img_mean_lin(tex('room_palette.png'), pal[k])
         MT[name]['tint'] = [round(cell[c] / max(base[c], 1e-4), 4) for c in range(3)]

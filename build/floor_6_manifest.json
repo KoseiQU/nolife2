@@ -1510,7 +1510,7 @@
   },
   "MR_Cloth_mattress": {
    "map": "build/tex/cloth_weave_albedo.jpg",
-   "normalMap": "build/tex/cloth_weave_normal.jpg",
+   "normalMap": "build/tex/cloth_quilt_normal.jpg",
    "normalScale": 0.8,
    "tint": [
     0.885,
