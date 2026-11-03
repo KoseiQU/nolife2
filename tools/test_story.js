@@ -8,11 +8,12 @@
 //     「221号室へ戻れ」・机に小さな鍵 → 戻って拾うと第2段「管理室へ」(2 回目は出ない)
 // 1c) P5b-1c 人の速さ: 操作が戻ってから 0.8 秒待って、歩き(Shift なし)で廊下へ出ても追いつかれない → 廊下を走って外階段で 1F へ逃げ切れる
 // 1b) 221 から逃げる途中で死ぬ → 410 から・飛び出しの前(「221号室へ」・管理人は眠る・ロッカーは閉じる)、見せ場は繰り返さない、奥へ進むとまた出る
-//  2) 第2段: キーボックス(小さな鍵で開く・312 の鍵だけ・鍵なしでは開かない)
-//  3) 第3段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312→潜って底の 105 の鍵→浮上→南の新しい入口から戻る。P5b-2a: プールの中身は test_spaces.js)
-//  4) 第4段: 105 → X105(目標「出口へ」)→ 出口の手前のメモ → 第5段 → 出口を抜けると 105 の前(P5b-2a: 中の長い廊下は test_spaces.js)
-//  5) 第5段: 6F の罠 3 室で飛び出し・他の部屋では起きない・609 の机の 220 の鍵
-//  6) 第6段: 220(鍵で開く)→ 荒れた部屋 → 正面玄関の鍵
+//  P6b-C(§3.10 #1): 章の順序 2 管理室(105 の鍵)→ 3 105 → 4 6F(220 の鍵)→ 5 220(312 の鍵)→ 6 312(正面玄関の鍵)
+//  2) 第2段: キーボックス(小さな鍵で開く・105 の鍵だけ・鍵なしでは開かない)
+//  3) 第3段: 105 → X105(目標「出口へ」)→ 出口の手前のメモ → 第4段 → 出口を抜けると 105 の前(中の長い廊下は test_spaces.js)
+//  4) 第4段: 6F の罠 3 室で飛び出し・他の部屋では起きない・609 の机の 220 の鍵
+//  5) 第5段: 220(鍵で開く)→ 荒れた部屋 → 312 の鍵
+//  6) 第6段: 312(鍵のない扉は開かない→鍵で開く→少し開く→別空間 X312(無限の自室)→ R5 の机の正面玄関の鍵 → 312 の扉から 3F。中身は test_spaces.js)
 //  7) 第7段: 正面玄関(鍵スイッチの前は外側の自動ドアが開かない→鍵で開く)→ 駐車場の車 3 台(2 台は鍵・黒い車のグローブボックスに南京錠の鍵)
 //  8) 第8段: 410 の隔て板の南京錠(鍵なしでは越えられない→鍵で roofA)→ 屋上A の 705 の鍵
 //  9) 第9段: 705 → X705(P5b-2b: 柱の広間。机まで歩く)→ 地下の鉄扉の鍵 → 灯りが消え、反対側(南)の出口から管理人 → 西の壁際を回って南の出口へ → 追跡(EV は反応しない・管理人は階段で追う経路)→ 7F へ戻ると管理人も出てくる → 1F で第10段
@@ -26,9 +27,14 @@
 //     目が合う → ゆっくり 2 歩で出てくる(見える・遅い)→ 視点が出口へ旋回して操作が戻る(扉の方 ±25°・向きの跳びなし・マウスが続く)→
 //     grace(≥2.5 秒、221 が最長)の後に歩いて追い始める。ライト消灯なら中で自分の懐中電灯。221(点灯)と 606(消灯)。
 //     611: 視点固定中〜grace に管理人の目の前に置いても・ATTACK を直接要求しても死なない。609: 同じロッカーがあるが開かない
+// 19) P6b-C #3: 外階段・北階段の鉄扉の鎖(第3段〜第9段の追跡の前。開いていた扉も閉じる・管理人も開けない・追跡の開始で外れる)
+// 20) P6b-C #3: 異空間(105・312)から出たら管理人は追跡を終え、出た階に 30 秒来ない(走る音でも)
+// 21) P6b-C #5: 地下への階段の口の灯り(2 灯・影なし・札「地下」・1F の通路の端から見ると口が周囲より明るい)
 // 14) P5b-1b フリーズの再現: 追跡中に外階段で 1F へ逃げても描画・視点・操作が戻る、段の途中で死んでも復帰後に歩ける、空振りでムービーが畳まれる
 
 const DT = 1 / 60;
+const CHAIN_IDS = ['MST1', 'MST2', 'MST3', 'MST4', 'MST5', 'MST6', 'MST7', 'NST2', 'NST3'];   // P6b-C: 鎖の扉(story.js の CHAIN_DOORS と同じ)
+const BASEMENT_VIEW = { at: [6.5, 8.0], look: [7.55, 2.3, 1.45] };   // P6b-C: 1F の食堂から北の通路の突き当たり(地下の口)を見る
 
 export async function run(N) {
   const out = { ok: true, cases: {} };
@@ -105,11 +111,11 @@ export async function run(N) {
     const want = {
       1: { item: null, un: [], roofA: false, ent: false, dormant: true },
       2: { item: 'small', un: [], dormant: false },
-      3: { item: '312', un: ['KEYBOX'] },
-      4: { item: '105', un: ['312'] },
-      5: { item: null, un: ['105'] },
-      6: { item: '220', un: [] },
-      7: { item: 'entrance', un: ['220'] },
+      3: { item: '105', un: ['KEYBOX'] },          // P6b-C(§3.10 #1): 105 → 6F → 220 → 312
+      4: { item: null, un: ['105'] },
+      5: { item: '220', un: ['105'] },
+      6: { item: '312', un: ['220'] },
+      7: { item: 'entrance', un: ['312'] },
       8: { item: 'padlock', un: ['GLOVEBOX', 'KEYSWITCH'], ent: true },
       9: { item: '705', un: ['PADLOCK'], roofA: true },
       10: { item: 'b1', un: ['705'] },
@@ -127,16 +133,18 @@ export async function run(N) {
       const sp = S.respawnPoint();
       const okItem = st.item === w.item;
       const okUn = w.un.every((k) => st.unlocked.includes(k));
-      const NEXT = { 1: 'KEYBOX', 2: 'KEYBOX', 3: '312', 4: '105', 5: '220', 6: '220', 7: 'KEYSWITCH', 8: 'PADLOCK', 9: '705', 10: 'B1DOOR' };   // この段ではまだ開いていない物
+      const NEXT = { 1: 'KEYBOX', 2: 'KEYBOX', 3: '105', 4: '220', 5: '220', 6: '312', 7: 'KEYSWITCH', 8: 'PADLOCK', 9: '705', 10: 'B1DOOR' };   // この段ではまだ開いていない物
       const okNot = n === 11 || !st.unlocked.includes(NEXT[n]);
       const okFlags = (w.roofA === undefined || st.flags.roofA === w.roofA) && (w.ent === undefined || st.flags.entranceOut === w.ent) && st.flags.roofA === (n >= 9) && st.flags.entranceOut === (n >= 8);
       const okAI = w.dormant === undefined ? N.ai.dormant === (n === 1) : N.ai.dormant === w.dormant;
       const okPos = N.level === sp.level && Math.hypot(N.player.pos.x - sp.x, N.player.pos.z - sp.z) < 0.05;
       const okObj = N.hudState().objective === st.objective && !!st.objective;
       const okEV = st.evDisabled === (n >= 10);
-      const ok = st.stage === n && okItem && okUn && okNot && okFlags && okAI && okPos && okObj && okEV;
+      const chainWant = n >= 3 && n <= 9, mst = N.doorApi.get('MST2');   // P6b-C(§3.10 #3): 第3段〜第9段(追跡の前)は外階段・北階段の鎖
+      const okChain = S.chained === chainWant && !!mst.chained === chainWant && !!N.doorApi.get('NST3').chained === chainWant;
+      const ok = st.stage === n && okItem && okUn && okNot && okFlags && okAI && okPos && okObj && okEV && okChain;
       if (!ok) pass = false;
-      res[n] = { ok, item: st.item, unlocked: st.unlocked, flags: st.flags, dormant: N.ai.dormant, level: N.level, objective: N.hudState().objective, evDisabled: st.evDisabled };
+      res[n] = { ok, item: st.item, unlocked: st.unlocked, flags: st.flags, dormant: N.ai.dormant, level: N.level, objective: N.hudState().objective, evDisabled: st.evDisabled, chained: S.chained };
     }
     if (initial) { res.initialFromParam = { q: +q, ...initial }; if (initial.stage !== +q) pass = false; }
     return { pass, res };
@@ -396,65 +404,18 @@ export async function run(N) {
     const open = S.unlocked.has('KEYBOX') && S.item === null && S.keybox.userData.pivot.rotation.y < -1.0;
     const hooks = Object.keys(S.keybox.userData.hooks);
     const onlyKey = S.pickups.filter((q) => q.level === 1 && !S.taken.has(q.id)).map((q) => q.id);
-    const pickHint = pickAt(pk('k312'));
+    const pickHint = pickAt(pk('k105'));   // P6b-C(§3.10 #1): キーボックスには 105 の鍵だけ
     const st = S.state();
     const pass = hintNoKey.includes('調べる') && toastNoKey.includes('錠') && stillLocked && hintKey.includes('鍵を使う') && open
-      && ['105', '220', '312', '705', 'B1', '玄関', '車'].every((k) => hooks.includes(k)) && hooks.length >= 9 && onlyKey.join() === 'k312'
-      && pickHint.includes('拾う') && st.stage === 3 && st.item === '312' && N.hudState().objective === '312号室へ';
+      && ['105', '220', '312', '705', 'B1', '玄関', '車'].every((k) => hooks.includes(k)) && hooks.length >= 9 && onlyKey.join() === 'k105'
+      && pickHint.includes('拾う') && st.stage === 3 && st.item === '105' && N.hudState().objective === '105号室へ' && S.chained;
     return { pass, hintNoKey, toastNoKey, stillLocked, hintKey, open, hooks, keysOnFloor1: onlyKey, pickHint, stage: st.stage, item: st.item, events: evs(n0) };
   });
 
-  // ---------------------------------------------------------------- 3) 312 → X312(無限の自室)→ R5 の机の 105 の鍵 → 312 の扉から 3F
-  await T('3_312_space_key105', async () => {
-    S.applyStage(3); quiet();
-    await tp(3, ...front('312', 0.9), -Math.PI / 2);
-    S.item = null;
-    const noKey = tryLocked('312');
-    S.item = '312';
-    // P5b-4: 戸口を越えたら止まる(X312 の入口の扉は真後ろ = 歩き続けると 312 の扉からすぐ出てしまう)
-    const ent = (() => {
-      const d = door('312');
-      face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
-      const hint = N.hudState().hint, n0 = S.logCount;
-      tap('KeyE'); N.pump(DT, 60, false);
-      const angle = +d.angle.toFixed(2);
-      key('KeyW', true);
-      for (let i = 0; i < 240 && !S.trans && N.level === 3; i++) { face(d.pos[0] + 0.6, d.pos[1], 0); N.pump(DT, 1, false); }
-      key('KeyW', false); waitTrans();
-      return { hint, angle, events: evs(n0), level: N.level };
-    })();
-    const inSpace = N.level === 'X312';
-    // P5b-4: X312 は無限の自室(中身は tools/test_spaces.js)。窓の扉を開けて R5 まで歩き、机の 105 の鍵 → 戻りの最後の部屋(B7)へ移して 312 の扉から出る
-    const SPX = N.spaces, D = SPX.debug('X312');
-    for (let i = 0; i < 200 && !D.ready(); i++) await new Promise((r) => setTimeout(r, 50));
-    const Wr = (i, tu, tz) => { const p = D.world(D.roomAt(i), tu, tz); return [p.x, p.z]; };
-    const trace = [];
-    for (let i = 0; i < 4; i++) {
-      walkTo(...Wr(i, 5.15, 1.45), 900, 0.12);
-      face(...Wr(i, 6, 1.45), 0); N.pump(DT, 2, false); tap('KeyE'); N.pump(DT, 50, false);
-      walkTo(...Wr(i, 6.9, 1.45), 900, 0.12); N.pump(DT, 30, false);
-      trace.push(D.state().room.id);
-    }
-    walkTo(...Wr(4, 4.42, 1.72), 900, 0.12);
-    const pickHint = pickAt(pk('k105'));
-    const st = S.state();
-    N.pump(DT, 30, false);
-    D.jump(7, 1.2, 1.45); N.pump(DT, 20, false);
-    trace.push(D.state().room.id);
-    key('KeyW', true);
-    for (let i = 0; i < 300 && !S.trans && N.level === 'X312'; i++) { face(...Wr(7, -0.5, 1.45), 0); N.pump(DT, 1, false); }   // 戸口の手前 0.45m を越えると出る
-    key('KeyW', false); waitTrans();
-    const back = pos();
-    const pass = noKey.toast === '鍵がかかっている' && noKey.angle < 0.01 && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.angle >= 0.45
-      && ent.events.includes('unlock_door') && ent.events.includes('enter_space') && inSpace && trace.join() === 'R2,R3,R4,R5,B7' && pickHint.includes('拾う') && st.stage === 4 && st.item === '105'
-      && back.level === 3 && Math.hypot(back.x - front('312', 0.9)[0], back.z - front('312', 0.9)[1]) < 0.1;
-    return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back, trace };
-  });
-
-  // ---------------------------------------------------------------- 4) 105 → X105 → (出口の手前の)メモ → 出口 → 105 の前
+  // ---------------------------------------------------------------- 3) 105 → X105 → (出口の手前の)メモ → 出口 → 105 の前(P6b-C §3.10 #1: 第3段)
   //  P5b-2a: X105 は長い廊下(tools/test_spaces.js が中身を見る)。ここでは鍵・目標・メモ・出口の流れだけ: 中の段取りは飛ばして出口の手前へ移す
-  await T('4_105_space_memo', async () => {
-    S.applyStage(4); quiet();
+  await T('3_105_space_memo', async () => {
+    S.applyStage(3); quiet();
     await tp(1, ...front('105', 0.9), -Math.PI / 2);
     S.item = null;
     const noKey = tryLocked('105');
@@ -472,13 +433,13 @@ export async function run(N) {
     const b = N.spaces.def('X105').back;
     const back = pos();
     const pass = noKey.toast === '鍵がかかっている' && !noKey.unlocked && ent.level === 'X105' && objIn === '出口へ' && memoHint.includes('拾う') && toast.includes('6 階')
-      && st.stage === 5 && st.item === null && N.hudState().objective === '6階の部屋から鍵を探せ' && back.level === 1 && Math.hypot(back.x - b.x, back.z - b.z) < 0.1;
+      && st.stage === 4 && st.item === null && N.hudState().objective === '6階の部屋から鍵を探せ' && back.level === 1 && Math.hypot(back.x - b.x, back.z - b.z) < 0.1;
     return { pass, noKey, enter: ent, objectiveInside: objIn, memoHint, toast, stage: st.stage, back };
   });
 
-  // ---------------------------------------------------------------- 5) 6F: 罠 3 室・罠でない部屋・609 の 220 の鍵
-  await T('5_6F_traps_and_key220', async () => {
-    S.applyStage(5);
+  // ---------------------------------------------------------------- 4) 6F: 罠 3 室・罠でない部屋・609 の 220 の鍵(P6b-C: 第4段)
+  await T('4_6F_traps_and_key220', async () => {
+    S.applyStage(4);
     const res = {};
     const rooms6 = N.building.floors.find((f) => f.level === 6).rooms.filter((r) => r.kind === 'unit').map((r) => r.id);
     const allEnterable = rooms6.length === 11 && rooms6.every((id) => room(id).r.door.enterable);
@@ -514,15 +475,15 @@ export async function run(N) {
     const n0 = S.logCount;
     const hint = pickAt(pk('k220'));
     const st = S.state();
-    const ok609 = walked && hint.includes('拾う') && !evs(n0).includes('trap') && st.stage === 6 && st.item === '220' && N.hudState().objective === '220号室へ';
+    const ok609 = walked && hint.includes('拾う') && !evs(n0).includes('trap') && st.stage === 5 && st.item === '220' && N.hudState().objective === '220号室へ';
     if (!ok609) pass = false;
     if (S.traps.size !== 3) pass = false;
     return { pass, allEnterable, rooms: res, room609: { ok: ok609, walked, hint, stage: st.stage, item: st.item }, trapsFired: [...S.traps] };
   });
 
-  // ---------------------------------------------------------------- 6) 220 → 荒れた部屋 → 正面玄関の鍵
-  await T('6_220_wrecked_entrance_key', async () => {
-    S.applyStage(6); quiet();
+  // ---------------------------------------------------------------- 5) 220 → 荒れた部屋 → 312 の鍵(P6b-C: 第5段)
+  await T('5_220_wrecked_key312', async () => {
+    S.applyStage(5); quiet();
     await tp(2, ...front('220', 0.9), 0);
     S.item = null;
     const noKey = tryLocked('220');
@@ -538,11 +499,58 @@ export async function run(N) {
     N.openDoor('220', true); N.pump(DT, 60, false);   // 全開に
     const walked = walkPath([[r.door.pos[0], r.door.pos[1] - 0.6], p.entry, p.room, p.deskFront]);
     const wrecked = r.interior.variant.type === 'wrecked';
-    const pickHint = pickAt(pk('kEntrance'));
+    const pickHint = pickAt(pk('k312'));
     const st = S.state();
     const pass = noKey.toast === '鍵がかかっている' && noKey.angle < 0.01 && hint.includes('鍵を使う') && opened && !d.storyLock && walked && wrecked
-      && pickHint.includes('拾う') && st.stage === 7 && st.item === 'entrance' && N.hudState().objective === '正面玄関から駐車場へ';
+      && pickHint.includes('拾う') && st.stage === 6 && st.item === '312' && N.hudState().objective === '312号室へ';
     return { pass, noKey, hint, opened, walked, wrecked, pickHint, stage: st.stage, item: st.item };
+  });
+
+  // ---------------------------------------------------------------- 6) 312 → X312(無限の自室)→ R5 の机の正面玄関の鍵 → 312 の扉から 3F(P6b-C: 第6段)
+  await T('6_312_space_entrance_key', async () => {
+    S.applyStage(6); quiet();
+    await tp(3, ...front('312', 0.9), -Math.PI / 2);
+    S.item = null;
+    const noKey = tryLocked('312');
+    S.item = '312';
+    // P5b-4: 戸口を越えたら止まる(X312 の入口の扉は真後ろ = 歩き続けると 312 の扉からすぐ出てしまう)
+    const ent = (() => {
+      const d = door('312');
+      face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
+      const hint = N.hudState().hint, n0 = S.logCount;
+      tap('KeyE'); N.pump(DT, 60, false);
+      const angle = +d.angle.toFixed(2);
+      key('KeyW', true);
+      for (let i = 0; i < 240 && !S.trans && N.level === 3; i++) { face(d.pos[0] + 0.6, d.pos[1], 0); N.pump(DT, 1, false); }
+      key('KeyW', false); waitTrans();
+      return { hint, angle, events: evs(n0), level: N.level };
+    })();
+    const inSpace = N.level === 'X312';
+    // P5b-4: X312 は無限の自室(中身は tools/test_spaces.js)。窓の扉を開けて R5 まで歩き、机の 105 の鍵 → 戻りの最後の部屋(B7)へ移して 312 の扉から出る
+    const SPX = N.spaces, D = SPX.debug('X312');
+    for (let i = 0; i < 200 && !D.ready(); i++) await new Promise((r) => setTimeout(r, 50));
+    const Wr = (i, tu, tz) => { const p = D.world(D.roomAt(i), tu, tz); return [p.x, p.z]; };
+    const trace = [];
+    for (let i = 0; i < 4; i++) {
+      walkTo(...Wr(i, 5.15, 1.45), 900, 0.12);
+      face(...Wr(i, 6, 1.45), 0); N.pump(DT, 2, false); tap('KeyE'); N.pump(DT, 50, false);
+      walkTo(...Wr(i, 6.9, 1.45), 900, 0.12); N.pump(DT, 30, false);
+      trace.push(D.state().room.id);
+    }
+    walkTo(...Wr(4, 4.42, 1.72), 900, 0.12);
+    const pickHint = pickAt(pk('kEntrance'));
+    const st = S.state();
+    N.pump(DT, 30, false);
+    D.jump(7, 1.2, 1.45); N.pump(DT, 20, false);
+    trace.push(D.state().room.id);
+    key('KeyW', true);
+    for (let i = 0; i < 300 && !S.trans && N.level === 'X312'; i++) { face(...Wr(7, -0.5, 1.45), 0); N.pump(DT, 1, false); }   // 戸口の手前 0.45m を越えると出る
+    key('KeyW', false); waitTrans();
+    const back = pos();
+    const pass = noKey.toast === '鍵がかかっている' && noKey.angle < 0.01 && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.angle >= 0.45
+      && ent.events.includes('unlock_door') && ent.events.includes('enter_space') && inSpace && trace.join() === 'R2,R3,R4,R5,B7' && pickHint.includes('拾う') && st.stage === 7 && st.item === 'entrance'
+      && back.level === 3 && Math.hypot(back.x - front('312', 0.9)[0], back.z - front('312', 0.9)[1]) < 0.1;
+    return { pass, noKey, enter: ent, inSpace, pickHint, stage: st.stage, item: st.item, back, trace };
   });
 
   // ---------------------------------------------------------------- 7) 正面玄関の鍵スイッチ・駐車場の車
@@ -755,7 +763,7 @@ export async function run(N) {
 
   // ---------------------------------------------------------------- 12) チェックポイント
   await T('12_checkpoint_keeps_state', async () => {
-    S.applyStage(6); quiet();
+    S.applyStage(5); quiet();   // P6b-C: 220 は第5段
     N.doorApi.breakDoor('407');
     await tp(2, 22.0, 21.2, Math.PI / 2);
     const un0 = [...S.unlocked].sort();
@@ -768,7 +776,7 @@ export async function run(N) {
     N.pump(DT, 10, false);
     const sp = { level: N.level, ...pos() };
     const st = S.state();
-    const pass = died && st.stage === 6 && st.item === '220' && JSON.stringify(st.unlocked) === JSON.stringify(un0) && un0.includes('105') && un0.includes('312') && un0.includes('KEYBOX')
+    const pass = died && st.stage === 5 && st.item === '220' && JSON.stringify(st.unlocked) === JSON.stringify(un0) && un0.includes('105') && !un0.includes('312') && un0.includes('KEYBOX') && S.chained && N.doorApi.get('MST2').chained
       && !!N.doorApi.get('407').broken && sp.level === 2 && Math.abs(sp.x - 24.55) < 0.05 && Math.abs(sp.z - 21.2) < 0.05 && N.hudState().objective === '220号室へ';
     N.doorApi.repairDoor('407');
     return { pass, died, stage: st.stage, item: st.item, unlocked: st.unlocked, broken407: true, respawn: sp };
@@ -776,13 +784,13 @@ export async function run(N) {
 
   // ---------------------------------------------------------------- 13) 目標の文言と強調・持ち物の札
   await T('13_objective_text_and_item_tag', async () => {
-    S.applyStage(3); quiet(); N.pump(DT, 2, false);
+    S.applyStage(5); quiet(); N.pump(DT, 2, false);   // P6b-C: 220(第5段)→ 312(第6段)
     const a = N.hudState();
     N.pump(DT, 200, false);   // P6b #6: 強調は 3 秒
     const b = N.hudState();
-    S.applyStage(4); N.pump(DT, 2, false);
+    S.applyStage(6); N.pump(DT, 2, false);
     const c = N.hudState();
-    const pass = a.objective === '312号室へ' && a.objectiveEm && !b.objectiveEm && b.objective === '312号室へ' && a.item === '鍵　312' && c.objective === '105号室へ' && c.objectiveEm && c.item === '鍵　105';
+    const pass = a.objective === '220号室へ' && a.objectiveEm && !b.objectiveEm && b.objective === '220号室へ' && a.item === '鍵　220' && c.objective === '312号室へ' && c.objectiveEm && c.item === '鍵　312';
     return { pass, start: a, after25s: b, next: c };
   });
 
@@ -858,7 +866,7 @@ export async function run(N) {
   //  直す前: 段の途中(折り返しで XZ が踊り場の真下)のプレイヤーを踊り場の管理人が襲い、段が進んで空振り → 襲撃ムービーが残り視点が
   //  管理人の顔に固定されたまま(操作不能)。段の途中で殺されると復帰後も段へ引き戻された。
   await T('14_chase_outer_stairs_no_freeze', async () => {
-    S.applyStage(3); quiet();
+    S.applyStage(2);   // P6b-C: 第3段から外階段に鎖。鎖のない第2段で quiet();
     N.setFlashlight(true);
     await tp(2, 12.0, 21.2, Math.PI / 2);
     // 管理人を東 6m に出して追わせる(視点固定なし)
@@ -898,7 +906,7 @@ export async function run(N) {
     N.paused = false; await new Promise((r) => setTimeout(r, 400)); N.paused = true;
     const frame1 = N.renderer.info.render.frame;
     // 段の途中で死ぬ → 復帰後に段へ引き戻されず、歩ける
-    S.applyStage(3); quiet(); N.setFlashlight(false);
+    S.applyStage(2); quiet(); N.setFlashlight(false);
     await tp(2, 5.2, 21.2, Math.PI);
     key('KeyW', true);
     for (let i = 0; i < 60 * 3 && !N.stairs.active; i++) { face(lane, g.s0 + 0.5, 0); N.pump(DT, 1, false); }
@@ -913,7 +921,7 @@ export async function run(N) {
     const atSpawn = N.level === sp.level && Math.hypot(N.player.pos.x - sp.x, N.player.pos.z - sp.z) < 0.05 && !N.stairs.active && !N.player.frozen && !N.movie.active;
     const moved2 = walk1();
     // 空振りの保険: 襲撃ムービーが始まってから届かない所へ離れる → 空振り → ムービーが畳まれ操作が戻る
-    S.applyStage(3); quiet();
+    S.applyStage(2); quiet();
     await tp(2, 14.0, 21.2, -Math.PI / 2);
     N.ai.dormant = false; N.ai.setLevel(2); N.enemy.place(15.2, 21.2, -Math.PI / 2); N.enemy.setState('ATTACK');
     N.pump(DT, 10, false);
@@ -1020,7 +1028,7 @@ export async function run(N) {
       key('KeyW', false);
       return { r, pts, lv, BL: r.interior.burst, L: N.rooms.bursts.get(C.id) };
     };
-    for (const C of [{ id: '221', stage: 1, light: true }, { id: '606', stage: 5, light: false }]) {
+    for (const C of [{ id: '221', stage: 1, light: true }, { id: '606', stage: 4, light: false }]) {
       const { r, lv, BL, L } = await toTrigger(C);
       const K = V.room[C.id] ?? V.room.default;
       const t0 = N.ai.time;
@@ -1096,7 +1104,7 @@ export async function run(N) {
     }
     // 視点固定中に管理人を隣接させても死なない(611・点灯): 固定中〜grace の間、毎フレーム管理人の 0.9m 前に置く・ATTACK を直接要求しても拒まれる
     {
-      const C = { id: '611', stage: 5, light: true };
+      const C = { id: '611', stage: 4, light: true };
       const { BL } = await toTrigger(C);
       const t0 = N.ai.time;
       let lockSeen = false, ctrlAt = null, attacked = false, died = false, forced = null, adjFrames = 0, minD = 1e9, stateDuring = new Set();
@@ -1123,7 +1131,7 @@ export async function run(N) {
     }
     // 609(220 の鍵の部屋): 同じ見た目のロッカーがあるが開かない(管理人の出所でない・E の対象でない・扉は閉じたまま)
     {
-      S.applyStage(5); quiet();
+      S.applyStage(4); quiet();   // P6b-C: 6F は第4段
       const r = room('609').r, p = r.interior.points, SL = r.interior.sealedLocker;
       await tp(6, ...front('609', 0.9), 0);
       N.openDoor('609', true); N.pump(DT, 60, false);
@@ -1145,6 +1153,136 @@ export async function run(N) {
       quiet();
     }
     return { pass, rooms: res };
+  });
+
+  // ---------------------------------------------------------------- 19) P6b-C(§3.10 #3): 外階段・北階段の鉄扉の鎖(第3段〜第9段の追跡の前)。第2段は開く/第3段は「鎖がかかっている」・開かない・通れない/
+  //  開いていた扉も鎖で閉じる/第9段の追跡の開始で外れて開く/第10段は鎖なし/管理人の扉 API でも開かない
+  await T('19_p6bc_chains_stair_doors', async () => {
+    const tryDoor = async (lv, x, z, yaw, id, look) => {
+      await tp(lv, x, z, yaw); N.setView(x, z, yaw, 0); N.pump(DT, 2, false);
+      const d = door(id), hint = N.hudState().hint, a0 = N.enemyAudio.log.length;
+      tap('KeyE'); N.pump(DT, 50, false);
+      const r = { id, hint, toast: N.hudState().toast, open: N.doorApi.isOpen(id), angle: +d.angle.toFixed(2), rattle: N.enemyAudio.log.slice(a0).some((l) => l.name === 'rattle'), propVisible: !!(S.chains.find((c) => c.id === id) || {}).g?.visible };
+      // 扉へ向かって 1 秒歩く(通れない)
+      key('KeyW', true); for (let i = 0; i < 60; i++) { N.setView(N.player.pos.x, N.player.pos.z, yaw, 0); N.pump(DT, 1, false); } key('KeyW', false); N.pump(DT, 2, false);
+      r.through = look(N.player.pos);
+      if (r.open) { N.doorApi.close(id); N.pump(DT, 60, false); }
+      return r;
+    };
+    const westOfMST = (p) => p.x < 5.9, eastOfNST = (p) => p.x > 7.9;
+    S.applyStage(2); quiet();
+    const s2 = await tryDoor(2, 6.6, 21.2, Math.PI / 2, 'MST2', westOfMST);
+    // 開いたまま第3段になる(105 の鍵を取った瞬間)→ 閉じて鎖
+    N.doorApi.open('MST2'); N.pump(DT, 60, false);
+    const openBefore = N.doorApi.isOpen('MST2');
+    S.setStage(3); N.pump(DT, 2, false);
+    const closedByChain = !N.doorApi.isOpen('MST2') && door('MST2').angle === 0 && door('MST2').chained;
+    S.applyStage(3); quiet();
+    const s3m = await tryDoor(2, 6.6, 21.2, Math.PI / 2, 'MST2', westOfMST);
+    const s3n = await tryDoor(3, 7.0, 0.725, -Math.PI / 2, 'NST3', eastOfNST);
+    const allChained = CHAIN_IDS.every((id) => door(id).chained && door(id).locked && door(id).storyLock);
+    N.doorApi.open('MST4'); N.pump(DT, 30, false);
+    const npcOpen = N.doorApi.isOpen('MST4');
+    // 第5段(220)も鎖(死亡 → 復帰で残ることは 12 番)
+    S.applyStage(5); quiet();
+    const s5 = await tryDoor(5, 6.6, 21.2, Math.PI / 2, 'MST5', westOfMST);
+    // 第9段: 追跡の前は鎖 → 地下の鍵(追跡の開始)で外れる
+    S.applyStage(9); quiet();
+    const s9before = await tryDoor(7, 6.6, 21.2, Math.PI / 2, 'MST7', westOfMST);
+    S.pick('kB1'); N.pump(DT, 2, false); S.pending = []; quiet();
+    const chase = S.sub === 'chase' && !S.chained && !door('MST7').chained && !door('NST2').locked;
+    const s9chase = await tryDoor(7, 6.6, 21.2, Math.PI / 2, 'MST7', westOfMST);
+    S.applyStage(10); quiet();
+    const s10 = await tryDoor(1, 6.6, 21.2, Math.PI / 2, 'MST1', westOfMST);
+    const ok2 = s2.hint.includes('開ける') && s2.open && s2.through && !s2.propVisible;
+    const okC = (r) => r.hint.includes('鎖がかかっている') && r.toast === '鎖がかかっている' && !r.open && r.angle === 0 && r.rattle && !r.through && r.propVisible;
+    const pass = ok2 && openBefore && closedByChain && okC(s3m) && okC(s3n) && allChained && !npcOpen && okC(s5) && okC(s9before) && chase
+      && s9chase.hint.includes('開ける') && s9chase.open && s9chase.through && !s9chase.propVisible && s10.open && s10.through;
+    return { pass, stage2: s2, openBefore, closedByChain, stage3: { MST2: s3m, NST3: s3n }, allChained, npcOpen, stage5: s5, stage9: { before: s9before, chase, after: s9chase }, stage10: s10 };
+  });
+
+  // ---------------------------------------------------------------- 20) P6b-C(§3.10 #3): 異空間から出たら管理人は追跡を終え、出た階には 30 秒現れない(走って音を立てても)。312 から出た時に 3F にいた管理人は別の階へ
+  await T('20_p6bc_space_exit_manager_avoids_floor', async () => {
+    S.applyStage(3); quiet(); N.ai.dormant = false;
+    await tp(1, ...front('105', 0.9), -Math.PI / 2);
+    const ent = openAndEnter('105');
+    const dbg = N.spaces.debug('X105');
+    dbg.skip('loopDone');
+    await N.teleport('X105', 303.3, 160.5, Math.PI); N.pump(DT, 10, false);
+    N.ai.appear({ level: 'X105', x: 303.3, z: 152.0, lock: 0, recover: 0, slow: 0 }); N.ai.chaseOmni = true;
+    N.pump(DT, 30, false);
+    const before = { state: N.ai.state, level: N.ai.level };
+    walkTo(303.3, 165.97, 400, 0.1, true); waitTrans();
+    const out1 = { level: N.level, aiLevel: N.ai.level, aiState: N.ai.state, omni: N.ai.chaseOmni, avoid: N.ai.avoid && { ...N.ai.avoid }, stage: S.stage };
+    // 30 秒: 1F の廊下を走り回る(走る音は別の階へも届く)。管理人は 1F に来ない・1F へ向かわない
+    const t0 = N.ai.time, ev0 = N.ai.events.length;
+    let on1 = 0, goal1 = 0, maxT = 0;
+    const pts = [[6.9, 12.8], [6.9, 19.6]];
+    for (let k = 0; N.ai.time - t0 < 29.5 && k < 40; k++) {
+      const [x, z] = pts[k % 2];
+      key('KeyW', true); key('ShiftLeft', true);
+      for (let i = 0; i < 240 && N.ai.time - t0 < 29.5; i++) { const p = N.player.pos; if (Math.hypot(x - p.x, z - p.z) < 0.2) break; face(x, z, 0); N.pump(DT, 1, false); if (N.ai.level === 1) on1++; if (N.ai.goalLv === 1 && N.ai.level !== 1) goal1++; if (N.deathState()) break; }
+      key('KeyW', false); key('ShiftLeft', false);
+      maxT = N.ai.time - t0;
+    }
+    const evs = N.ai.events.slice(ev0);
+    const avoidedNoise = evs.filter((e) => e.ev === 'floor_noise_avoided').length, heard1 = evs.filter((e) => e.ev === 'heard_floor' && e.lv === 1).length;
+    const lurk1 = evs.filter((e) => e.ev === 'lurk_pick' && e.lv === 1).length;
+    for (let i = 0; i < 90; i++) N.pump(DT, 1, false);   // 30 秒を過ぎると避けない
+    const after = { avoided: N.ai._avoided(1), w1: +N.ai.floorWeights()[1].toFixed(2) };
+    // 312: 3F の廊下に管理人がいる時に 312 から出る → 別の階(4F)へ・3F を避ける
+    S.applyStage(6); quiet();
+    const D3 = N.spaces.debug('X312');
+    await tp(3, ...front('312', 0.9), -Math.PI / 2);
+    const ent3 = (() => {   // 戸口を越えたら止まる(X312 の入口の扉は真後ろ。6 番と同じ)
+      const d = door('312');
+      face(d.pos[0], d.pos[1], 0); N.pump(DT, 2, false);
+      tap('KeyE'); N.pump(DT, 60, false);
+      key('KeyW', true);
+      for (let i = 0; i < 240 && !S.trans && N.level === 3; i++) { face(d.pos[0] + 0.6, d.pos[1], 0); N.pump(DT, 1, false); }
+      key('KeyW', false); waitTrans();
+      return N.level;
+    })();
+    for (let i = 0; i < 200 && !D3.ready(); i++) await new Promise((r) => setTimeout(r, 50));
+    N.ai.reset(10.0, 21.2, Math.PI / 2, 3);   // 3F の廊下を巡回中
+    S.leaveSpace(); waitTrans();
+    const out3 = { level: N.level, aiLevel: N.ai.level, aiState: N.ai.state, avoid: N.ai.avoid && { ...N.ai.avoid } };
+    quiet();
+    const pass = ent.level === 'X105' && before.state === 'CHASE' && before.level === 'X105' && out1.level === 1 && out1.aiLevel !== 1 && out1.aiLevel !== 'X105' && out1.aiState !== 'CHASE' && !out1.omni
+      && out1.avoid && out1.avoid.lv === 1 && out1.stage === 4 && maxT >= 29 && on1 === 0 && goal1 === 0 && heard1 === 0 && lurk1 === 0 && !after.avoided && after.w1 > 0
+      && ent3 === 'X312' && out3.level === 3 && out3.aiLevel === 4 && out3.aiState === 'PATROL' && out3.avoid && out3.avoid.lv === 3;
+    return { pass, before, exit105: out1, run_s: +maxT.toFixed(1), aiOn1F_frames: on1, aiGoal1F_frames: goal1, floorNoiseAvoided: avoidedNoise, heardFloor1: heard1, lurkPick1F: lurk1, after30s: after, exit312: out3 };
+  });
+
+  // ---------------------------------------------------------------- 21) P6b-C(§3.10 #5): 地下への階段の口の灯り(天井灯・裸電球・札「地下」)。1F の通路の端から口を見ると、口の付近が周囲より明るい
+  await T('21_p6bc_basement_mouth_light', async () => {
+    S.applyStage(4); quiet();
+    const B = S.basementMouth, U = B.userData;
+    const lights = U.lights.map((l) => ({ type: l.type, intensity: l.intensity, shadow: l.castShadow, color: '#' + l.color.getHexString() }));
+    const V = BASEMENT_VIEW;
+    await tp(1, V.at[0], V.at[1], 0);
+    const lookAt = new N.THREE.Vector3(...V.look);
+    const yaw = Math.atan2(-(lookAt.x - V.at[0]), -(lookAt.z - V.at[1]));
+    const pitch = Math.atan2(lookAt.y - (N.player.pos.y + 1.6), Math.hypot(lookAt.x - V.at[0], lookAt.z - V.at[1]));
+    N.setView(V.at[0], V.at[1], yaw, pitch); N.setFlashlight(false); N.pump(DT, 10, false);
+    const visible1F = B.visible;
+    const gl = N.renderer.getContext(), W = gl.drawingBufferWidth, H = gl.drawingBufferHeight, R = 30, px = new Uint8Array(4 * R * R);
+    const lumAt = (u, v) => { gl.readPixels(Math.max(0, Math.min(W - R, Math.floor(u * W) - R / 2)), Math.max(0, Math.min(H - R, Math.floor(v * H) - R / 2)), R, R, gl.RGBA, gl.UNSIGNED_BYTE, px); let s = 0; for (let i = 0; i < px.length; i += 4) s += 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2]; return s / (R * R); };
+    const measure = () => {
+      N.pump(DT, 1, true);
+      const q = lookAt.clone().project(N.camera), u = q.x * 0.5 + 0.5, v = q.y * 0.5 + 0.5;
+      const mouth = lumAt(u, v);
+      const around = []; for (const uu of [0.1, 0.3, 0.5, 0.7, 0.9]) for (const vv of [0.15, 0.5, 0.85]) if (Math.hypot(uu - u, vv - v) > 0.18) around.push(lumAt(uu, vv));
+      return { mouth: +mouth.toFixed(1), around: +(around.reduce((a, b) => a + b, 0) / around.length).toFixed(1), ndc: [+q.x.toFixed(2), +q.y.toFixed(2)] };
+    };
+    const on = measure();
+    const I0 = U.lights.map((l) => l.intensity);   // 灯りを消した比較(群の表示は story.update が毎フレーム戻すので、強さと発光板で消す)
+    U.lights.forEach((l) => { l.intensity = 0; }); U.panel.visible = false; U.glass.visible = false;
+    const off = measure();
+    U.lights.forEach((l, i) => { l.intensity = I0[i]; }); U.panel.visible = true; U.glass.visible = true; N.pump(DT, 1, false);
+    const pass = lights.length === 2 && lights.every((l) => l.type === 'PointLight' && !l.shadow && l.intensity > 0) && U.text === '地下' && U.plate.material.map && visible1F
+      && Math.abs(on.ndc[0]) < 0.8 && Math.abs(on.ndc[1]) < 0.8 && on.mouth > on.around * 1.5 && on.mouth > off.mouth + 3;
+    return { pass, lights, text: U.text, visible1F, on, off, signAt: S.basementSignPos && [+S.basementSignPos.x.toFixed(2), +S.basementSignPos.y.toFixed(2), +S.basementSignPos.z.toFixed(2)] };
   });
 
   quiet();

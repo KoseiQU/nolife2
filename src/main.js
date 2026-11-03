@@ -18,7 +18,7 @@ import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { Player } from './player.js';
 import { GEOM } from './walls.js';
 import { World, levelY, glbLevel, FACING_N, LEVELS, isSpace } from './world.js';
-import { Stairs } from './stairs.js';
+import { Stairs, arrival as stairsArrival } from './stairs.js';
 import { Elevator, EV } from './elevator.js';
 import { Enemy } from './enemy.js';
 import { EnemyAI, hideOddsFrom } from './enemy_ai.js';
@@ -271,6 +271,8 @@ function useNearestDoor() {
     best.target = best.target > 0 ? 0 : best.openAngle;
     best.speedMul = 1;
     if (ai) ai.noise((best.collision.minX + best.collision.maxX) / 2, (best.collision.minZ + best.collision.maxZ) / 2, 9.0);   // 扉の開閉音(聴覚 9m)
+  } else if (best.chained && story) {   // P6b-C(§3.10 #3): 鎖のかかった鉄扉(ふだんは story の画面ガイドが先に拾う。ここは視線の判定の境目の保険)
+    story.rattleChain(best.roomId);
   } else {
     best.rattle = 0.25; lastUseLocked = true;   // 開かない扉: ノブだけ鳴る。ごく小さく揺らす(扉板の姿勢は world._poseLeaf)
     // P3a-2: 開かない扉はガチャ音(地下の鉄扉など)
@@ -307,7 +309,7 @@ function useAndReport() {
 const doorApi = {
   get: (id) => world.doorById.get(String(id)) || null,
   isOpen: (id) => { const d = doorApi.get(id); return !!(d && d.collision && d.collision.disabled); },
-  open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = d.openAngle; d.speedMul = speed; } },
+  open: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto' && !d.chained) { d.target = d.openAngle; d.speedMul = speed; } },   // P6b-C: 鎖の扉は開かない
   close: (id, speed = 1) => { const d = doorApi.get(id); if (d && d.operable && d.kind !== 'auto') { d.target = 0; d.speedMul = speed; } },
   setLocked: (id, v) => { const d = doorApi.get(id); if (d) d.locked = !!v; },
   // P5a: 空室(管理人が潜む施錠された部屋)の扉。プレイヤーは開けられないが、管理人は普通に開けて出入りし、飛び出す時は壊す
@@ -695,7 +697,7 @@ story = new Story({ mode: STORY_MODE, world, building, scene, camera, player, ai
   envTex, aiControl: !TOUR && !PARAMS.has('noai'), getLevel: () => playerLevel,
   teleport: (key, x, z, yaw) => { setPlayerLevel(key); player.setPose(x, z, yaw, 0); updateVisibility(); } });
 story.watcher = watcher; story.watcherBase = watcher.enabled;
-story.onAIReset = () => ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+story.onAIReset = (lv) => ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw, lv);   // P6b-C: 異空間から出た時は出た階でない EV ホールへ(lv 省略 = 4F)
 spaces.share({ story });
 // 見せる階: ふだんは今の階だけ。外階段・北階段の区画にいる時と上り下りの最中は上下の階も(吹き抜けで見えるので)
 function updateVisibility() {
@@ -774,12 +776,22 @@ function updateAmbience() {
   bank.loop('amb_roof').set(w.roof);
   bank.loop('amb_b1').set(w.b1);
 }
-// 自分の足音: 居室の床(410 などの入れる部屋と 312 の複製の部屋)だけ pl_step_room A「靴下・柔らかい」。廊下・屋外・外階段の足音は「なし」
+// 自分の足音: 居室の床(410 などの入れる部屋と 312 の複製の部屋)は pl_step_room A「靴下・柔らかい」。
+// P6b-C(§3.10 #4): 走りは全面で鳴らす(歩きは従来どおり居室だけ)。同じ素材を面ごとに加工する(新しい wav は作らない):
+//  廊下(カーペット)= 低域寄り(lowpass 1.2kHz)・音量 0.6 / 屋外・外階段・北階段・地下 = 硬く短く(highpass 300Hz・0.12 秒)・0.8。管理人の聴覚は変えない(enemy_ai の走りの音)
+const STEP_SURF = { corridor: { cutoff: 1200, vol: 0.6 }, hard: { highpass: 300, dur: 0.12, vol: 0.8 } };
+function stepSurface() {
+  const lv = playerLevel, p = player.pos;
+  if (lv === 'X312' || (typeof lv === 'number' && roomKindAt(lv, p.x, p.z) === 'unit' && !outdoorKind())) return 'room';
+  if (lv === 'G' || lv === 'RB' || lv === 'B1' || lv === 'XB1' || lv === 'X705') return 'hard';
+  if (typeof lv === 'number' && (stairs.busy || stairs.inStairArea(p.x, p.z) || outdoorKind())) return 'hard';
+  return 'corridor';   // 廊下・EV ホール・共用室・105 の廊下
+}
 player.onStep = ({ run }) => {
   if (runGate.active) return;   // P6b-A2: 走り確認の間は歩いても進まない(足音も出さない)
-  const lv = playerLevel, p = player.pos;
-  const room = lv === 'X312' || (typeof lv === 'number' && roomKindAt(lv, p.x, p.z) === 'unit');
-  if (room) bank.play('pl_step_room', { vol: run ? 1.0 : 0.75 });
+  const surf = stepSurface();
+  if (surf === 'room') bank.play('pl_step_room', { vol: run ? 1.0 : 0.75, tag: 'room' });
+  else if (run) bank.play('pl_step_room', { ...STEP_SURF[surf], tag: surf });
 };
 
 // ---------------------------------------------------------------- P3c: 敷地への出入り・外を描くか・外の霧
@@ -1031,7 +1043,7 @@ function stats() {
   };
 }
 window.__n2 = {
-  THREE, scene, camera, renderer, player, composer, doors, manifest, manifests, LOOK, building, world, elevator, stairs,
+  THREE, scene, camera, renderer, player, composer, doors, manifest, manifests, LOOK, building, world, elevator, stairs, stairsArrival,   // P6b-C: 着く位置(テスト)
   get collisions() { return world.collisions(playerLevel); },   // プレイヤーの今の階の当たり(P0 のテストは 4F)
   get level() { return playerLevel; },
   levelLog,

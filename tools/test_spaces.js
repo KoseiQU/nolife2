@@ -4,11 +4,11 @@
 //  105_2) 分岐と折り返し: F1 の左は施錠・右で R1 へ、F2 の右は施錠・左を抜けると扉が閉まって最初の地点(R0 の入口)へ戻る(継ぎ目なし: 見た目の座標が同じ)・2 回目は左が施錠で右が開く
 //  105_3) 反転: 反転の扉を抜けるとカメラのロールが π に達する・床の高さと当たりは変わらない・A/D が入れ替わる
 //  105_4) 追跡: R1 の v 72(P6b-A §3.9 #15)で管理人が背後に現れて CHASE・F2 は左が施錠で右が開いている・壁と天井が歪む・背後から灯りが消える(消えた灯りはすべてプレイヤーの後ろ)・
-//         反転の扉を開けて走り続ければ出口 → 105 の扉の前(第5段)
+//         反転の扉を開けて走り続ければ出口 → 105 の扉の前(第4段。P6b-C)
 //  105_5) 止まると捕まる → 105 の扉の前(扉を向く)・次に入ると追跡の区間の前(R1 の始まり)から
 //  312_1) 無限の自室(P5b-4): 312 の中は 410 の複製。窓の扉を開けて 5 部屋(R1〜R5)を抜ける(R2 床の物・R3 白いポスター/止まった時計/閉じたカーテン・R4 乱れた布団/半開きのクローゼット・R5 消灯)。
-//         R5 のベッド脇に管理人が座って見ている(SCRIPTED・追跡しない)・懐中電灯で顔を上げる・奥の扉は開かない・机の 105 の鍵(R5 でだけ拾える)で第4段
-//  312_2) 戻り: 鍵の後は 7 部屋(B1〜B7・鏡像)。各部屋で管理人が出口の扉に近づく(座る → 立つ → 戸口の脇)・襲わない・B7 の玄関の扉 = 312 の扉 → 3F(目標「105号室へ」)
+//         R5 のベッド脇に管理人が座って見ている(SCRIPTED・追跡しない)・懐中電灯で顔を上げる・奥の扉は開かない・机の正面玄関の鍵(R5 でだけ拾える。P6b-C: 旧 105 の鍵)で第7段
+//  312_2) 戻り: 鍵の後は 7 部屋(B1〜B7・鏡像)。各部屋で管理人が出口の扉に近づく(座る → 立つ → 戸口の脇)・襲わない・B7 の玄関の扉 = 312 の扉 → 3F(P6b-C: 目標「正面玄関から駐車場へ」)
 //  312_3) 鏡像でも当たりは正しい(乱数で歩き回って壁・家具に入らない・閉じ込めない)・Ctrl は何もしない・死なない・鍵の後に入り直すと 1 部屋だけの普通の 410(奥は開かない)
 //  705_1) 増える(P5b-2b): 奥へ進むほど柱が増える(見ていない・離れた所にだけ)・机の前では入口の扉が柱の列に隠れる(最初の柱だけなら見えていた)
 //  705_2) 反転: 鍵で灯りが一斉に消え、出口は反対側(南)・管理人はそこから現れる → 西の壁際を回って南の出口 → 7F・管理人も出入り口から追ってくる(追跡中は歪み 1)
@@ -80,9 +80,9 @@ export async function run(N) {
   const W105 = (u, v) => [300 + u, v];
 
   // ================================================================ 105
-  // 第4段の開始(312 の前)から 1F の 105 の前へ。鍵で開けて X105 へ
+  // 第3段の開始(管理室。P6b-C §3.10 #1)から 1F の 105 の前へ。鍵で開けて X105 へ
   const enter105 = async () => {
-    S.applyStage(4); quiet();
+    S.applyStage(3); quiet();
     const b = SP.def('X105').back;
     await tp(1, b.x, b.z, b.yaw + Math.PI);
     return openAndEnter('105');
@@ -201,7 +201,7 @@ export async function run(N) {
     const at = pos();
     const st = S.state();
     const pass = appearAt !== null && appearAt >= 72 && appearAt < 72.6 && f2.leftLocked && f2.rightOpen && inv.hint.includes('開ける') && chaseAt !== null && stateSeq.includes('CHASE') && attacks === 0 && N.deaths() === deaths0 && minDist > 3
-      && maxWarp === 1 && offSeen >= 3 && offAhead === 0 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && st.stage === 5 && N.ai.level !== 'X105';
+      && maxWarp === 1 && offSeen >= 3 && offAhead === 0 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && st.stage === 4 && N.ai.level !== 'X105';
     const di = D105().door('INV');
     return { pass, ran: ok, f2, invDoor: inv.hint, inv: { angle: +di.angle.toFixed(2), target: di.target, locked: di.locked, col: di.col.disabled, toast: inv.toast }, appearAtZ: appearAt && +appearAt.toFixed(2), chaseAfter_s: chaseAt && +chaseAt.toFixed(2), states: stateSeq, minDist_m: +minDist.toFixed(2), attacks,
       warpMax: maxWarp, lampsOffMax: offSeen, offAheadOfPlayer: offAhead, at, back: { x: b.x, z: b.z }, stage: st.stage, objective: N.hudState().objective, aiLevel: N.ai.level };
@@ -228,13 +228,13 @@ export async function run(N) {
     waitTrans();
     const re = { level: N.level, at: pos(), run: N.level === 'X105' ? D105().state().run : null };
     const pass = chased && died && attackAt !== null && attackAt < 12 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.05 && Math.abs(Math.cos(yawFace - (b.yaw + Math.PI)) - 1) < 1e-3
-      && st.stage === 4 && N.player.object.rotation.z === 0 && re.level === 'X105' && re.run === 'R1';
+      && st.stage === 3 && N.player.object.rotation.z === 0 && re.level === 'X105' && re.run === 'R1';
     return { pass, chased, died, attackAfterStop_s: attackAt && +attackAt.toFixed(2), respawn: at, back: b, stage: st.stage, reenter: re };
   });
 
   // ================================================================ 312(P5b-4: 無限の自室。型の局所 tu・tz は D312().world(部屋, tu, tz) で世界へ)
   const enter312 = async () => {
-    S.applyStage(3); quiet();
+    S.applyStage(6); quiet();   // P6b-C(§3.10 #1): 312 は第6段
     for (let i = 0; i < 200 && !D312().ready(); i++) await new Promise((r) => setTimeout(r, 50));   // 410 の型(4F の GLB)の読み込み
     const b = SP.def('X312').back;
     await tp(3, b.x, b.z, b.yaw + Math.PI);
@@ -262,7 +262,7 @@ export async function run(N) {
   await T('312_1_five_rooms_key_watcher', async () => {
     const lv = await enter312();
     const obj = N.hudState().objective;
-    const k = S.pickups.find((q) => q.id === 'k105');
+    const k = S.pickups.find((q) => q.id === 'kEntrance');   // P6b-C: R5 の机は正面玄関の鍵
     const canPickR1 = k.need();
     const rooms = [];
     const plateOf = (seam) => { const d = st312().doors.find((q) => q.seam === seam); return d ? d.plate : undefined; };
@@ -294,10 +294,10 @@ export async function run(N) {
     walkTo(...Wr(4, 5.2, 1.45), { max: 600 }); face(...Wr(4, 6, 1.45)); N.pump(DT, 2, false);
     tap('KeyE'); N.pump(DT, 10, false);
     const farToast = N.hudState().toast, farAngle = D312().door(5).angle;
-    // 机の 105 の鍵
+    // 机の正面玄関の鍵(P6b-C)
     walkTo(...Wr(4, 4.42, 1.72), { max: 600 });
     const canPickR5 = k.need();
-    const pickHint = pickNow('k105');
+    const pickHint = pickNow('kEntrance');
     N.pump(DT, 30, false);
     const st = S.state(), ph = st312().phase;
     const stateSeen = N.ai.state;
@@ -311,7 +311,7 @@ export async function run(N) {
     const pass = lv === 'X312' && obj === '312号室へ' && okRooms && !canPickR1 && canPickR5 && Math.abs(h1 - h0) < 0.05
       && mgr.room === 'R5' && mgr.pose === 'sit' && mgr.aiState === 'SCRIPTED' && mgr.aiLevel === 'X312' && mgr.visible && mgr.angleDeg < 20 && besideBed
       && lookUp > 0.8 && raisedLog && farToast === '開かない' && Math.abs(farAngle) < 0.01
-      && pickHint.includes('拾う') && st.stage === 4 && st.item === '105' && ph === 'ret' && !['CHASE', 'ATTACK'].includes(stateSeen)
+      && pickHint.includes('拾う') && st.stage === 7 && st.item === 'entrance' && ph === 'ret' && !['CHASE', 'ATTACK'].includes(stateSeen)
       && JSON.stringify(plates) === '["4","3","2","1","0"]' && ['open', 'lookup', 'key'].every((n) => sfxLog.includes(n)) && sfxNow.sfxPlayed === 0;
     return { pass, plates, sfx: { log: sfxLog, played: sfxNow.sfxPlayed }, level: lv, objective: obj, rooms, canPick: { R1: canPickR1, R5: canPickR5 }, clockR5: [h0, h1], mgr, besideBed, lookUp: +lookUp.toFixed(2), raisedLog, farDoor: { toast: farToast, angle: farAngle }, pickHint, stage: st.stage, item: st.item, phase: ph };
   });
@@ -342,7 +342,7 @@ export async function run(N) {
     const pass = r5.room === 'B1' && rooms.length === 7 && rooms.every((r, i) => r.id === 'B' + (i + 1) && r.mirror && r.mgrRoom === r.id && r.mgrVisible) && closer
       && poses[0] === 'sit' && poses[6] === 'stand' && poses.indexOf('stand') > 0 && poses.lastIndexOf('sit') < poses.indexOf('stand')
       && !states.has('CHASE') && !states.has('ATTACK') && N.deaths() === deaths0 && exits.length === 1 && exitHint.includes('戻る')
-      && at.level === 3 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && N.hudState().objective === '105号室へ' && S.state().stage === 4 && N.ai.level !== 'X312' && retPlates.length === 0;
+      && at.level === 3 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && N.hudState().objective === '正面玄関から駐車場へ' && S.state().stage === 7 && N.ai.level !== 'X312' && retPlates.length === 0;
     return { pass, retPlates, firstBack: r5, rooms, mgrToExit: dists, poses, aiStates: [...states], exitHint, exits: exits.map((e) => [+e.x.toFixed(2), +e.z.toFixed(2)]), back: at, objective: N.hudState().objective, aiLevel: N.ai.level };
   });
 
@@ -352,7 +352,7 @@ export async function run(N) {
     let deathSeen = false;
     // R5 へ移して鍵 → 戻りの B3(鏡像)へ
     D312().jump(4, 4.42, 1.72); N.pump(DT, 20, false);
-    pickNow('k105'); N.pump(DT, 60, false);
+    pickNow('kEntrance'); N.pump(DT, 60, false);
     D312().jump(3, 4.9, 1.6); N.pump(DT, 30, false);
     const r = D312().cur();
     const bed = D312().cols(3)[6 + 10], bedR = (() => { const s = D312().solids()[10]; return { minZ: s[1], maxZ: s[3] }; })();
@@ -718,7 +718,7 @@ export async function run(N) {
     // P5b-4: 312 の無限の自室(R1 の玄関・R4 の洋室・R5 の暗い部屋と懐中電灯と座る管理人・戻りの鏡像の部屋と立つ管理人)
     const d312 = async (i, tu, tz, yaw, pitch = 0, key105 = false) => {
       SP.show(null); await enter312();
-      if (key105) { D312().jump(4, 4.42, 1.72); N.pump(DT, 20, false); pickNow('k105'); N.pump(DT, 30, false); }
+      if (key105) { D312().jump(4, 4.42, 1.72); N.pump(DT, 20, false); pickNow('kEntrance'); N.pump(DT, 30, false); }
       D312().jump(i, tu, tz, yaw); N.player.object.rotation.x = pitch; N.pump(DT, 30, false);
     };
     res.X312_R1_genkan = await measure(() => d312(0, 0.75, 1.45, -Math.PI / 2));

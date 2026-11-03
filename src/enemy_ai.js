@@ -1238,6 +1238,7 @@ export class EnemyAI {
   // 経路に沿って goal まで。扉 410 が閉まっていれば doorEntry(useKey)。stopIf() が真なら途中で抜ける
   *_goTo(gx, gz, mode, { useKey = true, stopIf = null, arrive = 0.15, lv = this.level } = {}) {
     const e = this.enemy;
+    this.goalLv = lv;   // P6b-C: 向かっている階(異空間から出た階を避ける判定 story._afterSpaceExit)
     let route = this._route(e.pos.x, e.pos.z, gx, gz, this.level, lv);
     this._stuck = 0;
     while (route.length) {
@@ -1804,15 +1805,19 @@ export class EnemyAI {
       if (phase === 'calm') { if (lv === pn) w *= D.calm.player; else if (adj) w *= D.calm.adjacent; }
       if (phase === 'tense') { if (lv === pn) w *= D.tense.player; else if (adj) w *= D.tense.adjacent; }
       if (lv === this.level && this.floorStreak >= D.stayMax) w = 0;   // 同じ階に居続けない
+      if (this._avoided(lv)) w = 0;   // P6b-C: 異空間から出た階には 30 秒行かない
       out[lv] = w;
     }
     return out;
   }
+  // P6b-C(§3.10 #3): 異空間から出た階を sec 秒避ける(潜伏先の階の重み 0・その階の物音でも向かわない)。story._afterSpaceExit が呼ぶ
+  avoidFloor(lv, sec) { this.avoid = { lv, until: this.time + sec }; this.log('avoid_floor', { lv, sec }); }
+  _avoided(lv) { return !!(this.avoid && this.avoid.lv === lv && this.time < this.avoid.until); }
   _chooseFloor(phase = this.phase(), rnd = this._rand) {
     const w = this.floorWeights(phase);
     let sum = 0; for (const k in w) sum += w[k];
     let r = rnd() * sum;
-    for (let lv = 1; lv <= 7; lv++) { r -= w[lv]; if (r <= 0) return lv; }
+    for (let lv = 1; lv <= 7; lv++) { if (!(w[lv] > 0)) continue; r -= w[lv]; if (r <= 0) return lv; }   // P6b-C: 重み 0 の階(避ける階)は乱数が 0 でも選ばない
     return this.level;
   }
   // 潜伏先: 階は重み付き乱数、その階で空室(share)か廊下の角
@@ -1849,6 +1854,7 @@ export class EnemyAI {
     const heard = (F.loud[kind] ?? 0.5) * (F.att[Math.min(diff, F.att.length - 1)] || 0);
     if (heard > 0) this.noiseHist[lv] = (this.noiseHist[lv] || 0) + heard;
     this.log('floor_noise', { lv, kind, heard: +heard.toFixed(2) });
+    if (this._avoided(lv)) { this.log('floor_noise_avoided', { lv }); return false; }   // P6b-C: 異空間から出た階(30 秒)
     if (heard < F.threshold || this.time - this._lastFloorGo < F.cooldown) return false;
     if (this.uninterruptible || ['ATTACK', 'DEAD', 'SCRIPTED', 'SCOPE', 'LOCKER', 'CHASE', 'EVAMBUSH'].includes(this.state)) return false;
     this._lastFloorGo = this.time;

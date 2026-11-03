@@ -715,8 +715,8 @@ function onExit(ctx) {
   const st = ctx.state;
   st.exited = true; st.log.push({ t: st.t, ev: 'exit' });
   const s = ctx.story;
-  // メモを拾わずに出た時は、出る時に拾ったことにする(第5段へ進める)
-  if (s && s.active && s.stage === 4 && !s.taken.has('memo6F')) { s.pick('memo6F'); st.log.push({ t: st.t, ev: 'memo_auto' }); }
+  // メモを拾わずに出た時は、出る時に拾ったことにする(第4段へ進める。P6b-C: 105 は第3段)
+  if (s && s.active && s.stage === 3 && !s.taken.has('memo6F')) { s.pick('memo6F'); st.log.push({ t: st.t, ev: 'memo_auto' }); }
   if (ctx.ai && ctx.ai.level === ctx.key) { ctx.ai.chaseOmni = false; if (s && s.onAIReset) s.onAIReset(); }
 }
 // この空間で死んだ時: 105 の扉の前(扉を向く)。次に入ると追跡の区間の前から

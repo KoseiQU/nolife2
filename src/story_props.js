@@ -2,7 +2,9 @@
 //  鍵(札付き。拾える物は弱い光沢＋細い光の筋がゆっくり瞬く)・メモ・管理室のキーボックス(扉付き・部屋番号の札のフック)・
 //  風除室の鍵スイッチ・410 の隔て板の南京錠・黒い車の開いた扉。文字は架空(部屋番号・「玄関」「車」・手書きのメモ)だけ。
 //  P6b(§3.9 #7): 221 の床のスマートフォン(鳴る間は画面が白く明滅して小さく震える)。
+//  P6b-C(§3.10 #3・#5): 外階段・北階段の鉄扉の鎖と南京錠、地下への階段の口の灯り(天井灯・裸電球・札「地下」)。
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 let ENV = null;
 export function setPropEnv(env) { ENV = env; }
@@ -215,4 +217,91 @@ export function updatePhone(g, ringing, t) {
   U.screen.emissiveIntensity = e; U.emissive = e;
   U.halo.material.opacity = ho;
   U.glare.material.opacity = ho * 1.3;
+}
+
+// ---------------------------------------------------------------- P6b-C(§3.10 #3): 鉄扉の鎖と南京錠(両面)。原点 = 扉板の中心・床、+x = 扉の幅の向き、+z = 扉の向き(facing)
+//  鎖 2 本を X に掛け渡し(両端は枠の外 6cm の金具)、交点に南京錠(自作の makePadlock を大きく)。鎖の環はまとめて 1 つの形にする(描画 1 回)
+const CHAIN = { pitch: 0.036, r: 0.019, tube: 0.0045, yHi: 1.42, yLo: 0.84, past: 0.06, gap: 0.028, lock: 2.2 };
+const _chainGeo = new Map();
+function chainGeometry(width, half) {
+  const key = width.toFixed(3) + '/' + half.toFixed(3);
+  if (_chainGeo.has(key)) return _chainGeo.get(key);
+  const C = CHAIN, parts = [];
+  const link = new THREE.TorusGeometry(C.r, C.tube, 4, 8); link.scale(1.35, 1, 1);
+  const x0 = -width / 2 - C.past, x1 = width / 2 + C.past;
+  for (const side of [1, -1]) {
+    const z = side * (half + C.gap);
+    for (const [ya, yb] of [[C.yHi, C.yLo], [C.yLo, C.yHi]]) {
+      const len = Math.hypot(x1 - x0, yb - ya), n = Math.ceil(len / C.pitch), ang = Math.atan2(yb - ya, x1 - x0);
+      for (let i = 0; i <= n; i++) {
+        const g = link.clone();
+        if (i % 2) g.rotateX(Math.PI / 2);   // 隣の環は 90° ねじる
+        g.rotateZ(ang);
+        g.translate(x0 + Math.cos(ang) * i * C.pitch, ya + Math.sin(ang) * i * C.pitch, z + (i % 2 ? 0 : 0.002 * side));
+        parts.push(g);
+      }
+      for (const [bx, by] of [[x0, ya], [x1, yb]]) {   // 枠の金具
+        const b = new THREE.BoxGeometry(0.03, 0.05, 0.02); b.translate(bx, by, side * (half + 0.012)); parts.push(b);
+      }
+    }
+  }
+  const flat = parts.map((g) => (g.index ? g.toNonIndexed() : g));
+  const geo = mergeGeometries(flat, false);
+  for (const g of new Set([...parts, ...flat])) g.dispose();
+  link.dispose();
+  _chainGeo.set(key, geo);
+  return geo;
+}
+export function makeDoorChain(width, half) {
+  const g = new THREE.Group(); g.name = 'DoorChain';
+  const m = new THREE.Mesh(chainGeometry(width, half), steel(0x5f6264, 0.45));
+  m.castShadow = false; m.receiveShadow = true;
+  g.add(m);
+  const yc = (CHAIN.yHi + CHAIN.yLo) / 2;
+  for (const side of [1, -1]) {
+    const lk = makePadlock(); lk.scale.setScalar(CHAIN.lock);
+    lk.position.set(0, yc + 0.02, side * (half + CHAIN.gap + 0.03)); lk.rotation.y = side > 0 ? 0 : Math.PI;
+    for (const o of lk.children) o.castShadow = false;
+    g.add(lk);
+  }
+  g.userData = { width, half };
+  return g;
+}
+
+// ---------------------------------------------------------------- P6b-C(§3.10 #5): 地下への階段の口の灯り
+//  口の天井灯 = 小さな乳白の板＋PointLight(暖色・影なし)、中間踊り場の裸電球 = 発光球＋コード＋PointLight、口の壁の札「地下」= 号室プレートと同じ作り(濃いブロンズ地・淡い文字・縁の線)
+export const BASEMENT_LAMP = { ceil: { color: 0xffd6a0, intensity: 1.0, distance: 5.0 }, bulb: { color: 0xffc98a, intensity: 0.6, distance: 4.0 }, plate: [0.16, 0.08] };
+function plateTexture(text) {
+  const w = 256, h = 128, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const g = cv.getContext('2d');
+  g.fillStyle = 'rgb(46,38,30)'; g.fillRect(0, 0, w, h);
+  g.strokeStyle = 'rgb(92,78,60)'; g.lineWidth = 4; g.strokeRect(6, 6, w - 12, h - 12);
+  g.fillStyle = 'rgb(222,214,196)'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = 'bold 66px "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif';
+  g.fillText(text, w / 2, h / 2 + 3);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+export function makeBasementMouth({ ceil, bulb, ceilY = null, sign, signYaw = 0, text = '地下' }) {
+  const B = BASEMENT_LAMP, g = new THREE.Group(); g.name = 'BasementMouth';
+  // 口の天井灯
+  const fix = new THREE.Group(); fix.position.copy(ceil); g.add(fix);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.035, 0.3), paint(0xd8d3c8, 0.7)); fix.add(base);
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.24).rotateX(Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffe6bf, side: THREE.DoubleSide }));
+  panel.position.y = -0.019; fix.add(panel);
+  const l1 = new THREE.PointLight(B.ceil.color, B.ceil.intensity, B.ceil.distance, 2); l1.position.set(ceil.x, ceil.y - 0.12, ceil.z); l1.castShadow = false; g.add(l1);
+  // 中間踊り場の裸電球(コードで天井から吊る)
+  const bl = new THREE.Group(); bl.position.copy(bulb); g.add(bl);
+  const glass = new THREE.Mesh(new THREE.SphereGeometry(0.045, 14, 10), new THREE.MeshBasicMaterial({ color: 0xfff0c8 })); bl.add(glass);
+  const sock = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.05, 10), paint(0x2a2622, 0.6)); sock.position.y = 0.06; bl.add(sock);
+  const cl = Math.max(0.2, (ceilY !== null ? ceilY - bulb.y : 0.6) - 0.085);   // コードは天井まで
+  const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, cl, 5), paint(0x161412, 0.8)); cord.position.y = 0.085 + cl / 2; bl.add(cord);
+  const l2 = new THREE.PointLight(B.bulb.color, B.bulb.intensity, B.bulb.distance, 2); l2.position.copy(bulb); l2.castShadow = false; g.add(l2);
+  // 口の壁の札
+  const [pw, ph] = B.plate;
+  const plate = new THREE.Mesh(new THREE.PlaneGeometry(pw, ph), new THREE.MeshStandardMaterial({ map: plateTexture(text), roughness: 0.35, metalness: 0.4 }));
+  plate.position.copy(sign); plate.rotation.y = signYaw; g.add(plate);
+  for (const o of [base, panel, glass, sock, cord, plate]) { o.castShadow = false; o.receiveShadow = false; }
+  g.userData = { lights: [l1, l2], plate, text, panel, glass };
+  return g;
 }

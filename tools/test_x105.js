@@ -62,7 +62,7 @@ export async function run(N) {
   const D105 = () => SP.debug('X105');
   const W = (u, v) => [300 + u, v];
   const enter105 = async () => {
-    S.applyStage(4); quiet();
+    S.applyStage(3); quiet();   // P6b-C(§3.10 #1): 105 は第3段
     const b = SP.def('X105').back;
     await tp(1, b.x, b.z, b.yaw + Math.PI);
     return openAndEnter('105');
@@ -137,7 +137,7 @@ export async function run(N) {
       && fall.length === 1 && fall[0].vol === 1 && Math.hypot(fall[0].pos[0] - 300, fall[0].pos[2] - 64) < 0.01 && scream.length === 1
       && lock.label === 'appear_105' && Math.abs(lock.total - 2.1) < 1e-6 && Math.abs(lock.end - 2.1) < 0.04 && lock.aimedUntil_s >= 1.45 && lock.aimedUntil_s <= 1.62 && lock.aimMaxDuringHold_rad < 0.12
       && lock.minDist_m >= 5 && lock.enemySpeed > 0.9 && lock.enemySpeed < 1.2 && lock.frozenAll && lock.forwardBackErr_rad < 0.02 && lock.stateAfter === 'CHASE'
-      && ok1 && inv.hint.includes('開ける') && ok2 && attacks === 0 && N.deaths() === deaths0 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && st.stage === 5
+      && ok1 && inv.hint.includes('開ける') && ok2 && attacks === 0 && N.deaths() === deaths0 && at.level === 1 && Math.hypot(at.x - b.x, at.z - b.z) < 0.1 && st.stage === 4
       && maxEZ > 112 && eRuns.has('R3') && maxWarp === 1 && Math.abs(rollMax - Math.PI) < 1e-3 && offSeen >= 3 && offAhead === 0 && !evs.some((e) => e.ev === 'stuck');
     return { pass, level: lv, f1R, trigger: trig, sounds: { fall: fall.map((l) => ({ vol: l.vol, pos: l.pos })), scream: scream.length }, viewLock: lock,
       escape: { ran: ok1 && ok2, invDoor: inv.hint, attacks, deaths: N.deaths() - deaths0, minDistWhileRunning_m: +minRun.toFixed(2), enemyMaxZ: +maxEZ.toFixed(1), enemyRuns: [...eRuns], warpMax: maxWarp, rollMax: +rollMax.toFixed(4), lampsOff: offSeen, offAheadOfPlayer: offAhead },

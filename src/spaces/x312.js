@@ -1,7 +1,7 @@
 // spaces/x312.js — 別空間 X312「312 無限の自室」(DESIGN §3.8 I の 312 の行・D③・H 第3段)。P5b-4(プールから作り直し)。
 //  312 の扉を開けると中は「自分の部屋 410」と同じ 1K(玄関→廊下→洋室)。洋室の奥、本来は掃き出し窓がある所に扉(居室と同じ木扉)があり、開けるとまた 410。
 //  行きは 5 部屋(R1〜R5)で少しずつ変わる: R1 = 410 と同じ / R2 = 床に本と服・机のコップが 2 つ / R3 = ポスターが白い紙・時計が止まる・カーテンが閉まる /
-//   R4 = ベッドに誰かが寝ていた跡(くぼみ・乱れた布団)・クローゼットが半開き / R5 = 灯りが消えている(懐中電灯だけ)・机に 105 の鍵・ベッド脇に管理人が座ってこちらを見ている。
+//   R4 = ベッドに誰かが寝ていた跡(くぼみ・乱れた布団)・クローゼットが半開き / R5 = 灯りが消えている(懐中電灯だけ)・机に正面玄関の鍵(P6b-C: 旧 105 の鍵)・ベッド脇に管理人が座ってこちらを見ている。
 //  鍵を取ると戻り: ①伸びる(戻りは 7 部屋 B1〜B7)②歪み(戻りの部屋は家具が鏡像。通ってきた扉は、閉めて目を離すと窓際の別の位置に移っている)
 //   ③管理人(戻りの各部屋で扉に近づく: 座る → 立つ → 戸口に立つ。最後は戸口の脇。襲わない)。B7 の玄関の扉 = 312 の扉 → 3F の廊下。
 //  死なない空間(水・息・潜水は廃止)。鍵の後にもう一度入ると 1 部屋だけの普通の 410 の複製(奥の扉は開かない)。
@@ -30,7 +30,7 @@ export const X312 = {
   door: { c: 1.45, half: 0.415, open: 1.45, speed: 2.6, slam: 7.0, reach: 1.5, gap: 0.45, h: 2.04 },   // 扉(中心 tz・板の半幅・開く角・速さ rad/s)
   shiftTz: 1.95,              // ②歪み: 戻りの部屋の「通ってきた扉」が移る先(窓際の椅子の前)
   lamp: { on: 1.0, ret: 0.78, pos: [4.6, 2.30, 1.45] },   // 天井灯(R1〜R4・戻り)
-  key: [4.42, 0.735, 2.48],   // 105 の鍵(R5 の机の上 = 410 の points.desk)
+  key: [4.42, 0.735, 2.48],   // 正面玄関の鍵(P6b-C §3.10 #1。旧 105 の鍵。R5 の机の上 = 410 の points.desk)
   enterAt: 0.3,               // 部屋の境目から何 m 入ったら「その部屋にいる」
   fog: [0x050404, 0.035],
   // 管理人の位置(型の局所 tu, tz・姿勢)。行きの R5 と戻りの B1〜B7。戻りは玄関の扉(tu 0)へ近づいていく
@@ -678,7 +678,7 @@ export function enter(ctx) {
   const st = ctx.state;
   reset(ctx);
   const s = ctx.story;
-  st.keyBefore = !!(s && s.taken && s.taken.has('k105'));
+  st.keyBefore = !!(s && s.taken && s.taken.has('kEntrance'));
   if (st.keyBefore) { st.phase = 'plain'; setPath(ctx, [plainRec()], 0); }
   else setPath(ctx, Array.from({ length: X312.fwd }, (_, i) => fwdRec(i + 1)), 0);
   st.log.push({ t: 0, ev: 'enter', keyBefore: st.keyBefore });
@@ -765,7 +765,7 @@ export function update(dt, ctx) {
   if (!st.visited.includes(curRec(st).id)) st.visited.push(curRec(st).id);
   // 鍵(物語の pickups)を取ったら戻りへ
   const s = ctx.story;
-  if (st.phase === 'fwd' && !st.keyBefore && s && s.taken && s.taken.has('k105')) startReturn(ctx);
+  if (st.phase === 'fwd' && !st.keyBefore && s && s.taken && s.taken.has('kEntrance')) startReturn(ctx);
   ensureRooms(ctx);
   // 扉の開閉
   for (const d of st.doors.values()) {
@@ -1007,7 +1007,7 @@ function useDoor(ctx, d) {
   st.log.push({ t: +st.t.toFixed(2), ev: d.target ? 'door_open' : 'door_close', door: d.key });
   return 'door';
 }
-// 105 の鍵は R5 にいる時だけ拾える。R5 の実体が無い間は見えない所へ
+// 鍵(P6b-C: 正面玄関の鍵)は R5 にいる時だけ拾える。R5 の実体が無い間は見えない所へ
 export function canPick(ctx, slot) {
   const st = ctx.state;
   if (slot !== 'key') return true;

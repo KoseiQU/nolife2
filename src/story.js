@@ -30,6 +30,7 @@ export const STORY = {
   lureEvery: 11.0,   // P4b: 221 の口実の電話(story_221_lure)が鳴る間隔(部屋に居る間)
   lureRing: 4.8,     // P6b #7: 1 回鳴っている長さ(story_221_lure の長さ 4.79 秒)。この間スマホの画面が明滅する
   phoneFromLocker: 0.4,   // P6b #7: スマホ = 221 の奥の窓際のロッカーの東の縁からこれだけ東・ロッカーの手前の縁の線(ベッドとの間の床)
+  spaceExitAvoid: 30.0,   // P6b-C(§3.10 #3): 異空間から出た階には管理人がこの秒数現れない(別の階へ潜伏に行く)
   // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
   introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
@@ -37,10 +38,11 @@ export const STORY = {
 export const SPAWN = {
   1: { level: 4, x: 8.75, z: 7.3, yaw: Math.PI / 2 },       // 410 の玄関(扉を向く)
   2: { level: 2, x: 21.65, z: 21.2, yaw: Math.PI / 2 },     // 221 の前の廊下(西=EV の方を向く)
-  3: { level: 1, x: 20.9, z: 24.6, yaw: -Math.PI / 2 },     // 管理室(東の壁のキーボックスを向く)
-  4: { level: 3, x: 6.9, z: 7.25, yaw: -Math.PI / 2 },      // 312 の前(扉を向く)
-  5: { level: 6, x: 6.9, z: 20.7, yaw: 0 },                 // 6F の EV ホール
-  6: { level: 2, x: 24.55, z: 21.2, yaw: 0 },               // 220 の前(扉を向く)
+  // P6b-C(§3.10 #1): 章の順序 105 → 6F → 220 → 312
+  3: { level: 1, x: 20.9, z: 24.6, yaw: -Math.PI / 2 },     // 管理室(東の壁のキーボックスを向く。105 の鍵を取った所)
+  4: { level: 6, x: 6.9, z: 20.7, yaw: 0 },                 // 6F の EV ホール
+  5: { level: 2, x: 24.55, z: 21.2, yaw: 0 },               // 220 の前(扉を向く)
+  6: { level: 3, x: 6.9, z: 7.25, yaw: -Math.PI / 2 },      // 312 の前(扉を向く)
   7: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },          // 1F ロビー(正面玄関を向く)
   8: { level: 4, x: 8.75, z: 7.3, yaw: -Math.PI / 2 },      // 410 の玄関(窓の方を向く)
   9: { level: 7, x: 18.8, z: 21.2, yaw: -Math.PI / 2 },     // 7F の 705 の手前(東を向く)
@@ -48,10 +50,12 @@ export const SPAWN = {
   10: { level: 1, x: 6.9, z: 7.0, yaw: 0 },                 // 食堂(奥の地下への階段の方を向く)
   11: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },         // 1F ロビー(正面玄関を向く)
 };
-// 段の開始時に持っている鍵
-const START_ITEM = { 1: null, 2: 'small', 3: '312', 4: '105', 5: null, 6: '220', 7: 'entrance', 8: 'padlock', 9: '705', 10: 'b1', 11: 'car' };
+// 段の開始時に持っている鍵(P6b-C §3.10 #1: 2 管理室 → 105 の鍵 / 3 105 / 4 6F → 220 の鍵 / 5 220 → 312 の鍵 / 6 312 → 玄関の鍵)
+const START_ITEM = { 1: null, 2: 'small', 3: '105', 4: null, 5: '220', 6: '312', 7: 'entrance', 8: 'padlock', 9: '705', 10: 'b1', 11: 'car' };
 // 解放(この段から開いている)
-const UNLOCK_AT = { KEYBOX: 3, 312: 4, 105: 5, 220: 7, KEYSWITCH: 8, GLOVEBOX: 8, PADLOCK: 9, 705: 10, B1DOOR: 11 };
+const UNLOCK_AT = { KEYBOX: 3, 105: 4, 220: 6, 312: 7, KEYSWITCH: 8, GLOVEBOX: 8, PADLOCK: 9, 705: 10, B1DOOR: 11 };
+// P6b-C(§3.10 #3): 鎖と南京錠をかける外階段(各階)・北階段(2F・3F)の鉄扉。第3段の開始(105 の鍵を取った時)から第9段の追跡の開始まで
+export const CHAIN_DOORS = ['MST1', 'MST2', 'MST3', 'MST4', 'MST5', 'MST6', 'MST7', 'NST2', 'NST3'];
 // 鍵穴(扉・箱)と鍵
 const LOCKS = { 312: '312', 105: '105', 220: '220', 705: '705', B1DOOR: 'b1', KEYBOX: 'small', KEYSWITCH: 'entrance', PADLOCK: 'padlock' };
 const SPACE_OF_DOOR = { 105: 'X105', 312: 'X312', 705: 'X705', B1DOOR: 'XB1' };
@@ -94,12 +98,14 @@ export class Story {
   log(ev, extra = {}) { this.logCount++; this.events.push({ n: this.logCount, t: +this.time.toFixed(2), ev, stage: this.stage, ...extra }); if (this.events.length > 300) this.events.shift(); }
   get active() { return this.mode === 'play'; }
   get evDisabled() { return this.active && (this.sub === 'chase' || this.stage >= 10); }
+  // P6b-C(§3.10 #3): 外階段・北階段の鉄扉の鎖。第3段の開始(105 の鍵を取った時)から第9段の追跡の開始(地下の鍵を取った時)まで
+  get chained() { return this.active && this.stage >= 3 && this.stage <= 9 && !(this.stage === 9 && this.sub === 'chase'); }
   objectiveKey() {
     if (this.ended) return 'end';
     if (this.stage === 1 && this.sub === 'memo') return '1m';
     if (this.stage === 1 && this.sub === 'flee') return '1f';     // P5b-1b
     if (this.stage === 1 && this.sub === 'return') return '1r';
-    if (this.stage === 4 && this.getLevel() === 'X105') return '4x';
+    if (this.stage === 3 && this.getLevel() === 'X105') return '3x';   // P6b-C: 105 は第3段
     if (this.stage === 9 && this.sub === 'chase') return '9c';
     if (this.stage === 10 && this.getLevel() === 'XB1') return '10b';   // P6b #13: 地下の中「奥の作業場で車のキーを探せ」
     if (this.stage === 11 && this.getLevel() === 'XB1') return '10c';   // P6b #13: 車のキーを取った後、地下の中は「鉄扉へ戻れ」
@@ -118,16 +124,16 @@ export class Story {
     // P5b-1b: 小さな鍵は初回は無い(見せない)。221 の奥のロッカーから出た管理人から逃げ切ると机の上に現れる
     { const d = desk('221'); add({ id: 'small', item: 'small', ...d, rotY: 2.2, mesh: P.makeKey(T.small, { small: true }), takenAt: 2,
       need: () => this.stage === 1 && this.sub === 'return', showIf: () => this.stage > 1 || this.sub === 'return' }); }
-    // 3: X312 の床の 105 の鍵 / 4: X105 のメモ
-    // P5b-4: 105 の鍵は X312 の 5 部屋目(R5)の机(R5 にいる時だけ拾える = spaces.canPick)。メモは X105 の出口の扉の手前
-    add({ id: 'k105', item: '105', level: 'X312', space: 'X312', slot: 'key', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey('105'), takenAt: 4,
-      need: () => this.spaces.canPick('X312', 'key', this.camera.position) });
-    add({ id: 'memo6F', memo: 'memo6F', level: 'X105', space: 'X105', slot: 'memo', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 5 });
-    // 5: 609 の机の 220 の鍵・罠の 3 室の机の「鍵に見える物」(札だけの古い鍵)
-    { const d = desk(STORY.keyRoom6F); add({ id: 'k220', item: '220', ...d, rotY: 1.1, mesh: P.makeKey('220'), takenAt: 6 }); }
+    // P6b-C(§3.10 #1): 3: X105 のメモ(出口の扉の手前)/ 4: 609 の机の 220 の鍵 / 5: 220 の机の 312 の鍵 / 6: X312 の 5 部屋目(R5)の机の正面玄関の鍵
+    add({ id: 'memo6F', memo: 'memo6F', level: 'X105', space: 'X105', slot: 'memo', pos: SPACE_DEFS.X105.at('memo'), rotY: -0.3, mesh: P.makeMemo(['鍵は', '6階の', 'どこかの部屋']), takenAt: 4 });
+    // 4: 609 の机の 220 の鍵・罠の 3 室の机の「鍵に見える物」(札だけの古い鍵)
+    { const d = desk(STORY.keyRoom6F); add({ id: 'k220', item: '220', ...d, rotY: 1.1, mesh: P.makeKey('220'), takenAt: 5 }); }
     for (const rid of STORY.trapRooms) { const d = desk(rid); add({ id: 'decoy' + rid, decoy: rid, ...d, rotY: 0.6 + rid.length, mesh: P.makeKey(rid, { tagColor: '#d8cfb8' }), takenAt: 99 }); }
-    // 6: 220 の机の正面玄関の鍵
-    { const d = desk('220'); add({ id: 'kEntrance', item: 'entrance', ...d, rotY: 2.6, mesh: P.makeKey(T.entrance), takenAt: 7 }); }
+    // 5: 220 の机の 312 の鍵
+    { const d = desk('220'); add({ id: 'k312', item: '312', ...d, rotY: 2.6, mesh: P.makeKey('312'), takenAt: 6 }); }
+    // 6: 正面玄関の鍵は X312 の R5 の机(R5 にいる時だけ拾える = spaces.canPick)。札は「玄関」
+    add({ id: 'kEntrance', item: 'entrance', level: 'X312', space: 'X312', slot: 'key', pos: SPACE_DEFS.X312.at('key'), rotY: 0.8, mesh: P.makeKey(T.entrance), takenAt: 7,
+      need: () => this.spaces.canPick('X312', 'key', this.camera.position) });
     // 8: 屋上A の 705 の鍵
     add({ id: 'k705', item: '705', level: 4, pos: new THREE.Vector3(ROOF_KEY.x, levelY(4) + 0.004, ROOF_KEY.z), rotY: 0.3, mesh: P.makeKey('705'), takenAt: 9 });
     // 9: X705 の机の地下の鉄扉の鍵 / 10: XB1 のフックの車のキー
@@ -140,10 +146,11 @@ export class Story {
     kb.position.set(KEYBOX.x, levelY(1) + KEYBOX.y, KEYBOX.z); kb.rotation.y = -Math.PI / 2;
     this.group.add(kb);
     kb.updateMatrixWorld(true);
-    const hk = kb.localToWorld(kb.userData.hooks['312'].clone());
-    const k312 = P.hangKey(P.makeKey('312'));
-    this.pickups.push({ id: 'k312', item: '312', level: 1, pos: hk, mesh: k312, takenAt: 3, need: () => this.unlocked.has('KEYBOX') });
-    k312.position.copy(hk); this.group.add(k312);
+    // P6b-C(§3.10 #1): キーボックスに掛かっているのは 105 の鍵だけ
+    const hk = kb.localToWorld(kb.userData.hooks['105'].clone());
+    const k105 = P.hangKey(P.makeKey('105'));
+    this.pickups.push({ id: 'k105', item: '105', level: 1, pos: hk, mesh: k105, takenAt: 3, need: () => this.unlocked.has('KEYBOX') });
+    k105.position.copy(hk); this.group.add(k105);
     // 風除室の鍵スイッチ(南の壁の内側 = 正面は北)
     const ks = this.keyswitch = P.makeKeySwitch();
     ks.position.set(KEYSWITCH.x, levelY(1) + KEYSWITCH.y, KEYSWITCH.z); ks.rotation.y = -Math.PI / 2;
@@ -165,6 +172,8 @@ export class Story {
     const bd = this.world.doorById.get('B1DOOR');
     v.position.set(bd.pos[0] - 0.75, levelY('B1') + 1.15, bd.pos[1]); v.visible = false;
     this.group.add(v);
+    this._buildChains();
+    this._buildBasementMouth();
     // P6b #7: 221 の床のスマートフォン(ベッドの奥の窓側・ロッカー寄りの床。内装の実寸から: ロッカーとベッドの間、ロッカーの手前の縁の線)
     const r221 = this._room('221');
     if (r221) {
@@ -177,6 +186,62 @@ export class Story {
         this.group.add(ph);
       }
     }
+  }
+
+  // P6b-C(§3.10 #3): 外階段・北階段の鉄扉の鎖と南京錠(両面。実行時の小道具)。扉板の中心・床の高さを原点に、+z = 扉の向き(facing)
+  _buildChains() {
+    this.chains = [];
+    for (const id of CHAIN_DOORS) {
+      const d = this.world.doorById.get(id);
+      if (!d || !d.collision) continue;
+      const c = d.collision, [nx, nz] = FACING_N[d.facing];
+      const cx = (c.minX + c.maxX) / 2, cz = (c.minZ + c.maxZ) / 2;
+      const half = nx !== 0 ? (c.maxX - c.minX) / 2 : (c.maxZ - c.minZ) / 2;   // 扉板の厚みの半分
+      const width = nx !== 0 ? (c.maxZ - c.minZ) : (c.maxX - c.minX);
+      const g = P.makeDoorChain(width, half);
+      g.position.set(cx, levelY(d.level), cz); g.rotation.y = Math.atan2(nx, nz);
+      g.visible = false; g.name = 'Chain_' + id;
+      this.group.add(g);
+      this.chains.push({ id, d, g, pos: new THREE.Vector3(cx, levelY(d.level) + 1.1, cz) });
+    }
+    this._chainOn = null;
+  }
+  // 鎖の状態を段に合わせる(変わった時だけ)。かける時は扉を閉じた姿勢に戻す(第3段の開始はプレイヤーが 1F の管理室にいる)
+  _updateChains(force = false) {
+    const on = this.chained;
+    if (!force && on === this._chainOn) return;
+    this._chainOn = on;
+    for (const C of this.chains) {
+      const d = C.d;
+      d.chained = on;
+      d.locked = on; d.storyLock = on;   // storyLock: 管理人も開けない(enemy_ai の _doorEntry)。鎖の間は管理人は階段を使わない
+      if (on) {
+        d.target = 0; d.angle = 0; d.rattle = 0;
+        if (d.node) d.node.rotation.y = 0;
+        if (d.collision) d.collision.disabled = false;
+      }
+    }
+    this.log(on ? 'chains_on' : 'chains_off');
+  }
+  // P6b-C(§3.10 #5): 地下への階段の口の灯り(口の天井灯・中間踊り場の裸電球・口の壁の札「地下」)。第10段でなくても常に点く
+  _buildBasementMouth() {
+    const st = this.building.stairs.find((q) => q.id === 'basement');
+    if (!st) return;
+    const g = st.geom, y1 = levelY(1);
+    const L = g.landing, M = g.mid;   // [x, z, w, d](axis x: 流れ +x)
+    const zc = L[1] + L[3] / 2;
+    // 口の壁の札: 1F の通路側の西の壁(開口の北か南の壁の切れ目)。開口は z 0.8〜2.1 = 南の壁の面に置く
+    const cols = this.world.collisions(1);
+    const sx = L[0], sz = zc + 0.65 + 0.32;   // 開口の南の縁の外 0.32m
+    const wall = cols.find((b) => b.kind === 'wall' && !b.disabled && sx > b.minX - 0.01 && sx < b.maxX + 0.01 && sz > b.minZ && sz < b.maxZ);
+    const faceX = wall ? wall.minX : sx - 0.06;
+    const B = this.basementMouth = P.makeBasementMouth({
+      ceil: new THREE.Vector3(L[0] - 0.25, y1 + 2.37, zc),   // 口(開口)の通路側の天井 = 食堂から北の通路を見ると突き当たりの右に灯りが見え、札と踊り場を照らす
+      bulb: new THREE.Vector3(M[0] + M[2] * 0.5, y1 + 1.55, zc), ceilY: y1 + 2.4,   // 中間踊り場の上(1F の天井から吊る。1F の踊り場から目の高さに見える)
+      sign: new THREE.Vector3(faceX - 0.004, y1 + 1.62, sz), signYaw: -Math.PI / 2,
+    });
+    this.group.add(B);
+    this.basementSignPos = new THREE.Vector3(faceX, y1 + 1.62, sz);
   }
 
   // 見せる物(段・取ったか・階)
@@ -221,6 +286,11 @@ export class Story {
           if (d >= 0 || look(PADLOCK.x, PADLOCK.z, 1.6) >= 0) cand(Math.max(0, d), { kind: 'story', sk: 'lock', lock: 'PADLOCK', items: [this.item === 'padlock' ? S.useKey : S.look] });
         }
       }
+      // P6b-C(§3.10 #3): 鎖のかかった鉄扉「鎖がかかっている」(E で鎖の音)
+      if (this._chainOn) for (const C of this.chains) {
+        if (C.d.level !== lv) continue;
+        cand(look(C.pos.x, C.pos.z, 1.5), { kind: 'story', sk: 'chain', chain: C.id, items: [S.chained] });
+      }
       for (const id of STORY_DOORS) {
         const d = this.world.doorById.get(id);
         if (!d || d.level !== lv || this.unlocked.has(id) || this.item !== LOCKS[id]) continue;
@@ -253,6 +323,7 @@ export class Story {
     if (t.sk === 'back') { this.leaveSpace(t.exit); return 'back'; }
     if (t.sk === 'space') return t.st.use();
     if (t.sk === 'car') return this.useCar(t.car);
+    if (t.sk === 'chain') return this.rattleChain(t.chain);
     if (t.sk === 'lock') {
       const need = LOCKS[t.lock];
       if (this.item !== need) {
@@ -267,6 +338,16 @@ export class Story {
   }
 
   // ================================================================ 操作
+  // P6b-C(§3.10 #3): 鎖のかかった扉を押す →「鎖がかかっている」・鎖の音(既存の rattle)・扉がごく小さく揺れる
+  rattleChain(id) {
+    const C = this.chains.find((q) => q.id === id);
+    if (!C) return null;
+    this.hud.flash(HUD_TEXT.story.chained);
+    C.d.rattle = 0.25;
+    if (this.audio && this.audio.play) this.audio.play('rattle', C.pos.clone(), 0.8);
+    this.log('chain_rattle', { id });
+    return 'chained';
+  }
   pick(id) {
     const pk = this.pickups.find((q) => q.id === id);
     if (!pk || this.taken.has(id)) return null;
@@ -279,16 +360,16 @@ export class Story {
       this._sfx('paper');
       this.hud.flash(pk.memo === 'memo221' ? S.memo221 : S.memo6F, 2.2);
       if (pk.memo === 'memo221' && this.sub === 'memo') { this.sub = null; this.log('stage', { stage: 1, sub: null }); }   // 先に 221 で出会っていたら段はそのまま
-      if (pk.memo === 'memo6F') this.setStage(5);
+      if (pk.memo === 'memo6F') this.setStage(4);
       return 'memo';
     }
     this.item = pk.item;
     this._sfx('key');
     this.hud.flash(S.got(S.tags[pk.item]), 1.4);
     if (pk.item === 'small') this.setStage(2);   // P5b-1b: 逃げ切ってから戻って拾う(飛び出しは奥へ進んだ時 = _check221)
-    else if (pk.item === '312') this.setStage(3);
-    else if (pk.item === '105') this.setStage(4);
-    else if (pk.item === '220') this.setStage(6);
+    else if (pk.item === '105') this.setStage(3);   // P6b-C: 管理室 → 105
+    else if (pk.item === '220') this.setStage(5);   // 6F → 220
+    else if (pk.item === '312') this.setStage(6);   // 220 → 312
     else if (pk.item === 'entrance') this.setStage(7);
     else if (pk.item === '705') this.setStage(9);
     else if (pk.item === 'b1') this._startFinalChase();
@@ -413,6 +494,8 @@ export class Story {
       this.ai.allowStairs = false; this.ai.noEV = false; this.ai.portals = [];
       if (n >= 11) this._addEntrancePortal();
     }
+    this._updateChains(true);   // P6b-C(§3.10 #3)
+    if (this.ai) this.ai.avoid = null;   // P6b-C: 異空間から出た階を避ける猶予は段をやり直すと消す
     this.log('apply_stage', { stage: n });
     if (this.winWatcher) { this.winWatcher.hide('stage'); this.winWatcher.done = false; }   // P5b-2b
     if (teleport) { const s = SPAWN[n]; this.teleport(s.level, s.x, s.z, s.yaw); }
@@ -460,10 +543,23 @@ export class Story {
     if (!D || this.trans) return false;
     this.log('leave_space', { id: lv });
     if (exit && exit.onLeave) exit.onLeave();
+    this._afterSpaceExit(lv, D.back.level);
     this._fadeTo(() => { this.spaces.show(null); this.teleport(D.back.level, D.back.x, D.back.z, D.back.yaw); });
     return true;
   }
   _fadeTo(fn) { this.trans = { t: 0, fn, done: false }; this.player.frozen = true; }
+  // P6b-C(§3.10 #3): 異空間(105・312・705・地下)から出たら、管理人は異空間の追跡を終え、出た階の廊下には spaceExitAvoid 秒現れない(別の階へ潜伏に行く)。
+  //  例外: 第9段の最終追跡(705 の鍵の後)は従来どおり 705 から 7F へ追ってくる(§3.10 の表の第9段「従来どおり」。鎖が外れて階段で逃げる)
+  _afterSpaceExit(space, back) {
+    if (!this.aiControl || this.mode !== 'play') return;
+    if (space === 'X705' && this.stage === 9 && this.sub === 'chase') { this.log('space_exit_chase_kept', { space }); return; }
+    const ai = this.ai;
+    ai.chaseOmni = false;
+    const near = ai.level === space || ai.level === back || ai.transit || ai.goalLv === back || ['CHASE', 'APPEAR', 'ALERT', 'ATTACK'].includes(ai.state);
+    if (near && !ai.dormant && this.onAIReset) this.onAIReset(back === 4 ? 5 : 4);   // 別の階の EV ホールへ(PATROL → 潜伏先は避ける階以外)
+    ai.avoidFloor(back, STORY.spaceExitAvoid);
+    this.log('space_exit_avoid', { space, back, reset: near, ai: ai.level });
+  }
 
   // ================================================================ 毎フレーム
   update(dt) {
@@ -491,6 +587,9 @@ export class Story {
     this.carDoor.visible = this.unlocked.has('GLOVEBOX') && (lv === 'G' || lv === 1 || lv === 2);
     this.carDoor.userData.dome.visible = this.carDoor.visible && lv === 'G';
     { const bd = this.world.doorById.get('B1DOOR'); this.b1void.visible = (lv === 'B1' || lv === 1) && bd.angle > 0.01; }
+    this._updateChains();   // P6b-C(§3.10 #3)
+    for (const C of this.chains) C.g.visible = this.mode !== 'off' && this._chainOn && (C.d.level === lv || (lv === 'G' && C.d.level === 1));
+    if (this.basementMouth) this.basementMouth.visible = lv === 1 || lv === 'B1';   // P6b-C(§3.10 #5): 1F・B1 だけ(灯りは 2 灯・影なし)
     // 暗転(別空間の出入り)
     if (this.trans) {
       const T = this.trans;
