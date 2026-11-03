@@ -707,7 +707,7 @@ export async function run(N) {
     const pickHint = pickAt(pk('kCar'));
     const st = S.state();
     N.pump(DT, 2, false);
-    const objKey = N.hudState().objective;   // P6b #13: 取ったら「鉄扉へ戻れ」
+    const objKey = N.hudState().objective;   // P6b #13: 取ったら「鉄扉へ戻れ」→ P6b-D: 管理人の見回りの間は「息を潜めろ」(やり過ごすのは test_xb1.js)
     // 管理人は地下へ来ない(経路が無い)
     const routeB1 = N.ai._route(17.6, 23.5, 8.5, 1.45, 1, 'B1');
     const routeXB1 = N.ai._route(17.6, 23.5, 300, 3, 1, 'XB1');
@@ -715,7 +715,7 @@ export async function run(N) {
     const back = leave();
     N.pump(DT, 2, false);
     const pass = noKey.toast === '鍵がかかっている' && !noKey.unlocked && ent.hint.includes('鍵を使う') && ent.level === 'XB1' && pickHint.includes('拾う')
-      && objIn === '奥の作業場で車のキーを探せ' && objKey === '鉄扉へ戻れ'
+      && objIn === '奥の作業場で車のキーを探せ' && objKey === '息を潜めろ'
       && st.stage === 11 && st.item === 'car' && N.hudState().objective === '駐車場の車で逃げろ' && routeB1.length === 0 && routeXB1.length === 0 && back.level === 'B1';
     return { pass, noKey, enter: ent, pickHint, objIn, objKey, stage: st.stage, item: st.item, routeB1: routeB1.length, routeXB1: routeXB1.length, back };
   });

@@ -15,7 +15,7 @@
 //  705_3) 歪みは見た目だけ: 歪み 0 と 1 で当たりの一覧が同じ・柱に当たって止まる所が同じ
 //  B1_1) P6b #13 ループ: 前へ歩くだけで、標識灯 2 回目で瞬き(気づく)・3 回目で自然に抜けて迷路の前室へ(その間 z は窓の外へ出ない)。目標「奥の作業場で車のキーを探せ」
 //  B1_2) P6b #13 迷路: 固定の一本道(曲がり 3 回)・歩く間に配置は変わらない・最後の曲がりから作業場の入口が見える(壁を横切らない)・前進だけで作業場へ
-//  B1_3) P6b #13 戻り: 車のキー(第11段・目標「鉄扉へ戻れ」)→ 踊り場への扉はすぐ少し開いている・背後の灯りが消え(前は点いている)・周回なしで鉄扉 → B1 → 1F で「駐車場の車で逃げろ」
+//  B1_3) P6b #13 戻り: 車のキー(第11段・P6b-D: 目標「息を潜めろ」→ 棚の裏の陰で消灯・静止して管理人の見回りをやり過ごす →「鉄扉へ戻れ」)→ 踊り場への扉はすぐ少し開いている・背後の灯りが消え(前は点いている)・周回なしで鉄扉 → B1 → 1F で「駐車場の車で逃げろ」
 //  W_7) 第7段の窓の内側の管理人: 自動では出ない・force で 409 の窓に出る・見える(遮る物なし)・見た後に目をそらすと消える・近づくと消える・第8段/第6段では出ない
 //  P) 性能(P_perf_vs_4F_corridor): 各空間の代表の視点と 4F の廊下を同じ計り方(1080p・40 フレームの中央値の 5 回の最小。4F は最初と最後)で。描画コール・三角形数
 
@@ -609,11 +609,18 @@ export async function run(N) {
   await T('B1_3_key_return_forward_door_opens_lights_off_exit_stage11', async () => {
     if (N.level !== 'XB1' || N.player.pos.z < 76.5) return { pass: false, why: 'needs B1_2' };
     const kp = S.pickups.find((q) => q.id === 'kCar');
-    walkTo(kp.pos.x, kp.pos.z - 0.8, { max: 300 });
+    walkTo(kp.pos.x, kp.pos.z - 0.8, { max: 600 });
     const hint = pickNow('kCar');
     const st = S.state();
     N.pump(DT, 2, false);
+    const objHide = N.hudState().objective;   // P6b-D: 管理人の見回りの間は「息を潜めろ」
+    // P6b-D: 棚の裏の陰へ → 消灯・静止で見回りをやり過ごす(tools/test_xb1.js が中身を見る)→「鉄扉へ戻れ」
+    walkTo(...WB1(3.05, 81.3), { max: 400 }); walkTo(...WB1(2.95, 79.0), { max: 400 }); N.setFlashlight(false);
+    for (let i = 0; i < 60 * 50 && !['done', 'found'].includes((DB1().hunt() || {}).phase); i++) N.pump(DT, 1, false);
+    const huntEnd = DB1().hunt();
+    N.pump(DT, 2, false);
     const objKey = N.hudState().objective;
+    walkTo(...WB1(3.05, 81.3), { max: 400 }); walkTo(...WB1(6.0, 78.0), { max: 400 }); walkTo(...WB1(6.0, 76.8), { max: 400 });
     // 戻る: 迷路の入口 → トンネル → 踊り場の扉(もう少し開いている)→ 踊り場 → 鉄扉。周回せずに前進だけ
     const tele0 = stB1().teleports;
     let lampSample = null;
@@ -630,9 +637,9 @@ export async function run(N) {
     await tp(1, 6.9, 7.0, 0);
     const obj11 = N.hudState().objective;
     const offBehind = lampSample.filter((l) => !l.ahead && l.off).length, onAhead = lampSample.filter((l) => l.ahead && !l.off).length, offAhead = lampSample.filter((l) => l.ahead && l.off).length;
-    const pass = hint.includes('拾う') && st.stage === 11 && st.item === 'car' && objKey === '鉄扉へ戻れ' && okRoute && s2.retOpen && !s2.doorLocked && s2.door > 0.3 && s2.retLoops === 0 && s2.teleports === tele0
+    const pass = hint.includes('拾う') && st.stage === 11 && st.item === 'car' && objHide === '息を潜めろ' && huntEnd && huntEnd.phase === 'done' && objKey === '鉄扉へ戻れ' && okRoute && s2.retOpen && !s2.doorLocked && s2.door > 0.3 && s2.retLoops === 0 && s2.teleports === tele0
       && offBehind >= 1 && onAhead >= 1 && offAhead === 0 && out.level === 'B1' && obj11 === '駐車場の車で逃げろ';
-    return { pass, pickHint: hint, stage: st.stage, item: st.item, objective: objKey, doorAjar: s2.retOpen, doorLocked: s2.doorLocked, door: s2.door, retLoops: s2.retLoops, teleports: s2.teleports - tele0,
+    return { pass, pickHint: hint, stage: st.stage, item: st.item, objectiveHide: objHide, hunt: huntEnd && { phase: huntEnd.phase, t: huntEnd.t, why: huntEnd.why }, objective: objKey, doorAjar: s2.retOpen, doorLocked: s2.doorLocked, door: s2.door, retLoops: s2.retLoops, teleports: s2.teleports - tele0,
       lamps: { offBehind, onAhead, offAhead }, walkIn_m: s3.walkIn, walkRet_m: s3.walkRet, out, objective1F: obj11 };
   });
 
