@@ -689,11 +689,36 @@ export async function run(N) {
   });
 
   // 24) P6a: タイトルと場面を映すチュートリアルは ?test(tutorial 以外)では出ない(P5a の仮の文字カードは P6a で置き換えた。中身は ?test=tutorial)
-  await T('24_tutorial_not_under_test', () => {
+  //  P6b-F1(§3.12 #1): タイトルの背景(4F の廊下・演出体の管理人・露出 4.3・視野角 46°・灯りの manual・血)を DOM なしで回して片付けると、
+  //   タイトル → 通常プレイの状態が開始前と一致する(管理人・プレイヤーの階と位置・露出・霧・環境光・視野角・懐中電灯・灯りの倍率・外観の強制・HUD)。
+  //   背景の間はゲームの時間(AI の時計・物語)が進まない
+  await T('24_tutorial_not_under_test', async () => {
     const tu = N.tutorial, ti = N.title;
     const autoShown = tu.active || tu.log.length > 0;
-    return { pass: !autoShown && !ti.active && !ti.state().shown && !document.getElementById('title'),
-      autoShownUnderTest: autoShown, title: ti.state() };
+    const noTitle = !autoShown && !ti.active && !ti.state().shown && !document.getElementById('title');
+    W.reset();
+    await N.teleport(4, 8.75, 7.3, Math.PI / 2); N.pump(DT, 10, false);
+    N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4);   // 起動直後と同じ(EV ホールで置き直したばかり。タイトルの片付けも同じ置き直しをする)
+    const snap = () => {
+      const a = N.ai.stats(), p = N.player.pos, e = N.enemyObj;
+      return { ai: { state: a.state, level: a.level, pos: a.pos, concealed: N.ai.concealed, dormant: N.ai.dormant }, level: N.level, pos: [+p.x.toFixed(3), +p.z.toFixed(3)],
+        yaw: +N.camera.rotation.y.toFixed(3), exposure: N.renderer.toneMappingExposure, fog: +N.scene.fog.density.toFixed(5), ambient: +N.ambientFloor.intensity.toFixed(4), fov: N.camera.fov,
+        flashlight: N.player.flashlightOn, frozen: N.player.frozen, lm: N.power.state().lm, em: N.power.state().em, manual: N.power.state().manual,
+        extForce: N.exterior.force, hud: N.hud.root.style.visibility, face: { g: +e.face.grin.toFixed(3), a: +e.face.attack.toFixed(3) } };
+    };
+    const before = snap();
+    const aiT0 = N.ai.time, story0 = N.story && N.story.time;
+    const started = ti.preview(true);
+    const mid = [];
+    for (let i = 0; i < 6 * 60; i++) { N.pump(DT, 1, false); if (i % 60 === 30) mid.push({ exp: N.renderer.toneMappingExposure, fov: N.camera.fov, lvl: N.level, enemy: [+N.enemyObj.pos.x.toFixed(2), +N.enemyObj.pos.z.toFixed(2)], vis: N.enemyObj.root.visible, manual: N.power.state().manual }); }
+    const during = { aiFrozen: N.ai.time === aiT0, storyFrozen: !N.story || N.story.time === story0, bg: ti.state().bg && { flicks: ti.state().bg.flicks, ready: ti.state().bg.ready } };
+    ti.preview(false);
+    const after = snap();
+    const same = JSON.stringify(before) === JSON.stringify(after);
+    const midOk = mid.length >= 5 && mid.every((m) => m.exp === 4.3 && m.fov === 46 && m.lvl === 4 && m.vis && m.manual && Math.abs(m.enemy[0] - 6.85) < 0.01 && Math.abs(m.enemy[1] - 10.0) < 0.01);
+    N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 4);
+    return { pass: noTitle && started && midOk && during.aiFrozen && during.storyFrozen && same && !ti.active,
+      autoShownUnderTest: autoShown, title: ti.state(), mid: mid.slice(0, 2), during, same, before, after };
   });
 
   // ------------------------------------------------------------ P5b-6: 逃げ込みの確率(DESIGN §3.4.1)

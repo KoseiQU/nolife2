@@ -39,6 +39,7 @@ import { Title } from './title.js';
 import { HUD } from './hud.js';
 import { Story } from './story.js';
 import { Spaces } from './spaces.js';
+import { Power } from './power.js';
 
 const PARAMS = new URLSearchParams(location.search);
 // 見学モード(?tour): 建物だけを見て回る。管理人を出さない(scene から外す・AI と声/足音を止める)、死亡・襲撃ムービーなし。
@@ -412,6 +413,18 @@ doorFx = new DoorFx({ scene, world, building, audio: enemyAudio });
 // P5a: 窓越しの管理人(見えるだけの演出体。本体が別の階にいる時、静かな時間帯に)。テストでは自動では出さない(N.watcher.enabled / force)
 const watcher = new Watcher({ scene, camera, enemy, world, building, ai, getLevel: () => playerLevel,
   isBusy: () => movie.active || viewLock.active || !!death, enabled: !TOUR && !PARAMS.has('test') && !PARAMS.has('noai') });
+// P6b-F1(§3.12 #4): 停電の時計(階に依存しない 1 つ)と灯りの一斉制御(src/power.js)。通常プレイだけ自動で起こす(?test・?tour では起こさない)。
+//  ?blackout=now(3 秒後)/?blackout=<秒>・?flicker=now|<秒> で最初の 1 回を早める、?power=off で止める
+const POWER_ON = !TOUR && PARAMS.get('power') !== 'off' && (!PARAMS.has('test') || PARAMS.has('blackout') || PARAMS.has('flicker'));
+const power = new Power({ world, exterior, enemy, ai, player, ambient: ambientFloor, ambientBase: LOOK.ambientFloor, getLevel: () => playerLevel, enabled: POWER_ON,
+  // 起こさない(新しく始めない): 異空間・地下・死亡演出中。進行中の停電も打ち切る: タイトル・チュートリアル・エンディング
+  excluded: () => (isSpace(playerLevel) ? 'space' : playerLevel === 'B1' ? 'b1' : death ? 'death' : null),
+  hard: () => ((title && title.active) ? 'title' : (tutorial && tutorial.active) ? 'tutorial' : (story && story.ending) ? 'ending' : null) });
+{
+  const at = (v) => (v === 'now' || v === '' ? 3 : Math.max(0, parseFloat(v) || 3));
+  if (PARAMS.has('blackout')) power.nextBlackout = at(PARAMS.get('blackout'));
+  if (PARAMS.has('flicker')) power.nextFlicker = at(PARAMS.get('flicker'));
+}
 world.onDoorBroken = (d) => doorFx.onBroken(d);
 world.onDoorRepaired = (d) => doorFx.onRepaired(d);
 if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
@@ -472,6 +485,7 @@ function setPeepLens(rid) {
 }
 let doorScope = null;
 let doorScopeDoor = null;
+let doorScopeLensMat = null;
 buildDoorScopeInside(door410);
 // 階を読み直したら、室内側のドアスコープを今いる部屋(無ければ 410)の新しい扉板へ付け直す
 world.onFloorReady = (lv, rec) => {
@@ -516,6 +530,7 @@ function buildDoorScopeInside(d) {
   })();
   const lensMat = new THREE.MeshStandardMaterial({ color: 0x07090c, roughness: 0.04, metalness: 0.0, envMap: envTex, envMapIntensity: 0.9,
     emissive: 0xffffff, emissiveMap: dot, emissiveIntensity: 0.9 });
+  doorScopeLensMat = lensMat;   // P6b-F1: 停電の間はレンズに映る常夜灯の点も消す
   const lensMesh = new THREE.Mesh(new THREE.CircleGeometry(0.011, 24).rotateY(Math.PI / 2), lensMat);
   lensMesh.position.x = 0.0085;
   grp.add(ring, barrel, lensMesh);
@@ -926,6 +941,8 @@ function updateRunGate(dt, gx, gz) {
   }
 }
 function step(dt) {
+  // P6b-F1: タイトルの間はゲームの時間を止めたまま、タイトルの背景(廊下・管理人・灯り・血)だけを進める
+  if (title.active) { title.update(dt); grainPass.uniforms.time.value += dt; return; }
   simTime += dt;
   const gx = player.pos.x, gz = player.pos.z;
   player.update(dt);
@@ -960,6 +977,8 @@ function step(dt) {
     busy: TOUR || movie.active || viewLock.active || !!death || ['CHASE', 'ATTACK', 'EVAMBUSH'].includes(ai.state) }, TOUR ? null : tutorial.active ? tutorial.lurkId : ai.lurkRoomId);
   updateVisibility();
   updateOutdoorLook(dt);
+  power.update(dt);   // P6b-F1: 停電・消え掛かり(灯りの倍率を書くだけ。管理人・EV の動きは変えない)
+  if (doorScopeLensMat && doorScopeDoor) doorScopeLensMat.emissiveIntensity = 0.9 * power.emAt(doorScopeDoor.level);
   spaces.update(dt);   // P5b-2a: 今いる別空間の演出(霧などの見た目の上書きもあるので外の見た目の後)
   if (!TOUR && !tutorial.active && !runGate.active) watcher.update(dt);
   if (!TOUR) enemyAudio.update(dt);
@@ -992,7 +1011,7 @@ function render() {
 function frame(now) {
   const dt = (now - last) / 1000; last = now;
   const t0 = performance.now();
-  if ((!window.__n2 || !window.__n2.paused) && !title.active) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める。P6a: タイトル表示中も止める(チュートリアルは step の中で進む)
+  if (!window.__n2 || !window.__n2.paused) step(Math.min(Math.max(dt, 0), 0.1));   // paused: 監査スクリプトが pump で進める間、本物のループを止める。P6b-F1: タイトルの間は step がタイトルの背景だけを進める(ゲームの時間は止まる)
   render();
   const cpu = performance.now() - t0;
   frameTimes.push([now, dt * 1000, cpu]);
@@ -1008,13 +1027,18 @@ if (STORY_MODE === 'play') {
 }
 // P6a: タイトル(「NOLIFE」＋「クリックで開始」)→ 場面を映すチュートリアル → 410 のベッド脇。
 //  タイトルは通常プレイと ?test=tutorial だけ(?tour・他の ?test=… では出さない)。チュートリアルは ?notutorial で出さない(タイトルのクリックで通常プレイへ)
-const tutorial = new Tutorial({ camera, player, ai, enemy, enemyAudio, bank, world, elevator, rooms, doorFx, peephole, hud, scene, ambientFloor, door410,
+const tutorial = new Tutorial({ camera, player, ai, enemy, enemyAudio, bank, world, elevator, rooms, doorFx, peephole, hud, scene, ambientFloor, door410, renderer, movie, exterior, look: LOOK,
+  loadExterior: () => (exterior.ready ? Promise.resolve(exterior) : (window.__n2._extLoad ||= exterior.load())),
   teleport: (key, x, z, yaw, pitch = 0) => { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); },
   getLevel: () => playerLevel, controlsSec: HUD.controlsSec,
   resetAI: (dormant) => { ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw); if (dormant) ai.setDormant(true); } });
 const TITLE_ON = !TOUR && (!PARAMS.has('test') || PARAMS.get('test') === 'tutorial');
 const title = new Title({ show: TITLE_ON, lock: () => player.lock(), resumeAudio,
-  onStart: () => { if (!PARAMS.has('notutorial') && STORY_MODE === 'play') tutorial.start(); } });
+  onStart: () => { if (!PARAMS.has('notutorial') && STORY_MODE === 'play') tutorial.start(); },
+  // P6b-F1(§3.12 #1): 背景 = 4F の廊下の生レンダ(管理人は演出体・灯りは power の manual)
+  camera, player, ai, enemy, world, power, renderer, hud, exterior, scene, ambientFloor, look: LOOK, getLevel: () => playerLevel,
+  teleport: (key, x, z, yaw, pitch = 0) => { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); },
+  resetAI: (dormant) => { ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw); if (dormant) ai.setDormant(true); } });
 player.controls.addEventListener('unlock', () => { if (tutorial.active) tutorial.requestSkip('unlock'); });   // ポインタロック中の Esc はロックが外れるだけでキーが届かないことがある
 movie.pass.enabled = true; movie.mist.points.visible = true;
 render();
@@ -1058,6 +1082,7 @@ window.__n2 = {
   runGate,   // P6b-A2: 221 の初回の走り確認({ active, t, log })
   movie, ambientFloor, get doorScope() { return doorScope; }, hud, hudState: () => hud.state(),
   doorFx, viewLock, watcher, tutorial, title,   // P5a・P6a
+  power,   // P6b-F1: 停電(power.state()・startBlackout(秒)・startFlicker()・emitterFactors(階))
   story, spaces,   // P5b-1: 物語(story.state()・applyStage(n)・enterSpace(id)…)と別空間
   storyDecor, setLiveDrip,   // P3b-4: 怖い扉(部屋ごとのデカールの頂点数など)・生乾きの垂れの伸び(0..1)
   exterior, EXT_U, wantExterior,   // P3c: 外観・外環境(exterior.ready / show / stats)。?noext なら load() を手で呼ぶ
