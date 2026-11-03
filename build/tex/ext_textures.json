@@ -8,5 +8,17 @@
  ],
  "cityHorizonRow": 142,
  "cityRows": 256,
- "treeVariants": 4
+ "treeVariants": 4,
+ "wetBox": [
+  -2.5,
+  -3.5,
+  38.5,
+  35.0
+ ],
+ "wetS": 1.0,
+ "tileSize": [
+  2.82,
+  2.9
+ ],
+ "glassS": 1.0
 }
