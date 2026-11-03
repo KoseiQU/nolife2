@@ -4,6 +4,9 @@
 //  P6b-F1(§3.12 #2・#3): 場面 1 を外観に(敷地の南東の門の内側の低いカメラから建物を見上げる 8 秒。案 A の構図・霧 0.06・露出 3.7・管理人なし)。
 //    410 の仕込み(動かないスマホ・場面 1 の環境光の持ち上げ)は撤去。場面 7c(7b の後 3.0 秒: 覗き穴の向こうの管理人の顔 grin→attack・レンズの血・打撃音 1 発。
 //    入りは 0.1 秒の黒のカット、終わりは即暗転 → 8)を追加。並びは …,7,7b,7c,8、合計 97.0 秒。
+//  P6b-F3(§3.13): 場面 1 を正面玄関の正面から(建物が画面の大半)。6b を削除。並びを 0,1,2,3,3b,4,5,6,7b,7,8 に(7c は 7 の末尾に統合:
+//    花瓶 →「決して音をたてるな！」→ チャイム・足音 → 視点が玄関の扉へ(1.0 秒)→ カットで覗き穴(2.5 秒)→ 即暗転)。
+//    場面 8 はベッドに寝た状態から 2.6 秒で起き上がってベッド脇に立つ(wakeUp。?notutorial の開始でも main が呼ぶ)。合計 89.6 秒。
 //  タイトルのクリックの後、操作を奪ったカメラが館内の場面 0〜8 を順に映し、各場面に表の一文を出す(0 は黒の中央、1〜7 は画面下)。
 //  音楽なし。環境音(main の updateAmbience)と場面の音(AudioBank の採用場面: 管理人の足音・EV のチャイム・花瓶の割れる音)だけ。
 //  - 管理人は演出体として置く: AI の通常動作(ai.update)は main が止め、ここが enemy を直接置いて歩かせる(位置・向き・クリップ・懐中電灯・照らす点)。
@@ -21,9 +24,10 @@ import { levelY, glbLevel } from './world.js';
 export const TUT = {
   seenKey: 'nolife2.tutorialSeen',
   // 場面の並び(P6b §3.9 #11 で 3b・6b を追加。配列の添字 = this.index、表の番号 = ids[index])
-  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '7c', '8'],
-  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 97.0 秒(契約 ≤100。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0 ＋ 7b 6.5 ＋ 7c 3.0)
-  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0, 3.0],
+  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '7b', '7', '8'],   // P6b-F3: 6b を削除・7b を 7 の前へ・7c は 7 の末尾
+  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 89.6 秒(P6b-F3: 6b を削除、7 = 花瓶〜扉 7.5 ＋ 覗き穴 2.5、8 = 黒 1.0 ＋ 起き上がり 2.6)
+  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 6.5, 10.0, 3.6],
+  capEnd: { '7': 7.4 },   // 文言を消し終える時刻(場面の頭から。無ければ場面の終わり)。7 は覗き穴の前に消す
   edgeFade: 0.6,       // 場面の始めと終わりの暗転(秒)
   cutFade: 0.3,        // 場面 6 の中のカット
   bedside: { level: 4, x: 12.35, z: 7.25, yaw: Math.PI / 2, pitch: -0.04 },   // 終わりの位置: 410 のベッド脇(西 = 玄関の方を向く)
@@ -35,19 +39,25 @@ export const TUT = {
   gap5: 0.15,          // 場面 5: 隙間の開き(ROOMS.hideGap 0.09 より少し広く。映す時だけ)
   flashScale: 0.38,    // 場面 6・7: 近い壁・扉が白く飛ばないよう、自分の懐中電灯をこの倍率に(終われば戻す)
   stair3b: { level: 3 },   // P6b 場面 3b: 3F の外階段の踊り場(場面 3 と同じ階 = 読み込み待ちなし)
-  open6b: '410', closed6b: '409',   // P6b 場面 6b: 4F の廊下の北端から、手前の開いた扉(410)と奥の閉まった扉(409)
   // P6b-A2 場面 7b: 4F の廊下を南(EV ホール)へ走る。z0→z1 を run 秒(≈2.5 m/s)、足音の間隔 step 秒、目の上下 bob m。
   //  カゴは 2F から呼ばれて travel 秒で 4F へ(表示 2→3→4・チャイム。扉は開けない)
   // P6b-E1(§3.11 #3): チュートリアルの間(場面 1〜7b)だけ露出を 1 段暗く(本編 LOOK.exposure 4.5)。場面 0 の黒はそのまま、場面 8 の暗転(片付け)で開始時の値へ戻す
   exposure: 3.2,
   // P6b-F1: 場面ごとの露出の上書き。1 = 外観(案 A の 3.7。3.2 だと建物が霧に沈んで「見上げる」形が読めない = docs/p6b-f1/NOTES.md §3)、
   //  7c = 覗き穴(案 B の 6.0。魚眼の外の黒が画面の 7 割あるので中を持ち上げる)
-  exposureBy: { '1': 3.7, '7c': 6.0 },
-  // P6b-F1 場面 1: 敷地 'G' の南東の門の内側・地面近く(案 A のカメラ)から北西の建物を見上げる。見る先の高さを y0 → y1 へ 8 秒で上げ、少しだけ寄る(push m)。
-  //  霧は外観・木の材質の霧(LOOK.ext.fogDensity)を 0.06 に(案 A。場面を出る時に戻す)
-  ext1: { x: 35.4, z: 32.4, eye: 0.85, tx: 16.0, tz: 14.0, y0: 3.2, y1: 9.5, push: 0.45, fov: 50, fogD: 0.06, fogC: [0.016, 0.018, 0.024] },
+  exposureBy: { '1': 3.7 },
+  peepExposure: 6.0,      // 7 の覗き穴(案 B)
+  // P6b-F3 場面 1(§3.13 #1): 正面玄関(17.6, 28.1)の正面。敷地の南の縁(植え込みの手前 z 34.2 = 玄関から 6.1m。敷地はここまで、その先は下りの斜面と森)・高さ 1.2m から
+  //  北の建物を見上げる。8 秒で pitch +4°(p0 → p0+4°)と前進 0.4m。視野角 70°(正面のファサード・玄関の庇・バルコニーの列が画面の大半、森は入らない)。
+  //  霧は外観・木の材質の霧(LOOK.ext.fogDensity)を 0.045 に(場面を出る時に戻す)。docs/p6b-f3/NOTES.md §1
+  ext1: { x: 17.6, z: 34.2, eye: 1.2, yaw: 0, p0: 27.8, dp: 4.0, push: 0.4, fov: 70, fogD: 0.045, fogC: [0.016, 0.018, 0.024] },
+  // P6b-F3 起き上がり(§3.13 #2): 410 のベッドの枕(13.17, 6.30・上面 0.64m)の上 0.25m で天井を見上げる(pitch +70°)→ 1.4 秒で上体を起こし → 1.2 秒で立ってベッド脇(bedside)へ。
+  //  カメラは 2 次ベジェで枕 → 起きた位置(sit)→ 立ち位置へ。向きは足元(西 = 玄関側)
+  wake: { x: 13.05, z: 6.3, eye: 0.89, pitch: 70, sit: { x: 12.75, z: 6.55, eye: 1.18, pitch: 8 }, ctrl: { x: 12.4, z: 6.7 }, rise: 1.4, stand: 1.2, black: 1.0, fade: 1.2 },
   // P6b-F1 場面 7c: 410 の室内(覗き穴の前)から。管理人は扉の前 0.4m(案 B)。grin → attack(見開き)、打撃音と同時にレンズに血
-  peep7c: { cam: [8.62, 7.25], enemy: [7.1, 7.24], clip: 'walk_oldman', time: 0.3, grin: [0.5, 0.6], attackAt: 1.05, attackIn: 0.35, attack: 0.95, hitAt: 1.75, lean: 0.0, under: 0.3, cut: 0.1 },
+  // P6b-F3: 7 の末尾の覗き穴(2.5 秒。F1 の 7c を詰めた)。7 の前半(7.5 秒)の 6.2 秒から 1.0 秒で視点が玄関の扉へ
+  peep7c: { cam: [8.62, 7.25], enemy: [7.1, 7.24], clip: 'walk_oldman', time: 0.3, grin: [0.5, 0.6], attackAt: 0.75, attackIn: 0.3, attack: 0.95, hitAt: 1.25, lean: 0.0, under: 0.3, cut: 0.1 },
+  scene7: { a: 7.5, b: 2.5, turnAt: 6.2, turn: 1.0 },
   run7b: { x: 6.9, z0: 8.6, z1: 14.0, t0: 0.3, run: 2.2, step: 0.3, bob: 0.035, eye: 1.52, callAt: 0.6, from: 2, to: 4, travel: 3.4 },
 };
 const LAST = TUT.ids.length - 1;   // 最後の場面(黒 → ベッド脇)
@@ -271,12 +281,11 @@ export class Tutorial {
     // 0: 黒に「ノーライフ学生会館　午前3時」(P6b-F1: 裏で敷地 'G' へ移って 1F と外観の読み込みを済ませる。黒なので読み込みは待たない)
     const X1 = TUT.ext1;
     S['0'] = [{ dur: DUR('0'), level: 'G', black: true, at: [X1.x, X1.z], ready: () => true,
-      enter: () => { this._place('G', X1.x, X1.z, -Math.PI * 0.75, 0.1); this._hideEnemy(); this.player.setFlashlight(false); this._kickExterior(); } }];
-    // 1(P6b-F1 §3.12 #3): 外観。敷地の南東の門の内側・地面近くから北西の建物をゆっくり見上げる(案 A の構図)。管理人は出さない(場面 2 で初登場)
+      enter: () => { this._place('G', X1.x, X1.z, X1.yaw, 0.1); this._hideEnemy(); this.player.setFlashlight(false); this._kickExterior(); } }];
+    // 1(P6b-F1 §3.12 #3 → P6b-F3 §3.13 #1): 外観。正面玄関の正面・高さ 1.2m から建物を見上げる(8 秒で pitch +4°・前進 0.4m)。管理人は出さない(場面 2 で初登場)
     const look1 = (t) => {
-      const k = smooth(t / DUR('1')), dx = X1.tx - X1.x, dz = X1.tz - X1.z, L = Math.hypot(dx, dz);
-      const x = X1.x + dx / L * X1.push * k, z = X1.z + dz / L * X1.push * k;
-      return this._look(x, X1.eye, z, X1.tx, X1.y0 + (X1.y1 - X1.y0) * k, X1.tz);
+      const k = smooth(t / DUR('1'));
+      return { x: X1.x - Math.sin(X1.yaw) * X1.push * k, z: X1.z - Math.cos(X1.yaw) * X1.push * k, eye: X1.eye, yaw: X1.yaw, pitch: (X1.p0 + X1.dp * k) * Math.PI / 180 };
     };
     S['1'] = [{ dur: DUR('1'), level: 'G', at: [X1.x, X1.z], ready: () => this.world.isReady(1) && (!this.exterior || this.exterior.ready || this._extFailed),
       enter: () => {
@@ -441,34 +450,22 @@ export class Tutorial {
         },
         exit: () => { this.leakMat.opacity = 0; if (this.leakEdgeMat) this.leakEdgeMat.opacity = 0; } },
     ];
-    // 6b(P6b): 4F の廊下の北端から南を見る。手前の 410 の扉は開いたまま、奥の 409 の扉は閉まっている(扉はこの場面だけ開け、出る時に戻す)。
-    //  「施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい」
-    const K6b = [
-      { t: 0.0, ...this._look(6.5, 1.6, 5.98, 7.55, 1.15, 9.6) },
-      { t: 7.0, ...this._look(6.45, 1.6, 6.55, 7.6, 1.1, 10.1) },
-    ];
-    S['6b'] = [{ dur: DUR('6b'), level: 4,
-      enter: () => {
-        const D = this.door410;
-        D.target = D.openAngle; D.angle = D.openAngle; D.speedMul = 1; if (D.collision) D.collision.disabled = true;
-        this._place(4, 6.5, 5.98, Math.PI, 0); this._hideEnemy(); this.player.setFlashlight(false); this._cam(keys(K6b, 0), L4);
-        this.log.push({ ev: 'door_open_6b', door: TUT.open6b });
-      },
-      tick: (t) => this._cam(keys(K6b, t), L4),
-      exit: () => { const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false; } }];
     // 7: 410 の机の花瓶が落ちて割れる(room_fall)。遠くで EV のチャイム、近づく足音(廊下を歩く管理人。扉越し)
-    S['7'] = [{ dur: DUR('7'), level: 4,
+    //  P6b-F3: → 6.2 秒から 1.0 秒で視点が玄関の扉へ → 7.5 秒でカット(覗き穴の 2 カット目へ。フェードなし)
+    const S7 = TUT.scene7, P7 = TUT.peep7c;
+    S['7'] = [{ dur: S7.a, level: 4, fout: 0,
       enter: () => {
         this.player.setFlashlight(true); this.player.flashlight.intensity = this.snap.flashI * TUT.flashScale;
         this.vase.position.copy(this.vaseHome); this.vase.rotation.set(0, 0.4, 0); this.vase.visible = true; this.props.add(this.vase);
-        this.shards.visible = false; this._vase = { state: 'rest', vy: 0 }; this._chimed = false; this._stepsOn = false;
+        this.shards.visible = false; this._vase = { state: 'rest', vy: 0 }; this._chimed = false; this._stepsOn = false; this._turned = false;
         this._cam(this._look(11.5, 1.45, 7.22, 12.74, 0.84, 8.17), L4);
       },
       tick: (t, dt) => {
         const V = this._vase, v = this.vase, y0 = y4;
         const look = this._look(11.5, 1.45, 7.22, 12.74, 0.84, 8.17);
-        const door = { x: 11.25, z: 7.25, eye: 1.55, yaw: Math.PI / 2, pitch: -0.02 };
-        this._cam(t < 3.8 ? look : keys([{ t: 3.8, ...look }, { t: 6.4, ...door }], t), L4);
+        const door = this._look(11.3, 1.55, 7.24, 7.8, 1.45, 7.25);   // 玄関の扉(覗き穴の高さ)
+        this._cam(t < S7.turnAt ? look : keys([{ t: S7.turnAt, ...look }, { t: S7.turnAt + S7.turn, ...door }], t), L4);
+        if (!this._turned && t >= S7.turnAt + S7.turn) { this._turned = true; this.log.push({ ev: 'look_door', t: +t.toFixed(2) }); }
         // 花瓶: 傾く → 机の縁から落ちる → 床で割れる
         if (V.state === 'rest' && t >= 1.1) { V.state = 'tip'; V.t = 0; }
         if (V.state === 'tip') { V.t += dt; v.rotation.z = -0.9 * smooth(V.t / 0.35); v.position.z = this.vaseHome.z - 0.05 * smooth(V.t / 0.35); if (V.t >= 0.35) { V.state = 'fall'; V.vy = 0; } }
@@ -497,11 +494,47 @@ export class Tutorial {
         }
         if (this._stepsOn) this._walk(dt, 6.85, 9.0, 1.15, 'walk_standard');
       },
-      exit: () => { this._hideEnemy(); this.enemyAudio.setOccluded(false); this.vase.removeFromParent(); this.shards.removeFromParent(); } }];
+      exit: () => { this._hideEnemy(); this.enemyAudio.setOccluded(false); this.vase.removeFromParent(); this.shards.removeFromParent(); } },
+    // 7 の 2 カット目(P6b-F1 の 7c): 覗き穴の視点。レンズの目の前に管理人の顔(grin → attack の見開き)、打撃音(採用 enemy_hit)と同時にレンズに血の飛沫と筋。
+    //  文言なし(文言は capEnd で先に消える)。入りは 0.1 秒の黒のカット、終わりは即暗転 → 8。顔の作りは案 B(docs/p6b-e1/NOTES.md)
+    { dur: S7.b, level: 4, blackAt: (t) => (t < P7.cut ? 1 : 0),
+      enter: () => {
+        const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false;
+        this.player.setFlashlight(false); this.player.flashlight.intensity = this.snap.flashI;
+        this._place(4, P7.cam[0], P7.cam[1], Math.PI / 2, 0);
+        this.peephole.forced = true; this.peephole.set(true);
+        this._exposure(TUT.peepExposure);
+        this._enemy(4, P7.enemy[0], P7.enemy[1], Math.PI / 2, { light: false, clip: P7.clip });
+        const a = this.enemy.actions[P7.clip]; if (a) { a.time = P7.time; a.timeScale = 0; }
+        this.enemy.underLight = P7.under;
+        this.enemy.setFace('grin', P7.grin[0], true); this.enemy.setFace('attack', 0, true);
+        this._hit7c = false;
+        if (this.movie) this.movie.blood.clear();
+        this.log.push({ ev: 'peep_7c' });
+      },
+      tick: (t, dt) => {
+        const e = this.enemy;
+        e.place(P7.enemy[0], P7.enemy[1], Math.PI / 2);   // 覗き穴の前から動かない
+        e.lean = P7.lean * smooth(t / 1.6);
+        const ka = smooth((t - P7.attackAt) / P7.attackIn);
+        e.setFace('grin', P7.grin[0] + (P7.grin[1] - P7.grin[0]) * smooth(t / P7.attackAt) * (1 - 0.4 * ka), true);
+        e.setFace('attack', P7.attack * ka, true);
+        if (!this._hit7c && t >= P7.hitAt) { this._hit7c = true; this._blood7c(); this.log.push({ ev: 'hit_7c', t: +t.toFixed(2) }); }
+        if (this.movie && this.movie.blood.pass.enabled) this.movie.blood.update(dt);
+      },
+      exit: () => {
+        if (this.peephole.active) { this.peephole.forced = false; this.peephole.set(false); }
+        this.peephole.forced = false;
+        this._exposure(TUT.exposure);
+        const e = this.enemy; e.lean = 0; e.underLight = 0; e.setFace('grin', 0, true); e.setFace('attack', 0, true);
+        const a = e.actions[P7.clip]; if (a) a.timeScale = 1;
+        this._hideEnemy();
+        if (this.movie) this.movie.blood.clear();
+      } }];
     // 7b(P6b-A2 §3.9 #17): 4F の廊下を走る(走りの高さ・速さ・足音)→ 足を止めると、遠くの EV の階数表示が 2→3→4 と動いてチャイム。
     //  「走ると足音が響く！管理人に聞こえる！」。廊下の自分の足音は本編では「なし」なので、居室の足音(pl_step_room)を走りの音量で鳴らす
     const R7 = TUT.run7b;
-    S['7b'] = [{ dur: DUR('7b'), level: 4, fout: 0,   // P6b-F1: 終わりはフェードしない(7c へ 0.1 秒の黒のカット)
+    S['7b'] = [{ dur: DUR('7b'), level: 4,
       enter: () => {
         const c = this.elevator.car;
         Object.assign(c, { level: R7.from, open: 0, state: 'idle', hold: 0, to: null, t: 0, dur: 0, riding: false, pending: [] });
@@ -531,48 +564,16 @@ export class Tutorial {
         if (c.state === 'arrived') c.lead = Math.max(c.lead, 0.5);   // チャイムの後も扉は閉じたまま
       },
       exit: () => { this.player.flashlight.intensity = this.snap.flashI; } }];
-    // 7c(P6b-F1 §3.12 #2): 覗き穴の視点。レンズの目の前に管理人の顔(grin → attack の見開き)、打撃音(採用 enemy_hit)と同時にレンズに血の飛沫と筋。文言なし。
-    //  入りは 0.1 秒の黒のカット(7b の終わりはフェードしない)、終わりは即暗転 → 8。顔の作りは案 B(docs/p6b-e1/NOTES.md)
-    const P7 = TUT.peep7c;
-    S['7c'] = [{ dur: DUR('7c'), level: 4, blackAt: (t) => (t < P7.cut ? 1 : 0),
-      enter: () => {
-        const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false;
-        this.player.setFlashlight(false); this.player.flashlight.intensity = this.snap.flashI;
-        this._place(4, P7.cam[0], P7.cam[1], Math.PI / 2, 0);
-        this.peephole.forced = true; this.peephole.set(true);
-        this._enemy(4, P7.enemy[0], P7.enemy[1], Math.PI / 2, { light: false, clip: P7.clip });
-        const a = this.enemy.actions[P7.clip]; if (a) { a.time = P7.time; a.timeScale = 0; }
-        this.enemy.underLight = P7.under;
-        this.enemy.setFace('grin', P7.grin[0], true); this.enemy.setFace('attack', 0, true);
-        this._hit7c = false;
-        if (this.movie) this.movie.blood.clear();
-        this.log.push({ ev: 'peep_7c' });
-      },
-      tick: (t, dt) => {
-        const e = this.enemy;
-        e.place(P7.enemy[0], P7.enemy[1], Math.PI / 2);   // 覗き穴の前から動かない
-        e.lean = P7.lean * smooth(t / 1.6);                // 顔をレンズへ寄せる
-        const ka = smooth((t - P7.attackAt) / P7.attackIn);
-        e.setFace('grin', P7.grin[0] + (P7.grin[1] - P7.grin[0]) * smooth(t / P7.attackAt) * (1 - 0.4 * ka), true);
-        e.setFace('attack', P7.attack * ka, true);
-        if (!this._hit7c && t >= P7.hitAt) { this._hit7c = true; this._blood7c(); this.log.push({ ev: 'hit_7c', t: +t.toFixed(2) }); }
-        if (this.movie && this.movie.blood.pass.enabled) this.movie.blood.update(dt);
-      },
-      exit: () => {
-        if (this.peephole.active) { this.peephole.forced = false; this.peephole.set(false); }
-        this.peephole.forced = false;
-        const e = this.enemy; e.lean = 0; e.underLight = 0; e.setFace('grin', 0, true); e.setFace('attack', 0, true);
-        const a = e.actions[P7.clip]; if (a) a.timeScale = 1;
-        this._hideEnemy();
-        if (this.movie) this.movie.blood.clear();
-      } }];
-    // 8: 黒 → (暗転の中で世界を開始時の状態へ戻す)→ 410 のベッド脇でフェードイン → 操作一覧
+    // 8: 黒 → (暗転の中で世界を開始時の状態へ戻す)→ P6b-F3: 410 のベッドに寝た状態でフェードイン → 2.6 秒で起き上がってベッド脇に立つ → 操作一覧
+    const WK = TUT.wake;
     S['8'] = [{ dur: DUR('8'), level: 4, black: true,
-      enter: () => { this._restore(); this.seen = true; },
+      enter: () => { this._restore(); this.seen = true; this._wakePose(0); },
       tick: (t) => {
-        if (t >= 1.0 && !this._shown) { this._shown = true; this.hud.root.style.visibility = ''; this.hud.showControls(this.controlsSec); this.log.push({ ev: 'fade_in' }); }
+        if (t >= WK.black && !this._fadeLogged) { this._fadeLogged = true; this.log.push({ ev: 'fade_in' }); }
+        this._wakePose(Math.max(0, t - WK.black));
+        if (t >= WK.black + WK.rise + WK.stand - 1e-6 && !this._shown) { this._shown = true; this.hud.root.style.visibility = ''; this.hud.showControls(this.controlsSec); this.log.push({ ev: 'stood' }); }
       },
-      exit: () => { this._shown = false; } }];
+      exit: () => { this._shown = false; this._fadeLogged = false; } }];
     const A = TUT.ids.map((id) => S[id]);
     for (let i = 0; i < A.length; i++) {
       if (!A[i]) throw new Error(`tutorial: 場面 ${TUT.ids[i]} が無い`);
@@ -580,6 +581,56 @@ export class Tutorial {
       if (Math.abs(tot - TUT.dur[i]) > 1e-6) throw new Error(`tutorial: 場面 ${TUT.ids[i]} の長さ ${tot} ≠ ${TUT.dur[i]}`);
     }
     return (this._S = A);
+  }
+
+  // P6b-F3 起き上がり: 起き始めてからの時刻 t のカメラ(枕の上で天井を見上げる → 上体を起こす → ベッド脇に立つ。2 次ベジェの曲線)
+  _wakePose(t) {
+    const W = TUT.wake, B = TUT.bedside, P = this.player;
+    const standEye = this._standEye ?? (this._standEye = (() => { P.setPose(B.x, B.z, B.yaw, B.pitch); return this.camera.position.y - levelY(B.level); })());
+    const deg = Math.PI / 180;
+    let x, z, eye, pitch;
+    if (t <= W.rise) {   // 上体を起こす: 枕 → 起きた位置(目の高さは弧を描いて上がる)
+      const k = smooth(t / W.rise), u = 1 - k;
+      x = u * u * W.x + 2 * u * k * (W.x - 0.05) + k * k * W.sit.x;
+      z = u * u * W.z + 2 * u * k * W.z + k * k * W.sit.z;
+      eye = W.eye + (W.sit.eye - W.eye) * Math.sin(k * Math.PI / 2);
+      pitch = (W.pitch + (W.sit.pitch - W.pitch) * k) * deg;
+    } else {             // 立ち上がる: 起きた位置 → 立ち位置(足をベッドから下ろして横へ)
+      const k = smooth((t - W.rise) / W.stand), u = 1 - k;
+      x = u * u * W.sit.x + 2 * u * k * W.ctrl.x + k * k * B.x;
+      z = u * u * W.sit.z + 2 * u * k * W.ctrl.z + k * k * B.z;
+      eye = W.sit.eye + (standEye - W.sit.eye) * (k < 0.5 ? 2 * k * k : 1 - 2 * (1 - k) * (1 - k));
+      pitch = W.sit.pitch * deg + (B.pitch - W.sit.pitch * deg) * k;
+    }
+    if (t >= W.rise + W.stand) { P.setPose(B.x, B.z, B.yaw, B.pitch); this.camera.updateMatrixWorld(); return 1; }   // 立った(以後は通常の目の高さ)
+    this._cam({ x, z, eye, yaw: B.yaw, pitch }, B.level);
+    return t / (W.rise + W.stand);
+  }
+
+  // P6b-F3: チュートリアルなしの開始(?notutorial)でも寝た状態から起き上がる。main が step で updateWake(dt) を呼ぶ。終わると操作を返して操作一覧
+  wakeUp() {
+    if (this.active || this.waking) return false;
+    const B = TUT.bedside, P = this.player;
+    if (this.getLevel() !== B.level) this.teleport(B.level, B.x, B.z, B.yaw, B.pitch); else P.setPose(B.x, B.z, B.yaw, B.pitch);
+    this.waking = { t: 0, hud: this.hud.root.style.visibility };
+    P.frozen = true; P.controls.enabled = false;
+    this.hud.root.style.visibility = 'hidden'; this.hud.controlsT = 0;   // 操作一覧は立ってから
+    this._wakePose(0);
+    this.log.push({ ev: 'wake_start' });
+    return true;
+  }
+  updateWake(dt) {
+    const w = this.waking;
+    if (!w) return;
+    w.t += dt;
+    const done = this._wakePose(w.t) === 1;
+    if (done) {
+      this.waking = null;
+      const P = this.player; P.frozen = false; P.controls.enabled = true;
+      this.hud.root.style.visibility = w.hud === 'hidden' ? '' : w.hud;
+      this.hud.showControls(this.controlsSec);
+      this.log.push({ ev: 'wake_end', t: +w.t.toFixed(2) });
+    }
   }
 
   // P6b-F1: 外観を読み始める(場面 0 の黒の間。読めなければ場面 1 は待たずに進む)
@@ -635,7 +686,7 @@ export class Tutorial {
     this.enemy.aimPoint = null; this.enemy.speed = 0;
     this.enemyAudio.setOccluded(false);
     const B = TUT.bedside;
-    this.teleport(B.level, B.x, B.z, B.yaw, B.pitch);
+    this.teleport(B.level, B.x, B.z, B.yaw, B.pitch);   // 立ち位置で階と当たりを合わせてから、寝た姿勢へ(場面 8 の _wakePose)
     P.setFlashlight(s.flashlight); P.flashlight.intensity = s.flashI;
     P.frozen = true;
     this.resetAI(s.aiDormant);
@@ -690,7 +741,7 @@ export class Tutorial {
     // 暗転(場面の始めと終わり・カットの境目)
     const fin = sh.fin ?? (this._shot === 0 ? TUT.edgeFade : TUT.cutFade), fout = sh.fout ?? (this._shot === S.length - 1 ? TUT.edgeFade : TUT.cutFade);
     let b;
-    if (this.index === LAST) b = this._shotT < 1.0 ? 1 : 1 - smooth((this._shotT - 1.0) / 2.0);
+    if (this.index === LAST) b = this._shotT < TUT.wake.black ? 1 : 1 - smooth((this._shotT - TUT.wake.black) / TUT.wake.fade);
     else if (sh.black) b = 1;
     else if (sh.blackAt) b = sh.blackAt(this._shotT);   // P6b-F1 7c: 黒のカット(フェードなし)
     else b = Math.max(fin > 0 ? 1 - smooth(this._shotT / fin) : 0, fout > 0 ? smooth((this._shotT - (sh.dur - fout)) / fout) : 0);
@@ -698,7 +749,8 @@ export class Tutorial {
     // 文字: 0 は中央、1〜7 は画面下(場面の頭 0.5 秒から出て、終わりの 0.6 秒で消える)
     const dur = TUT.dur[this.index];
     const a0 = this.index === 0 ? 1.6 : 0.5;   // 0 はタイトルが消えて(1.4 秒)から
-    const a = this.cap ? smooth((this.t - a0) / 0.8) * (1 - smooth((this.t - (dur - 0.7)) / 0.6)) : 0;
+    const capEnd = TUT.capEnd[TUT.ids[this.index]] ?? dur;   // P6b-F3: 7 は覗き穴の前に消す
+    const a = this.cap ? smooth((this.t - a0) / 0.8) * (1 - smooth((this.t - (capEnd - 0.7)) / 0.6)) : 0;
     if (this.index === 0) { this.centerEl.style.opacity = a.toFixed(3); this.capEl.style.opacity = '0'; }
     else { this.capEl.style.opacity = a.toFixed(3); this.centerEl.style.opacity = '0'; }
     if (this._shotT >= sh.dur - 1e-9) {

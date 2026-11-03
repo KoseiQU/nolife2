@@ -950,6 +950,7 @@ function step(dt) {
   updatePortal();
   if (!movie.active && !death) stairs.update(dt);   // P5b-1b: 襲撃ムービー・死亡演出の間は段の上り下りを止める
   rooms.update(dt, playerLevel);
+  if (tutorial.waking) tutorial.updateWake(dt);   // P6b-F3: ?notutorial の開始の起き上がり(rooms の後 = カメラを上書き)
   if (tutorial.active) tutorial.update(dt);   // P6a: 場面を映すチュートリアル(カメラ・演出体の管理人・扉・EV を動かす。rooms の後 = 隠れ場所のカメラの向きを上書き)
   rooms.updateWind(dt, outdoorKind());   // P4b: 風の音は updateAmbience(amb_roof)。ここは場所の記録だけ
   if (!tutorial.active && !runGate.active) story.update(dt);   // P5b-1(P6a: チュートリアルの間は止める。P6b-A2: 走り確認の間も)
@@ -1034,7 +1035,8 @@ const tutorial = new Tutorial({ camera, player, ai, enemy, enemyAudio, bank, wor
   resetAI: (dormant) => { ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw); if (dormant) ai.setDormant(true); } });
 const TITLE_ON = !TOUR && (!PARAMS.has('test') || PARAMS.get('test') === 'tutorial');
 const title = new Title({ show: TITLE_ON, lock: () => player.lock(), resumeAudio,
-  onStart: () => { if (!PARAMS.has('notutorial') && STORY_MODE === 'play') tutorial.start(); },
+  // P6b-F3(§3.13 #2): チュートリアルなし(?notutorial)の開始もベッドから起き上がる(?stage=N・物語なしでは起き上がらない)
+  onStart: () => { if (!PARAMS.has('notutorial') && STORY_MODE === 'play') tutorial.start(); else if (STORY_MODE === 'play' && !PARAMS.has('stage')) tutorial.wakeUp(); },
   // P6b-F1(§3.12 #1): 背景 = 4F の廊下の生レンダ(管理人は演出体・灯りは power の manual)
   camera, player, ai, enemy, world, power, renderer, hud, exterior, scene, ambientFloor, look: LOOK, getLevel: () => playerLevel,
   teleport: (key, x, z, yaw, pitch = 0) => { setPlayerLevel(key); player.setPose(x, z, yaw, pitch); updateVisibility(); },

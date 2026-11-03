@@ -15,6 +15,9 @@
 //  P6b-F1(§3.12): 0) タイトルの背景(4F の廊下・管理人・常夜灯のちらつき 3〜8 秒おき・全消灯 20〜40 秒に 1 回 0.4〜0.8 秒・血の滴 8〜10 本が 20〜30 秒で伸び切る・
 //     ゲームの時間は止まる)→ クリックで 1.4 秒の黒 → 片付け(開始前と同じ)→ チュートリアル。1) 場面 1 = 外観(敷地 'G'・霧 0.06・見上げる・管理人なし)、
 //     7c = 覗き穴の向こうの顔(入りは黒のカット・grin→attack・打撃音 1 回・レンズの血・文言なし)。5) 露出は 1 = 3.7・7c = 6.0・他 3.2
+//  P6b-F3(§3.13): 並び 0,1,2,3,3b,4,5,6,7b,7,8(6b 削除・7c は 7 の 2 カット目)・合計 89.6 秒。1) 場面 1 = 正面玄関の正面(霧 0.045・視野角 70°・pitch +4°・前進 0.4m)、
+//     7 = 花瓶 → 文言 → チャイム・足音 → 扉へ振り向く → 覗き穴(文言は消えている)、8 = 寝た状態(枕の上・pitch +70°)から 2.6 秒で立つ → 操作一覧。
+//     6) チュートリアルなしの開始の起き上がり(wakeUp)
 
 const DT = 1 / 60;
 const EXPECT = [
@@ -26,15 +29,13 @@ const EXPECT = [
   '見つかったら部屋の中に逃げろ！ドアの隙間から廊下の様子を確認しろ！',
   'クローゼットの中に身を隠すこともできる',
   '管理人は至る所に潜んでいる、、、部屋の中、ロッカーの中にもいるかも？自分の懐中電灯の光には気をつけろ！',
-  '施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい',
+  '走ると足音が響く！管理人に聞こえる！',   // 7b(P6b-A2 §3.9 #17。P6b-F3 で 7 の前へ)
   '決して音をたてるな！',
-  '走ると足音が響く！管理人に聞こえる！',   // 7b(P6b-A2 §3.9 #17)
-  '',   // 7c(P6b-F1 §3.12 #2: 文言なし)
   '',
 ];
 // P6b(§3.9 #11): 並びは 0,1,2,3,3b,4,5,6,6b,7,8。P6b-A2(§3.9 #17): 7 の後に 7b(添字 0〜11)。合計 94.0 秒(≤100)
-const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '7c', '8'];   // P6b-F1: 7c(合計 97.0 秒)
-const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0, 3.0];
+const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '7b', '7', '8'];   // P6b-F3: 6b 削除・7b → 7・7c は 7 の末尾(合計 89.6 秒)
+const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 6.5, 10.0, 3.6];
 const IX = (id) => IDS.indexOf(id);
 const LAST = IDS.length - 1;
 
@@ -150,10 +151,12 @@ export async function run(N) {
     const aiTime0 = N.ai.time;
     const seenCaption = {};
     const S = { s2: { n: 0, blocked: 0, light: 0, shown: 0 }, s3: { maxOpen: 0, disp: [] }, s4: { peep: false, doorClosedAtPeep: null }, s5: { hidden: false }, s6: { lurk: 0, leak: 0, jig: 0 },
-      s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 }, s6b: { n: 0, open410: 0, closed409: 0 }, after6b: null,
-      s7b: { z0: null, zMax: -1e9, maxSpeed: 0, lastZ: null, disp: [], open: 0, enemyShown: 0, lookUpEnd: null, endBlack: 0 },
+      s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 },
+      s7b: { z0: null, zMax: -1e9, maxSpeed: 0, lastZ: null, disp: [], open: 0, enemyShown: 0, lookUpEnd: null },
+      s7: { doorAngle0: null, yawAtCut: null, capAtPeep: [] },
+      s8: { lie: null, mid: null, frozenDuring: 0, n: 0, ctrlBeforeStand: false, stoodAt: null },
       // P6b-F1: 場面 1 = 外観、7c = 覗き穴の向こうの顔
-      s1: { n: 0, onSite: 0, extShown: 0, enemyShown: 0, fov50: 0, fog06: 0, pitch0: null, pitch1: null },
+      s1: { n: 0, onSite: 0, extShown: 0, enemyShown: 0, fov50: 0, fog06: 0, pitch0: null, pitch1: null, z0: null, z1: null, x: [] },
       s7c: { n: 0, cutBlack: [], after: [], peep: 0, enemyAtDoor: 0, maxAttack: 0, bloodOn: 0, hitT: null, caption: [] } };
     const fog0 = N.LOOK.ext.fogDensity;
     const LZ = N.building.stairs.find((q) => q.id === 'main').geom;
@@ -161,20 +164,30 @@ export async function run(N) {
     let scene7Bank = null;
     const each1 = (st) => {
       if (!st.active) return;
-      if (st.index === IX('1') && st.t > 0.7) {   // P6b-F1: 外観(敷地 'G')・外観が出ている・管理人は映らない・視野角 50°・外の霧 0.06・見上げる(pitch が上がる)
+      if (st.index === IX('1') && st.t > 0.0) {   // P6b-F3: 正面玄関の正面(敷地 'G')・外観が出ている・管理人は映らない・視野角 70°・外の霧 0.045・pitch +4°・前進 0.4m
         const A = S.s1; A.n++;
         if (N.level === 'G') A.onSite++;
         if (N.exterior.ready && N.exterior.shown) A.extShown++;
         if (N.enemyObj.root.visible && !N.ai.concealed) A.enemyShown++;
-        if (N.camera.fov === 50) A.fov50++;
-        if (N.LOOK.ext.fogDensity === 0.06) A.fog06++;
-        if (A.pitch0 === null) A.pitch0 = N.camera.rotation.x;
-        A.pitch1 = N.camera.rotation.x;
+        if (N.camera.fov === 70) A.fov50++;
+        if (N.LOOK.ext.fogDensity === 0.045) A.fog06++;
+        if (A.pitch0 === null) { A.pitch0 = N.camera.rotation.x; A.z0 = N.camera.position.z; }
+        A.pitch1 = N.camera.rotation.x; A.z1 = N.camera.position.z; A.x.push(N.camera.position.x);
       }
-      if (st.index === IX('7b') && st.t > PLAN[IX('7b')] - 0.25) S.s7b.endBlack = Math.max(S.s7b.endBlack, st.black);
-      if (st.index === IX('7c')) {   // P6b-F1: 入りは黒(0.1 秒)→ 覗き穴・管理人は扉の前・attack・打撃音・レンズの血
+      if (st.index === IX('7') && S.s7.doorAngle0 === null) S.s7.doorAngle0 = +N.world.doorById.get('410').angle.toFixed(3);
+      if (st.index === IX('7') && st.shot === 0 && st.t > 7.3) S.s7.yawAtCut = N.camera.rotation.y;   // 扉(西)を向いている
+      if (st.index === IX('7') && st.shot === 1) S.s7.capAtPeep.push(+document.getElementById('tutcap').style.opacity);
+      if (st.index === LAST) {   // P6b-F3: 寝た状態 → 2.6 秒で立つ。立つまで入力は止まり、操作一覧は立ってから
+        const B = S.s8, c = N.camera; B.n++;
+        if (st.t > 1.0 && st.t < 1.05 && !B.lie) B.lie = { y: +(c.position.y - 3 * 2.9).toFixed(3), pitch: +(c.rotation.x * 180 / Math.PI).toFixed(1), x: +c.position.x.toFixed(2), z: +c.position.z.toFixed(2) };
+        if (st.t > 2.3 && st.t < 2.35 && !B.mid) B.mid = { y: +(c.position.y - 3 * 2.9).toFixed(3), pitch: +(c.rotation.x * 180 / Math.PI).toFixed(1) };
+        if (N.player.frozen) B.frozenDuring++;
+        if (st.t < 3.55 && N.hud.state().controls) B.ctrlBeforeStand = true;
+      }
+      if (st.index === IX('7') && st.shot === 1) {   // P6b-F1 7c → P6b-F3 7 の 2 カット目: 入りは黒(0.1 秒)→ 覗き穴・管理人は扉の前・attack・打撃音・レンズの血
         const C = S.s7c; C.n++;
-        if (st.t > 0 && st.t < 0.09) C.cutBlack.push(st.black); else if (st.t > 0.15) C.after.push(st.black);
+        const ts = st.t - 7.5;   // 2 カット目の中の時刻(1 カット目は 7.5 秒)
+        if (ts > 0 && ts < 0.09) C.cutBlack.push(st.black); else if (ts > 0.15) C.after.push(st.black);
         if (N.peepholeObj.active) C.peep++;
         const e = N.enemyObj.pos;
         if (N.enemyObj.root.visible && Math.hypot(e.x - 7.1, e.z - 7.24) < 0.05) C.enemyAtDoor++;
@@ -206,12 +219,6 @@ export async function run(N) {
         if (f.z > 0.5) S.s3b.lookStairs++;
         if (N.enemyObj.root.visible && !N.ai.concealed) S.s3b.enemyShown++;
       }
-      if (st.index === IX('6b') && st.t > 0.3) {
-        S.s6b.n++; const d410 = N.world.doorById.get('410'), d409 = N.world.doorById.get('409');
-        if (N.level === 4 && d410.angle > 1.5) S.s6b.open410++;
-        if (d409.angle < 0.01) S.s6b.closed409++;
-      }
-      if (st.index === IX('7') && S.after6b === null) S.after6b = +N.world.doorById.get('410').angle.toFixed(3);
       if (st.index === IX('4') && N.peepholeObj.active && !S.s4.peep) { S.s4.peep = true; S.s4.doorClosedAtPeep = N.world.doorById.get('410').angle < 0.02; }
       if (st.index === IX('5') && N.rooms.hidden && N.rooms.hidden.phase === 'hidden') S.s5.hidden = true;
       if (st.index === IX('6') && st.shot === 0 && N.doorFx.lurkId === '409' && N.doorFx.lurkAmt > 0.99) S.s6.lurk++;
@@ -219,7 +226,7 @@ export async function run(N) {
       if (st.index === IX('6') && st.shot === 2) S.s6.leak = Math.max(S.s6.leak, tu.leakMat.opacity);
       if (st.index === IX('7') && !scene7Bank) scene7Bank = N.bank.n;
     };
-    each1.fineAt = (st) => st.active && (st.index === IX('7c') || (st.index === IX('7b') && st.t > PLAN[IX('7b')] - 0.3) || (st.index === IX('7c') - 1 && st.t > PLAN[IX('7b')] - 0.05));
+    each1.fineAt = (st) => st.active && ((st.index === IX('7') && st.t > 7.3) || (st.index === LAST && st.t > 0.95 && st.t < 2.4));
     await advance(100, each1, () => !tu.active);
     const scenes = tu.log.filter((l) => l.ev === 'scene' && l.at !== undefined);
     const lastRun = scenes.slice(-IDS.length);
@@ -236,30 +243,32 @@ export async function run(N) {
     const r = {
       order, durs, total, texts,
       textsMatch: EXPECT.length === IDS.length && EXPECT.every((t, i) => texts[i] === t), captionsShown: EXPECT.slice(0, LAST).every((t, i) => seenCaption[i] === t),
-      ids: lastRun.map((l) => l.id), s3b: S.s3b, s6b: S.s6b, after6b: S.after6b,
+      ids: lastRun.map((l) => l.id), s3b: S.s3b, s7door: { ...S.s7, capAtPeep: Math.max(...S.s7.capAtPeep), lookDoor: L('look_door').map((l) => l.t) }, s8: { ...S.s8, stood: L('stood').length },
       s2: S.s2, s3: { displays: S.s3.disp, chime: evNew.some((e) => e.ev === 'sfx' && e.name === 'chime'), maxOpen: +S.s3.maxOpen.toFixed(3) },
       s4: { found: L('found').length, doorClose: L('door_close').length, peep: S.s4.peep, doorClosedAtPeep: S.s4.doorClosedAtPeep, passed: L('passed_lens').length },
       s5: S.s5, s6: { lurkFrames: S.s6.lurk, maxJiggle: +S.s6.jig.toFixed(3), maxLeak: +S.s6.leak.toFixed(2) },
       s7b: { ...S.s7b, runSteps: L('run_step').length, stepSounds: bankNew.filter((l) => l.id === 'pl_step_room').length, call: L('ev_call_7b').length, chime7b: evNew.filter((e) => e.ev === 'sfx' && e.name === 'chime').length },
       s7: { vaseBreak: L('vase_break').length, fallSound: bankNew.filter((l) => l.id === 'room_fall').length, chimeSound: bankNew.filter((l) => l.id === 'ev_chime').length, steps: stepsNew.length },
-      s1: S.s1, s7c: { ...S.s7c, caption: [...new Set(S.s7c.caption)], hits: L('hit_7c').map((l) => l.t), hitSound: bankNew.filter((l) => l.id === 'enemy_hit').length },
+      s1: { ...S.s1, x: undefined, dPitchDeg: +((S.s1.pitch1 - S.s1.pitch0) * 180 / Math.PI).toFixed(2), push: +(S.s1.z0 - S.s1.z1).toFixed(3) }, s7c: { ...S.s7c, caption: [...new Set(S.s7c.caption)], hits: L('hit_7c').map((l) => l.t), hitSound: bankNew.filter((l) => l.id === 'enemy_hit').length },
       after: { fogRestored: N.LOOK.ext.fogDensity === fog0, bloodOff: !N.movie.blood.pass.enabled, fov: N.camera.fov },
       aiFrozen: N.ai.time === aiTime0,
     };
     r.pass = same(order, IDS.map((_, i) => i)) && same(r.ids, IDS) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 100 && r.textsMatch && r.captionsShown
       && r.s7b.zMax - r.s7b.z0 > 4 && r.s7b.maxSpeed > 2.2 && r.s7b.runSteps >= 5 && r.s7b.stepSounds >= 5 && r.s7b.call === 1 && same(r.s7b.disp, [2, 3, 4]) && r.s7b.chime7b >= 2 && r.s7b.open === 0 && r.s7b.enemyShown === 0 && r.s7b.lookUpEnd > 0.9
       && S.s3b.n > 10 && S.s3b.onLanding === S.s3b.n && S.s3b.lookStairs === S.s3b.n && S.s3b.enemyShown === 0
-      && S.s6b.n > 10 && S.s6b.open410 === S.s6b.n && S.s6b.closed409 === S.s6b.n && S.after6b === 0
+      && S.s7.doorAngle0 === 0 && Math.abs(S.s7.yawAtCut - Math.PI / 2) < 0.05 && Math.max(...S.s7.capAtPeep) === 0 && L('look_door').length === 1 && Math.abs(L('look_door')[0].t - 7.2) < 0.05
+      && S.s8.lie && Math.abs(S.s8.lie.y - 0.89) < 0.02 && Math.abs(S.s8.lie.pitch - 70) < 1.5 && Math.abs(S.s8.lie.x - 13.05) < 0.05 && S.s8.mid && S.s8.mid.y > 0.95 && S.s8.mid.pitch < 40
+      && S.s8.frozenDuring >= S.s8.n - 2 && !S.s8.ctrlBeforeStand && L('stood').length === 1
       && S.s2.n > 10 && S.s2.blocked === S.s2.n && S.s2.light === S.s2.n && S.s2.shown === S.s2.n
       && same(S.s3.disp, [1, 2, 3]) && r.s3.chime && S.s3.maxOpen === 0
       && r.s4.found === 1 && r.s4.doorClose === 1 && S.s4.peep && S.s4.doorClosedAtPeep && r.s4.passed === 1
       && S.s5.hidden && S.s6.lurk > 5 && S.s6.jig > 0.02 && S.s6.leak > 0.5
       && r.s7.vaseBreak === 1 && r.s7.fallSound === 1 && r.s7.chimeSound >= 1 && r.s7.steps >= 3 && r.aiFrozen
-      && S.s1.n > 20 && S.s1.onSite === S.s1.n && S.s1.extShown === S.s1.n && S.s1.enemyShown === 0 && S.s1.fov50 === S.s1.n && S.s1.fog06 === S.s1.n && S.s1.pitch1 - S.s1.pitch0 > 0.15
-      && S.s7b.endBlack < 0.05
+      && S.s1.n > 20 && S.s1.onSite === S.s1.n && S.s1.extShown === S.s1.n && S.s1.enemyShown === 0 && S.s1.fov50 === S.s1.n && S.s1.fog06 === S.s1.n
+      && Math.abs((S.s1.pitch1 - S.s1.pitch0) * 180 / Math.PI - 4) < 0.3 && Math.abs(S.s1.z0 - S.s1.z1 - 0.4) < 0.03 && S.s1.x.every((x) => Math.abs(x - 17.6) < 0.01) && Math.abs(S.s1.z0 - 34.2) < 0.02
       && S.s7c.cutBlack.length >= 2 && S.s7c.cutBlack.every((b) => b === 1) && S.s7c.after.length > 100 && S.s7c.after.every((b) => b === 0)
       && S.s7c.peep === S.s7c.n && S.s7c.enemyAtDoor >= S.s7c.n - 1 && S.s7c.maxAttack >= 0.9 && S.s7c.bloodOn > 60
-      && r.s7c.hits.length === 1 && r.s7c.hitSound === 1 && r.s7c.caption.length === 1 && r.s7c.caption[0] === ''
+      && r.s7c.hits.length === 1 && r.s7c.hitSound === 1
       && r.after.fogRestored && r.after.bloodOff && r.after.fov === 68;
     return r;
   });
@@ -387,6 +396,21 @@ export async function run(N) {
       && mids.length === LAST - 1 && mids.every((v, i) => v === (IDS[i + 1] === '1' ? 3.7 : IDS[i + 1] === '7c' ? 6.0 : 3.2)) && ex.s8 && ex.s8.v === 4.5 && ex.s8.black > 0.99 && ex.end === 4.5 && !tu.active
       && escMid === 3.2 && escJump === 4.5 && escEnd === 4.5 && unlockMid === 3.2 && unlockEnd === 4.5;
     return r;
+  });
+
+  // 6) P6b-F3(§3.13 #2): チュートリアルなしの開始(?notutorial)の起き上がり = wakeUp(main がタイトルの後に呼ぶ)。寝た状態 → 2.6 秒で立つ → 操作が戻り操作一覧
+  await T('6_wake_without_tutorial', async () => {
+    await N.teleport(4, 8.75, 7.3, Math.PI / 2); N.pump(DT, 5, false);
+    const ok0 = tu.wakeUp();
+    const c = N.camera, y4 = 3 * 2.9;
+    const lie = { y: +(c.position.y - y4).toFixed(3), pitch: +(c.rotation.x * 180 / Math.PI).toFixed(1), x: +c.position.x.toFixed(2), frozen: N.player.frozen, controls: N.player.controls.enabled, hud: N.hud.root.style.visibility };
+    let t = 0, frozenAll = true, ctrlEarly = false;
+    while (tu.waking && t < 5) { N.pump(DT, 1, false); t += DT; if (tu.waking && !N.player.frozen) frozenAll = false; if (tu.waking && N.hud.state().controls) ctrlEarly = true; }
+    const p = N.player.pos, end = { x: +p.x.toFixed(2), z: +p.z.toFixed(2), yaw: +c.rotation.y.toFixed(3), frozen: N.player.frozen, controls: N.player.controls.enabled, hudShown: N.hud.root.style.visibility !== 'hidden', ctrl: N.hud.state().controls };
+    const again = tu.wakeUp(); while (tu.waking) N.pump(DT, 10, false);   // 2 回目も同じ(片付けが残らない)
+    return { pass: ok0 && Math.abs(lie.y - 0.89) < 0.02 && Math.abs(lie.pitch - 70) < 1.5 && lie.frozen && !lie.controls && lie.hud === 'hidden' && Math.abs(t - 2.6) < 0.05 && frozenAll && !ctrlEarly
+        && Math.hypot(end.x - 12.35, end.z - 7.25) < 0.02 && Math.abs(end.yaw - Math.PI / 2) < 0.02 && !end.frozen && end.controls && end.hudShown && end.ctrl && again && !tu.active,
+      lie, sec: +t.toFixed(2), end };
   });
 
   N.testResult = out;
