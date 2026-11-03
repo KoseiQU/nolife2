@@ -12,6 +12,9 @@
 //     場面 1(410)の画面中央 50%(test_enemy の centerLuma・P2c の暗さの判定と同じ範囲。960×540 で描く)の平均輝度が 4.5 の時の 0.6〜0.75 倍・
 //     中間調(sRGB 表示値の Rec.709 輝度 40〜120/255)が 15% 以上(場面 1 の 3 か所の平均。画面全体の値も記録する)。Esc・ロック解除で飛ばしても 4.5 に戻る
 //     (2〜4 の終わりの状態の比較にも露出を入れている)
+//  P6b-F1(§3.12): 0) タイトルの背景(4F の廊下・管理人・常夜灯のちらつき 3〜8 秒おき・全消灯 20〜40 秒に 1 回 0.4〜0.8 秒・血の滴 8〜10 本が 20〜30 秒で伸び切る・
+//     ゲームの時間は止まる)→ クリックで 1.4 秒の黒 → 片付け(開始前と同じ)→ チュートリアル。1) 場面 1 = 外観(敷地 'G'・霧 0.06・見上げる・管理人なし)、
+//     7c = 覗き穴の向こうの顔(入りは黒のカット・grin→attack・打撃音 1 回・レンズの血・文言なし)。5) 露出は 1 = 3.7・7c = 6.0・他 3.2
 
 const DT = 1 / 60;
 const EXPECT = [
@@ -26,11 +29,12 @@ const EXPECT = [
   '施錠された部屋と空いてる部屋があるから一度訪れた部屋は開けておくとわかりやすい',
   '決して音をたてるな！',
   '走ると足音が響く！管理人に聞こえる！',   // 7b(P6b-A2 §3.9 #17)
+  '',   // 7c(P6b-F1 §3.12 #2: 文言なし)
   '',
 ];
 // P6b(§3.9 #11): 並びは 0,1,2,3,3b,4,5,6,6b,7,8。P6b-A2(§3.9 #17): 7 の後に 7b(添字 0〜11)。合計 94.0 秒(≤100)
-const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '8'];
-const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0];
+const IDS = ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '7c', '8'];   // P6b-F1: 7c(合計 97.0 秒)
+const PLAN = [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0, 3.0];
 const IX = (id) => IDS.indexOf(id);
 const LAST = IDS.length - 1;
 
@@ -54,7 +58,8 @@ export async function run(N) {
     while (t < sec - 1e-9) {
       if (stop && stop()) break;
       if (tu.active && tu.waiting) { N.pump(DT, 1, false); await sleep(40); if (++guard > 1500) throw new Error('読み込み待ちが終わらない'); continue; }
-      N.pump(DT, 6, false); t += 6 * DT;
+      const k = each && each.fineAt && each.fineAt(tu.state()) ? 1 : 6;   // P6b-F1: 7c の 0.1 秒の黒のカットは 1 フレームずつ見る
+      N.pump(DT, k, false); t += k * DT;
       if (each) each(tu.state());
       if ((t * 60 | 0) % 240 < 6) await sleep(0);
     }
@@ -88,18 +93,53 @@ export async function run(N) {
   try { localStorage.removeItem('nolife2.tutorialSeen'); } catch (e) { /* */ }
   let before = null;
 
-  // 0) タイトル
+  // 0) タイトル(P6b-F1: 背景の生レンダ・ちらつき・全消灯・血の滴・クリックで 1.4 秒の黒 → 片付け → チュートリアル)
   await T('0_title', async () => {
     const s0 = ti.state();
     const el = document.getElementById('title');
     const textAll = el ? el.textContent : '';
-    before = snapshot();
-    const aiTime0 = N.ai.time;
+    const aiTime0 = N.ai.time, simT0 = N.levelLog.length;
+    // 背景を 35 秒回す(ゲームの時間は止まったまま)
+    const outs = [], flicks = [], lens = [];
+    let enemyOk = 0, camOk = 0, n = 0, maxBlackOut = 0;
+    const y4 = N.world ? 3 * 2.9 : 8.7;
+    for (let i = 0; i < 35 * 60; i++) {
+      N.pump(DT, 1, false);
+      const st = ti.state().bg;
+      if (!st || !st.ready) continue;
+      n++;
+      const e = N.enemyObj.pos, c = N.camera.position;
+      if (N.enemyObj.root.visible && Math.hypot(e.x - 6.85, e.z - 10.0) < 0.05) enemyOk++;
+      if (N.level === 4 && Math.hypot(c.x - 6.9, c.z - 6.3) < 0.05 && Math.abs(c.y - (y4 + 1.75)) < 0.02 && N.camera.fov === 46) camOk++;
+      if (i % 60 === 0 && st.drips) lens.push(st.drips.map((d) => d.len));
+      if (st.lights.lm < 0.1) maxBlackOut = Math.max(maxBlackOut, N.renderer.toneMappingExposure);
+    }
+    for (const l of ti.log) { if (l.ev === 'outage') outs.push(l); if (l.ev === 'flicker') flicks.push(l); }
+    const bg = ti.state().bg;
+    const drips = bg.drips;
+    const gaps = flicks.slice(1).map((f, i) => +(f.at - flicks[i].at).toFixed(2));
+    const grows = lens.length > 25 && drips.every((d, k) => lens[3][k] < d.len && lens[20][k] <= d.len);
+    const doneBy30 = drips.every((d) => d.T >= 20 && d.T <= 30 && d.done);
+    const stalls = drips.map((_, k) => lens.slice(3, 30).filter((v, j, A) => j > 0 && v[k] === A[j - 1][k] && v[k] < drips[k].L).length);   // 途中で止まった秒の数(本ごと)
+    const titleBg = { frames: n, enemyOk, camOk, exposure: N.renderer.toneMappingExposure, flicks: flicks.length, flickDur: flicks.map((f) => f.dur), blinks: flicks.map((f) => f.blinks), gaps,
+      outs: outs.map((o) => [o.at, o.dur]), drips: drips.length, widths: drips.map((d) => d.w), doneBy30, grows, stalls, aiFrozen: N.ai.time === aiTime0, levelLog: N.levelLog.length - simT0 };
+    const bgPass = n > 1500 && enemyOk === n && camOk === n && titleBg.exposure === 4.3
+      && flicks.length >= 4 && flicks.every((f) => f.dur >= 0.2 && f.dur <= 0.6 && f.blinks >= 2 && f.blinks <= 4) && gaps.every((g) => g >= 2.9 && g <= 8.9)
+      && outs.length >= 1 && outs[0].at >= 20 && outs[0].at <= 40 && outs.every((o) => o.dur >= 0.4 && o.dur <= 0.8)
+      && drips.length >= 8 && drips.length <= 10 && drips.every((d) => d.w >= 3 && d.w <= 6) && doneBy30 && grows && stalls.filter((x) => x > 0).length >= 4 && titleBg.aiFrozen;
+    // クリック → 1.4 秒で黒 → 片付け → チュートリアル(片付けの直後 = チュートリアルの開始前に、終わりの比較の基準を取る)
+    ti.onRestored = () => { before = snapshot(); };
     ti.click();
-    const s1 = ti.state(), st = tu.state();
+    const leave = [];
+    for (let i = 0; i < 180 && ti.active; i++) { N.pump(DT, 1, false); leave.push(ti.state().bg ? ti.state().bg.black : 1); }
+    const s1 = ti.state(), st = tu.state(), r0 = ti.restored, sn = ti.snap;
+    const restored = !!r0 && r0.exposure === sn.exposure && r0.fov === sn.fov && r0.ambient === (sn.ambient === null ? r0.ambient : sn.ambient) && r0.level === sn.level
+      && Math.hypot(r0.x - sn.x, r0.z - sn.z) < 1e-6 && r0.ai.state === sn.ai.state && r0.ai.dormant === sn.ai.dormant && r0.ai.level === sn.ai.level
+      && r0.flashlight === sn.flashlight && r0.extForce === sn.extForce && r0.manual === false && r0.lm.every((v) => v === 1) && r0.em.every((v) => v === 1) && r0.inkCleared;
     return { pass: s0.active && s0.shown && s0.name === 'NOLIFE' && !/2/.test(s0.name) && s0.start === 'クリックで開始' && !textAll.includes('NOLIFE 2')
+      && bgPass && leave.length >= 80 && leave.length <= 90 && leave[40] > 0.4 && restored
       && !s1.active && st.active && st.index === 0 && N.player.frozen && !N.player.controls.enabled && N.hud.root.style.visibility === 'hidden' && N.ai.time === aiTime0,
-      title: s0, afterClick: s1, tutorial: st };
+      title: s0, titleBg, leaveFrames: leave.length, leaveBlackMid: leave[40], restored, restoredState: r0, snap: { exposure: sn.exposure, fov: sn.fov, level: sn.level, ai: sn.ai }, afterClick: s1, tutorial: st };
   });
 
   // 1) 通し
@@ -108,12 +148,37 @@ export async function run(N) {
     const seenCaption = {};
     const S = { s2: { n: 0, blocked: 0, light: 0, shown: 0 }, s3: { maxOpen: 0, disp: [] }, s4: { peep: false, doorClosedAtPeep: null }, s5: { hidden: false }, s6: { lurk: 0, leak: 0, jig: 0 },
       s3b: { n: 0, onLanding: 0, lookStairs: 0, enemyShown: 0 }, s6b: { n: 0, open410: 0, closed409: 0 }, after6b: null,
-      s7b: { z0: null, zMax: -1e9, maxSpeed: 0, lastZ: null, disp: [], open: 0, enemyShown: 0, lookUpEnd: null } };
+      s7b: { z0: null, zMax: -1e9, maxSpeed: 0, lastZ: null, disp: [], open: 0, enemyShown: 0, lookUpEnd: null, endBlack: 0 },
+      // P6b-F1: 場面 1 = 外観、7c = 覗き穴の向こうの顔
+      s1: { n: 0, onSite: 0, extShown: 0, enemyShown: 0, fov50: 0, fog06: 0, pitch0: null, pitch1: null },
+      s7c: { n: 0, cutBlack: [], after: [], peep: 0, enemyAtDoor: 0, maxAttack: 0, bloodOn: 0, hitT: null, caption: [] } };
+    const fog0 = N.LOOK.ext.fogDensity;
     const LZ = N.building.stairs.find((q) => q.id === 'main').geom;
     const bank0 = N.bank.n, steps0 = N.enemyAudio.logCount || 0, ev0 = N.elevator.logCount || 0;
     let scene7Bank = null;
-    await advance(100, (st) => {
+    const each1 = (st) => {
       if (!st.active) return;
+      if (st.index === IX('1') && st.t > 0.7) {   // P6b-F1: 外観(敷地 'G')・外観が出ている・管理人は映らない・視野角 50°・外の霧 0.06・見上げる(pitch が上がる)
+        const A = S.s1; A.n++;
+        if (N.level === 'G') A.onSite++;
+        if (N.exterior.ready && N.exterior.shown) A.extShown++;
+        if (N.enemyObj.root.visible && !N.ai.concealed) A.enemyShown++;
+        if (N.camera.fov === 50) A.fov50++;
+        if (N.LOOK.ext.fogDensity === 0.06) A.fog06++;
+        if (A.pitch0 === null) A.pitch0 = N.camera.rotation.x;
+        A.pitch1 = N.camera.rotation.x;
+      }
+      if (st.index === IX('7b') && st.t > PLAN[IX('7b')] - 0.25) S.s7b.endBlack = Math.max(S.s7b.endBlack, st.black);
+      if (st.index === IX('7c')) {   // P6b-F1: 入りは黒(0.1 秒)→ 覗き穴・管理人は扉の前・attack・打撃音・レンズの血
+        const C = S.s7c; C.n++;
+        if (st.t > 0 && st.t < 0.09) C.cutBlack.push(st.black); else if (st.t > 0.15) C.after.push(st.black);
+        if (N.peepholeObj.active) C.peep++;
+        const e = N.enemyObj.pos;
+        if (N.enemyObj.root.visible && Math.hypot(e.x - 7.1, e.z - 7.24) < 0.05) C.enemyAtDoor++;
+        C.maxAttack = Math.max(C.maxAttack, N.enemyObj.face.attack);
+        if (N.movie.blood.pass.enabled) C.bloodOn++;
+        C.caption.push(st.caption);
+      }
       if (st.index === IX('7b')) {   // P6b-A2: 走る(速さ・前進)→ EV の表示 2→3→4・チャイム・扉は開かない・管理人は映らない
         const z = N.player.pos.z, B = S.s7b;
         if (B.z0 === null) B.z0 = z;
@@ -150,7 +215,9 @@ export async function run(N) {
       if (st.index === IX('6') && st.shot === 1) S.s6.jig = Math.max(S.s6.jig, N.rooms.bursts.get('611').jiggle);
       if (st.index === IX('6') && st.shot === 2) S.s6.leak = Math.max(S.s6.leak, tu.leakMat.opacity);
       if (st.index === IX('7') && !scene7Bank) scene7Bank = N.bank.n;
-    }, () => !tu.active);
+    };
+    each1.fineAt = (st) => st.active && (st.index === IX('7c') || (st.index === IX('7b') && st.t > PLAN[IX('7b')] - 0.3) || (st.index === IX('7c') - 1 && st.t > PLAN[IX('7b')] - 0.05));
+    await advance(100, each1, () => !tu.active);
     const scenes = tu.log.filter((l) => l.ev === 'scene' && l.at !== undefined);
     const lastRun = scenes.slice(-IDS.length);
     const order = lastRun.map((l) => l.index);
@@ -172,6 +239,8 @@ export async function run(N) {
       s5: S.s5, s6: { lurkFrames: S.s6.lurk, maxJiggle: +S.s6.jig.toFixed(3), maxLeak: +S.s6.leak.toFixed(2) },
       s7b: { ...S.s7b, runSteps: L('run_step').length, stepSounds: bankNew.filter((l) => l.id === 'pl_step_room').length, call: L('ev_call_7b').length, chime7b: evNew.filter((e) => e.ev === 'sfx' && e.name === 'chime').length },
       s7: { vaseBreak: L('vase_break').length, fallSound: bankNew.filter((l) => l.id === 'room_fall').length, chimeSound: bankNew.filter((l) => l.id === 'ev_chime').length, steps: stepsNew.length },
+      s1: S.s1, s7c: { ...S.s7c, caption: [...new Set(S.s7c.caption)], hits: L('hit_7c').map((l) => l.t), hitSound: bankNew.filter((l) => l.id === 'enemy_hit').length },
+      after: { fogRestored: N.LOOK.ext.fogDensity === fog0, bloodOff: !N.movie.blood.pass.enabled, fov: N.camera.fov },
       aiFrozen: N.ai.time === aiTime0,
     };
     r.pass = same(order, IDS.map((_, i) => i)) && same(r.ids, IDS) && durs.every((d, i) => Math.abs(d - PLAN[i]) < 0.05) && total >= 60 && total <= 100 && r.textsMatch && r.captionsShown
@@ -182,7 +251,13 @@ export async function run(N) {
       && same(S.s3.disp, [1, 2, 3]) && r.s3.chime && S.s3.maxOpen === 0
       && r.s4.found === 1 && r.s4.doorClose === 1 && S.s4.peep && S.s4.doorClosedAtPeep && r.s4.passed === 1
       && S.s5.hidden && S.s6.lurk > 5 && S.s6.jig > 0.02 && S.s6.leak > 0.5
-      && r.s7.vaseBreak === 1 && r.s7.fallSound === 1 && r.s7.chimeSound >= 1 && r.s7.steps >= 3 && r.aiFrozen;
+      && r.s7.vaseBreak === 1 && r.s7.fallSound === 1 && r.s7.chimeSound >= 1 && r.s7.steps >= 3 && r.aiFrozen
+      && S.s1.n > 20 && S.s1.onSite === S.s1.n && S.s1.extShown === S.s1.n && S.s1.enemyShown === 0 && S.s1.fov50 === S.s1.n && S.s1.fog06 === S.s1.n && S.s1.pitch1 - S.s1.pitch0 > 0.15
+      && S.s7b.endBlack < 0.05
+      && S.s7c.cutBlack.length >= 2 && S.s7c.cutBlack.every((b) => b === 1) && S.s7c.after.length > 100 && S.s7c.after.every((b) => b === 0)
+      && S.s7c.peep === S.s7c.n && S.s7c.enemyAtDoor >= S.s7c.n - 1 && S.s7c.maxAttack >= 0.9 && S.s7c.bloodOn > 60
+      && r.s7c.hits.length === 1 && r.s7c.hitSound === 1 && r.s7c.caption.length === 1 && r.s7c.caption[0] === ''
+      && r.after.fogRestored && r.after.bloodOff && r.after.fov === 68;
     return r;
   });
 
@@ -260,11 +335,13 @@ export async function run(N) {
     tu.start();
     ex.start = R.toneMappingExposure;
     await advance(2.0); ex.s0 = { index: tu.state().index, v: R.toneMappingExposure };
-    // 場面 1 の 3 か所(天井の照明・敷物のスマホ・窓)で 3.2 と 4.5 を描き比べる(同じフレーム。暗転が明けた後)
+    // 場面 1 の 3 か所(P6b-F1: 外観を見上げる途中)で場面の露出と 4.5 を描き比べる(同じフレーム。暗転が明けた後)
     const shots = [];
+    const seen = []; let s8first = null;   // 場面ごとの露出(最初に見えたフレームの値)
+    const rec = (st) => { if (st.active && seen[st.index] === undefined) seen[st.index] = R.toneMappingExposure; };
     let clock = 2.0;   // チュートリアルの開始からの時刻
     for (const t of [2.2, 4.2, 6.6]) {
-      await advance(at(1) + t - clock); clock = at(1) + t;
+      await advance(at(1) + t - clock, rec); clock = at(1) + t;
       const st = tu.state();
       const v = R.toneMappingExposure;
       const dark = measure();
@@ -273,16 +350,19 @@ export async function run(N) {
         full: { mean32: +dark.fullMean.toFixed(4), mean45: +ref.fullMean.toFixed(4), mid32: +dark.fullMid.toFixed(3), mid45: +ref.fullMid.toFixed(3) } });
     }
     const avg = (k) => shots.reduce((a, s) => a + s[k], 0) / shots.length;
-    const scene1 = { mean32: +avg('mean32').toFixed(4), mean45: +avg('mean45').toFixed(4), ratio: +(avg('mean32') / avg('mean45')).toFixed(3), mid32: +avg('mid32').toFixed(3), mid45: +avg('mid45').toFixed(3) };
+    const scene1 = { mean32: +avg('mean32').toFixed(4), mean45: +avg('mean45').toFixed(4), ratio: +(avg('mean32') / avg('mean45')).toFixed(3), mid32: +avg('mid32').toFixed(3), mid45: +avg('mid45').toFixed(3),
+      fullMid: +(shots.reduce((a, s) => a + s.full.mid32, 0) / shots.length).toFixed(3) };   // P6b-F1: 場面 1 は外観(露出 3.7)。mean32/mid32 の名前は従来のまま(値はその場面の露出)
+    // P6b-F1: 1 段暗い露出(3.2)の比は 410 の場面 5(クローゼットの前。旧場面 1 の 410 は外観になった)で見る
+    await advance(at(IX('5')) + 0.9 - clock, rec); clock = at(IX('5')) + 0.9;
+    const s5 = (() => { const v = R.toneMappingExposure, d = measure(); R.toneMappingExposure = X0; const f = measure(); R.toneMappingExposure = v; return { index: tu.state().index, exposure: v, mean32: +d.mean.toFixed(4), mean45: +f.mean.toFixed(4), ratio: +(d.mean / f.mean).toFixed(3), mid32: +d.mid.toFixed(3) }; })();
     // 7b(最後の暗い場面)→ 8 の暗転で戻る
-    const seen = []; let s8first = null;
     await advance(200, (st) => {
       if (!st.active) return;
-      if (seen[st.index] === undefined) seen[st.index] = R.toneMappingExposure;
+      rec(st);
       if (st.index === LAST && s8first === null) s8first = { t: st.t, v: R.toneMappingExposure, black: st.black };
     }, () => !tu.active);
     ex.s1 = seen[1]; ex.s7b = seen[IX('7b')]; ex.s8 = s8first; ex.end = R.toneMappingExposure;
-    const mids = seen.slice(1, LAST);
+    const mids = Array.from({ length: LAST - 1 }, (_, i) => seen[i + 1]);   // 穴(見ていない場面)は undefined のまま比べる
     // Esc で飛ばす(既読・場面 2 の途中)・ロック解除で飛ばす(場面 5 の途中)
     tu.seen = true;
     tu.start(); await advance(at(2) + 3.0, null, () => !tu.active);
@@ -297,11 +377,11 @@ export async function run(N) {
     N.player.controls.dispatchEvent({ type: 'unlock' });
     await advance(5, null, () => !tu.active);
     const unlockEnd = R.toneMappingExposure;
-    const r = { lookExposure: X0, ex, scene1, shots, perScene: seen.map((v) => v), esc: { mid: escMid, jump: escJump, end: escEnd }, unlock: { mid: unlockMid, end: unlockEnd } };
+    const r = { lookExposure: X0, ex, scene1, scene5: s5, shots, perScene: seen.map((v) => v), esc: { mid: escMid, jump: escJump, end: escEnd }, unlock: { mid: unlockMid, end: unlockEnd } };
     r.pass = X0 === 4.5 && ex.start === 4.5 && ex.s0.index === 0 && ex.s0.v === 4.5
-      && shots.every((s) => s.index === 1 && s.black < 0.01 && s.exposure === 3.2)
-      && scene1.ratio >= 0.6 && scene1.ratio <= 0.75 && scene1.mid32 >= 0.15
-      && mids.length === LAST - 1 && mids.every((v) => v === 3.2) && ex.s8 && ex.s8.v === 4.5 && ex.s8.black > 0.99 && ex.end === 4.5 && !tu.active
+      && shots.every((s) => s.index === 1 && s.black < 0.01 && s.exposure === 3.7)
+      && scene1.mid32 >= 0.15 && scene1.fullMid >= 0.15 && s5.index === IX('5') && s5.exposure === 3.2 && s5.ratio >= 0.6 && s5.ratio <= 0.8
+      && mids.length === LAST - 1 && mids.every((v, i) => v === (IDS[i + 1] === '1' ? 3.7 : IDS[i + 1] === '7c' ? 6.0 : 3.2)) && ex.s8 && ex.s8.v === 4.5 && ex.s8.black > 0.99 && ex.end === 4.5 && !tu.active
       && escMid === 3.2 && escJump === 4.5 && escEnd === 4.5 && unlockMid === 3.2 && unlockEnd === 4.5;
     return r;
   });

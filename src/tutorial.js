@@ -1,6 +1,9 @@
 // tutorial.js — P6a: 場面を映すチュートリアル(DESIGN §3.8「チュートリアル(2026-11-01 ユーザー決定)」の表 0〜8。P5a の仮の文字カードを置き換えた)。
 //  P6b(§3.9 #11): 場面 3b(外階段の踊り場)・6b(開いた扉と閉まった扉)を追加。並びは 0,1,2,3,3b,4,5,6,6b,7,8(TUT.ids)、合計 87.5 秒。
 //  P6b-A2(§3.9 #17): 場面 7b(4F の廊下を走る足音 → 遠くの EV の表示が 2→3→4 と動いてチャイム)を追加。並びは …,7,7b,8、合計 94.0 秒。
+//  P6b-F1(§3.12 #2・#3): 場面 1 を外観に(敷地の南東の門の内側の低いカメラから建物を見上げる 8 秒。案 A の構図・霧 0.06・露出 3.7・管理人なし)。
+//    410 の仕込み(動かないスマホ・場面 1 の環境光の持ち上げ)は撤去。場面 7c(7b の後 3.0 秒: 覗き穴の向こうの管理人の顔 grin→attack・レンズの血・打撃音 1 発。
+//    入りは 0.1 秒の黒のカット、終わりは即暗転 → 8)を追加。並びは …,7,7b,7c,8、合計 97.0 秒。
 //  タイトルのクリックの後、操作を奪ったカメラが館内の場面 0〜8 を順に映し、各場面に表の一文を出す(0 は黒の中央、1〜7 は画面下)。
 //  音楽なし。環境音(main の updateAmbience)と場面の音(AudioBank の採用場面: 管理人の足音・EV のチャイム・花瓶の割れる音)だけ。
 //  - 管理人は演出体として置く: AI の通常動作(ai.update)は main が止め、ここが enemy を直接置いて歩かせる(位置・向き・クリップ・懐中電灯・照らす点)。
@@ -13,14 +16,14 @@
 
 import * as THREE from 'three';
 import { HUD_TEXT } from './hud_text.js';
-import { levelY } from './world.js';
+import { levelY, glbLevel } from './world.js';
 
 export const TUT = {
   seenKey: 'nolife2.tutorialSeen',
   // 場面の並び(P6b §3.9 #11 で 3b・6b を追加。配列の添字 = this.index、表の番号 = ids[index])
-  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '8'],
-  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 94.0 秒(P6b-A2 契約 ≤100。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0 ＋ 7b 6.5)
-  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0],
+  ids: ['0', '1', '2', '3', '3b', '4', '5', '6', '6b', '7', '7b', '7c', '8'],
+  // 場面ごとの所要時間(秒。読み込み待ちを除く)。合計 97.0 秒(契約 ≤100。P6a の 74.5 秒 ＋ 3b 6.0 ＋ 6b 7.0 ＋ 7b 6.5 ＋ 7c 3.0)
+  dur: [5.0, 8.0, 8.5, 8.0, 6.0, 13.0, 7.5, 13.5, 7.0, 8.0, 6.5, 3.0, 3.0],
   edgeFade: 0.6,       // 場面の始めと終わりの暗転(秒)
   cutFade: 0.3,        // 場面 6 の中のカット
   bedside: { level: 4, x: 12.35, z: 7.25, yaw: Math.PI / 2, pitch: -0.04 },   // 終わりの位置: 410 のベッド脇(西 = 玄関の方を向く)
@@ -28,7 +31,6 @@ export const TUT = {
   jiggle: 0.05,        // 場面 6: ロッカーが内側から軋む時の扉の小さな開き(rad)
   lurkDoor: '409',     // 場面 6: 下の闇が揺らぐ空室(4F・410 の隣)
   lockerRoom: '611',   // 場面 6: 内側から軋むロッカー(6F の罠の部屋の奥の窓際)
-  ambient1: 0.32,      // 場面 1: 暗い 410 の輪郭が読める程度に環境光を少しだけ持ち上げる(元は LOOK.ambientFloor)
   ambient5: 0.5,       // 場面 5: クローゼットの隙間から薄暗い部屋が読める程度に
   gap5: 0.15,          // 場面 5: 隙間の開き(ROOMS.hideGap 0.09 より少し広く。映す時だけ)
   flashScale: 0.38,    // 場面 6・7: 近い壁・扉が白く飛ばないよう、自分の懐中電灯をこの倍率に(終われば戻す)
@@ -38,6 +40,14 @@ export const TUT = {
   //  カゴは 2F から呼ばれて travel 秒で 4F へ(表示 2→3→4・チャイム。扉は開けない)
   // P6b-E1(§3.11 #3): チュートリアルの間(場面 1〜7b)だけ露出を 1 段暗く(本編 LOOK.exposure 4.5)。場面 0 の黒はそのまま、場面 8 の暗転(片付け)で開始時の値へ戻す
   exposure: 3.2,
+  // P6b-F1: 場面ごとの露出の上書き。1 = 外観(案 A の 3.7。3.2 だと建物が霧に沈んで「見上げる」形が読めない = docs/p6b-f1/NOTES.md §3)、
+  //  7c = 覗き穴(案 B の 6.0。魚眼の外の黒が画面の 7 割あるので中を持ち上げる)
+  exposureBy: { '1': 3.7, '7c': 6.0 },
+  // P6b-F1 場面 1: 敷地 'G' の南東の門の内側・地面近く(案 A のカメラ)から北西の建物を見上げる。見る先の高さを y0 → y1 へ 8 秒で上げ、少しだけ寄る(push m)。
+  //  霧は外観・木の材質の霧(LOOK.ext.fogDensity)を 0.06 に(案 A。場面を出る時に戻す)
+  ext1: { x: 35.4, z: 32.4, eye: 0.85, tx: 16.0, tz: 14.0, y0: 3.2, y1: 9.5, push: 0.45, fov: 50, fogD: 0.06, fogC: [0.016, 0.018, 0.024] },
+  // P6b-F1 場面 7c: 410 の室内(覗き穴の前)から。管理人は扉の前 0.4m(案 B)。grin → attack(見開き)、打撃音と同時にレンズに血
+  peep7c: { cam: [8.62, 7.25], enemy: [7.1, 7.24], clip: 'walk_oldman', time: 0.3, grin: [0.5, 0.6], attackAt: 1.05, attackIn: 0.35, attack: 0.95, hitAt: 1.75, lean: 0.0, under: 0.3, cut: 0.1 },
   run7b: { x: 6.9, z0: 8.6, z1: 14.0, t0: 0.3, run: 2.2, step: 0.3, bob: 0.035, eye: 1.52, callAt: 0.6, from: 2, to: 4, travel: 3.4 },
 };
 const LAST = TUT.ids.length - 1;   // 最後の場面(黒 → ベッド脇)
@@ -75,7 +85,8 @@ function keys(K, t) {
 
 export class Tutorial {
   // ctx: { camera, player, ai, enemy, enemyAudio, bank, world, elevator, rooms, doorFx, peephole, hud, scene, ambientFloor, door410,
-  //        teleport(level, x, z, yaw, pitch), getLevel(), resetAI(dormant), controlsSec }
+  //        teleport(level, x, z, yaw, pitch), getLevel(), resetAI(dormant), controlsSec,
+  //        renderer, movie(襲撃ムービー: 7c のレンズの血), exterior, loadExterior(), look(LOOK: 場面 1 の外の霧) }
   constructor(ctx) {
     Object.assign(this, ctx);
     this.active = false;
@@ -107,15 +118,8 @@ export class Tutorial {
       this.requestSkip('esc');
     };
     window.addEventListener('keydown', this._key, true);
-    // 小道具(この演出の間だけ置く): 場面 1 の動かないスマホ・場面 7 の机の花瓶と破片・場面 6 の扉の隙間から漏れる光
+    // 小道具(この演出の間だけ置く): 場面 7 の机の花瓶と破片・場面 6 の扉の隙間から漏れる光(P6b-F1: 場面 1 のスマホは場面 1 を外観にしたので撤去)
     this.props = new THREE.Group(); this.props.name = 'TutorialProps';
-    const dark = new THREE.MeshStandardMaterial({ color: 0x0b0c0e, roughness: 0.25, metalness: 0.3 });
-    const screen = new THREE.MeshStandardMaterial({ color: 0x020304, roughness: 0.06, metalness: 0.0 });
-    const phone = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.009, 0.152), dark);
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.066, 0.142).rotateX(-Math.PI / 2), screen); glass.position.y = 0.0047;
-    phone.add(body, glass); phone.position.set(12.05, levelY(4) + 0.013, 7.12); phone.rotation.y = 0.5;   // ベッド脇の敷物の上(落ちたまま)
-    this.phone = phone;
     const vaseMat = new THREE.MeshStandardMaterial({ color: 0x3a5a76, roughness: 0.25 });
     const prof = [[0, 0], [0.045, 0], [0.058, 0.035], [0.062, 0.09], [0.045, 0.17], [0.027, 0.215], [0.032, 0.25], [0.027, 0.25]].map(([x, y]) => new THREE.Vector2(x, y));
     const vase = new THREE.Group();
@@ -135,14 +139,14 @@ export class Tutorial {
       m.userData.off = [(rnd() - 0.5) * 0.9, (rnd() - 0.5) * 0.7]; m.rotation.y = rnd() * 6.28;
       this.shards.add(m);
     }
-    for (const o of [phone, vase, this.shards]) o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
+    for (const o of [vase, this.shards]) o.traverse((m) => { if (m.isMesh) { m.castShadow = true; m.receiveShadow = true; } });
     // 扉の隙間から漏れる自分の懐中電灯の光(410 の扉の下と戸先の細い線。廊下側の床に落ちた光が隙間から見える)
     this.leakMat = new THREE.MeshBasicMaterial({ color: 0xffe2b8, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
     this.leak = new THREE.Group();
     // 花瓶は最初から 410 の机の上(場面 1〜6 にも映る。場面 7 で落ちる)。破片は割れるまで隠す
     vase.position.copy(this.vaseHome); vase.rotation.y = 0.4;
     this.shards.visible = false;
-    this.props.add(phone, vase, this.shards, this.leak);
+    this.props.add(vase, this.shards, this.leak);
   }
 
   _buildLeak() {
@@ -201,7 +205,7 @@ export class Tutorial {
     if (i === 0) { this.centerEl.textContent = this.cap; this.capEl.textContent = ''; }
     else { this.centerEl.textContent = ''; this.capEl.textContent = this.cap; }
     this.log.push({ ev: 'scene', index: i, id: TUT.ids[i], text: this.cap, at: +this.total.toFixed(3) });
-    this._exposure(i >= 1 && i < LAST ? TUT.exposure : this.snap.exposure);   // P6b-E1: 1〜7b は暗く、0・8 は開始時の値(場面の頭は暗転の中)
+    this._exposure(i >= 1 && i < LAST ? (TUT.exposureBy[TUT.ids[i]] ?? TUT.exposure) : this.snap.exposure);   // P6b-E1: 1〜7c は暗く(P6b-F1: 1 = 3.7・7c = 6.0)、0・8 は開始時の値(場面の頭は暗転の中)
     this._enterScene(i);
   }
 
@@ -264,19 +268,27 @@ export class Tutorial {
     if (this._S) return this._S;
     const L4 = 4, y4 = levelY(4);
     const S = {};
-    // 0: 黒に「ノーライフ学生会館　午前3時」(裏で 410 へ移って読み込みを済ませる)
-    S['0'] = [{ dur: DUR('0'), level: 4, black: true, enter: () => { this._place(4, 11.6, 7.7, -1.1, 0.5); this._hideEnemy(); } }];
-    // 1: 410 の室内。消えた灯り(天井)→ 動かないスマホ(ベッドの上)→ 窓の外の闇。ベッド脇からゆっくり
-    const K1 = [
-      { t: 0.0, x: 11.45, z: 7.78, eye: 1.28, yaw: -1.12, pitch: 0.62 },
-      { t: 3.0, x: 11.35, z: 7.95, eye: 1.3, yaw: -0.5, pitch: -0.86 },
-      { t: 4.6, x: 11.4, z: 7.9, eye: 1.3, yaw: -0.56, pitch: -0.8 },
-      { t: 8.0, x: 12.2, z: 7.42, eye: 1.36, yaw: -1.48, pitch: -0.03 },
-    ];
-    S['1'] = [{ dur: DUR('1'), level: 4,
-      enter: () => { this.props.add(this.phone); this.ambientFloor.intensity = TUT.ambient1; this.player.setFlashlight(false); this._cam(keys(K1, 0), L4); },
-      tick: (t) => this._cam(keys(K1, t), L4),
-      exit: () => { this.ambientFloor.intensity = this.snap.ambient; this.phone.removeFromParent(); } }];
+    // 0: 黒に「ノーライフ学生会館　午前3時」(P6b-F1: 裏で敷地 'G' へ移って 1F と外観の読み込みを済ませる。黒なので読み込みは待たない)
+    const X1 = TUT.ext1;
+    S['0'] = [{ dur: DUR('0'), level: 'G', black: true, at: [X1.x, X1.z], ready: () => true,
+      enter: () => { this._place('G', X1.x, X1.z, -Math.PI * 0.75, 0.1); this._hideEnemy(); this.player.setFlashlight(false); this._kickExterior(); } }];
+    // 1(P6b-F1 §3.12 #3): 外観。敷地の南東の門の内側・地面近くから北西の建物をゆっくり見上げる(案 A の構図)。管理人は出さない(場面 2 で初登場)
+    const look1 = (t) => {
+      const k = smooth(t / DUR('1')), dx = X1.tx - X1.x, dz = X1.tz - X1.z, L = Math.hypot(dx, dz);
+      const x = X1.x + dx / L * X1.push * k, z = X1.z + dz / L * X1.push * k;
+      return this._look(x, X1.eye, z, X1.tx, X1.y0 + (X1.y1 - X1.y0) * k, X1.tz);
+    };
+    S['1'] = [{ dur: DUR('1'), level: 'G', at: [X1.x, X1.z], ready: () => this.world.isReady(1) && (!this.exterior || this.exterior.ready || this._extFailed),
+      enter: () => {
+        this._place('G', X1.x, X1.z, 0, 0); this._hideEnemy(); this.player.setFlashlight(false);
+        const E = this.look && this.look.ext;
+        if (E) { this._fog1 = { d: E.fogDensity, c: [...E.fogColor] }; E.fogDensity = X1.fogD; E.fogColor = [...X1.fogC]; if (this.exterior && this.exterior.ready && this.exterior._applyLook) this.exterior._applyLook(); }
+        this.camera.fov = X1.fov; this.camera.updateProjectionMatrix();
+        this._cam(look1(0), 'G');
+        this.log.push({ ev: 'exterior_view', ready: !!(this.exterior && this.exterior.ready) });
+      },
+      tick: (t) => this._cam(look1(t), 'G'),
+      exit: () => { this._unfog1(); this.camera.fov = this.snap.fov; this.camera.updateProjectionMatrix(); } }];
     // 2: 4F の無人の廊下の奥。管理人は EV ホールの東の角の向こう(廊下から見えない所)に置き、懐中電灯の光だけが奥の壁を横切る。足音(壁越し)
     const AIM2 = [[0, 6.5, 0.05, 19.4], [2.2, 6.0, 0.95, 20.6], [3.8, 6.0, 1.15, 21.7], [5.2, 6.4, 0.7, 22.05], [6.4, 6.0, 1.0, 20.5], [8.5, 7.4, 0.2, 21.4]];
     S['2'] = [{ dur: DUR('2'), level: 4,
@@ -489,7 +501,7 @@ export class Tutorial {
     // 7b(P6b-A2 §3.9 #17): 4F の廊下を走る(走りの高さ・速さ・足音)→ 足を止めると、遠くの EV の階数表示が 2→3→4 と動いてチャイム。
     //  「走ると足音が響く！管理人に聞こえる！」。廊下の自分の足音は本編では「なし」なので、居室の足音(pl_step_room)を走りの音量で鳴らす
     const R7 = TUT.run7b;
-    S['7b'] = [{ dur: DUR('7b'), level: 4,
+    S['7b'] = [{ dur: DUR('7b'), level: 4, fout: 0,   // P6b-F1: 終わりはフェードしない(7c へ 0.1 秒の黒のカット)
       enter: () => {
         const c = this.elevator.car;
         Object.assign(c, { level: R7.from, open: 0, state: 'idle', hold: 0, to: null, t: 0, dur: 0, riding: false, pending: [] });
@@ -519,6 +531,41 @@ export class Tutorial {
         if (c.state === 'arrived') c.lead = Math.max(c.lead, 0.5);   // チャイムの後も扉は閉じたまま
       },
       exit: () => { this.player.flashlight.intensity = this.snap.flashI; } }];
+    // 7c(P6b-F1 §3.12 #2): 覗き穴の視点。レンズの目の前に管理人の顔(grin → attack の見開き)、打撃音(採用 enemy_hit)と同時にレンズに血の飛沫と筋。文言なし。
+    //  入りは 0.1 秒の黒のカット(7b の終わりはフェードしない)、終わりは即暗転 → 8。顔の作りは案 B(docs/p6b-e1/NOTES.md)
+    const P7 = TUT.peep7c;
+    S['7c'] = [{ dur: DUR('7c'), level: 4, blackAt: (t) => (t < P7.cut ? 1 : 0),
+      enter: () => {
+        const D = this.door410; D.target = 0; D.angle = 0; D.speedMul = 1; if (D.collision) D.collision.disabled = false;
+        this.player.setFlashlight(false); this.player.flashlight.intensity = this.snap.flashI;
+        this._place(4, P7.cam[0], P7.cam[1], Math.PI / 2, 0);
+        this.peephole.forced = true; this.peephole.set(true);
+        this._enemy(4, P7.enemy[0], P7.enemy[1], Math.PI / 2, { light: false, clip: P7.clip });
+        const a = this.enemy.actions[P7.clip]; if (a) { a.time = P7.time; a.timeScale = 0; }
+        this.enemy.underLight = P7.under;
+        this.enemy.setFace('grin', P7.grin[0], true); this.enemy.setFace('attack', 0, true);
+        this._hit7c = false;
+        if (this.movie) this.movie.blood.clear();
+        this.log.push({ ev: 'peep_7c' });
+      },
+      tick: (t, dt) => {
+        const e = this.enemy;
+        e.place(P7.enemy[0], P7.enemy[1], Math.PI / 2);   // 覗き穴の前から動かない
+        e.lean = P7.lean * smooth(t / 1.6);                // 顔をレンズへ寄せる
+        const ka = smooth((t - P7.attackAt) / P7.attackIn);
+        e.setFace('grin', P7.grin[0] + (P7.grin[1] - P7.grin[0]) * smooth(t / P7.attackAt) * (1 - 0.4 * ka), true);
+        e.setFace('attack', P7.attack * ka, true);
+        if (!this._hit7c && t >= P7.hitAt) { this._hit7c = true; this._blood7c(); this.log.push({ ev: 'hit_7c', t: +t.toFixed(2) }); }
+        if (this.movie && this.movie.blood.pass.enabled) this.movie.blood.update(dt);
+      },
+      exit: () => {
+        if (this.peephole.active) { this.peephole.forced = false; this.peephole.set(false); }
+        this.peephole.forced = false;
+        const e = this.enemy; e.lean = 0; e.underLight = 0; e.setFace('grin', 0, true); e.setFace('attack', 0, true);
+        const a = e.actions[P7.clip]; if (a) a.timeScale = 1;
+        this._hideEnemy();
+        if (this.movie) this.movie.blood.clear();
+      } }];
     // 8: 黒 → (暗転の中で世界を開始時の状態へ戻す)→ 410 のベッド脇でフェードイン → 操作一覧
     S['8'] = [{ dur: DUR('8'), level: 4, black: true,
       enter: () => { this._restore(); this.seen = true; },
@@ -533,6 +580,35 @@ export class Tutorial {
       if (Math.abs(tot - TUT.dur[i]) > 1e-6) throw new Error(`tutorial: 場面 ${TUT.ids[i]} の長さ ${tot} ≠ ${TUT.dur[i]}`);
     }
     return (this._S = A);
+  }
+
+  // P6b-F1: 外観を読み始める(場面 0 の黒の間。読めなければ場面 1 は待たずに進む)
+  _kickExterior() {
+    if (!this.loadExterior || (this.exterior && this.exterior.ready)) return;
+    Promise.resolve(this.loadExterior()).then((x) => { if (!x) this._extFailed = true; }).catch(() => { this._extFailed = true; });
+  }
+  _unfog1() {
+    const E = this.look && this.look.ext;
+    if (!E || !this._fog1) return;
+    E.fogDensity = this._fog1.d; E.fogColor = this._fog1.c; this._fog1 = null;
+    if (this.exterior && this.exterior.ready && this.exterior._applyLook) this.exterior._applyLook();
+  }
+  // P6b-F1 7c: レンズの血(案 B と同じ作り: 額の上で潰れた滴＋衛星の微粒 → 太さ・速さの違う筋。襲撃ムービーの画面の血 BloodOverlay を借りる)
+  _blood7c() {
+    if (this.enemyAudio) this.enemyAudio.play('hit', this.camera.position.clone(), 1.0);
+    const Bl = this.movie && this.movie.blood;
+    if (!Bl) return;
+    Bl.clear(); Bl.pass.enabled = true;
+    let a = 21; const R = () => { a = (a * 16807) % 2147483647; return a / 2147483647; };
+    for (const [x, y, len, w] of [[612, 205, 300, 2.8], [640, 180, 380, 4.0], [668, 230, 210, 2.2], [696, 196, 330, 3.2]]) {
+      Bl._drop(x, y, w * 2.4, Math.PI / 2 + (R() - 0.5) * 0.6, 0);
+      for (let k = 0; k < 6; k++) Bl._soft(x + (R() - 0.5) * w * 9, y + (R() - 0.5) * w * 6, 0.8 + R() * w * 0.5, 0.8 + R() * w * 0.4, R() * 3, 0.7, Bl._rgb());
+      Bl.drips.push({ x, y: y + w, y0: y + w, w: w * (0.8 + R() * 0.3), v: 220 + R() * 160, len, t: 0, a: 0.85, rgb: Bl._rgb(), wob: R() * 6 });
+    }
+    // 飛沫: 打撃の点(顔の少し上)のまわりに細かい粒
+    for (let i = 0; i < 160; i++) { const g = Math.sqrt(-2 * Math.log(R() || 1e-6)), th = 6.283 * R(); const rr = 0.4 + R() ** 3 * 2.2; Bl._soft(650 + g * Math.cos(th) * 70, 230 + g * Math.sin(th) * 60, rr, rr * 0.8, R() * 3, 0.4 + R() * 0.4, Bl._rgb()); }
+    for (let i = 0; i < 26; i++) { const g = Math.sqrt(-2 * Math.log(R() || 1e-6)), th = 6.283 * R(); Bl._drop(650 + g * Math.cos(th) * 90, 230 + g * Math.sin(th) * 70, 0.8 + 6 * R() ** 4, th, R() < 0.4 ? 0.5 + R() : 0); }
+    Bl.tex.needsUpdate = true;
   }
 
   // 演出で動かした物を開始時の状態へ(場面 8 の暗転の中・飛ばした時)
@@ -551,6 +627,9 @@ export class Tutorial {
     this.leakMat.opacity = 0; if (this.leakEdgeMat) this.leakEdgeMat.opacity = 0;
     this.props.removeFromParent();
     this.ambientFloor.intensity = s.ambient;
+    this._unfog1();   // P6b-F1: 場面 1 の外の霧
+    if (this.movie) this.movie.blood.clear();   // P6b-F1: 7c のレンズの血
+    { const e = this.enemy; e.lean = 0; e.underLight = 0; e.setFace('grin', 0, true); e.setFace('attack', 0, true); }
     this._exposure(s.exposure);   // P6b-E1: 本編の露出へ(暗転の中。Esc・ロック解除で飛ばした時もここを通る)
     this.camera.fov = s.fov; this.camera.updateProjectionMatrix();
     this.enemy.aimPoint = null; this.enemy.speed = 0;
@@ -586,10 +665,11 @@ export class Tutorial {
     const sh = S[this._shot];
     if (!sh) return;
     // 階を移る(暗転の中)。読み込み待ちは場面の時計を止める
-    if (sh.level !== undefined && this.getLevel() !== sh.level) this.teleport(sh.level, this.player.pos.x, this.player.pos.z, 0, 0);
-    this.waiting = !this.world.isReady(sh.level);
+    if (sh.level !== undefined && this.getLevel() !== sh.level) this.teleport(sh.level, sh.at ? sh.at[0] : this.player.pos.x, sh.at ? sh.at[1] : this.player.pos.z, 0, 0);
+    this.waiting = !this._ready(sh);
     if (!this.waiting) this._enterShot(sh);
   }
+  _ready(sh) { return sh.ready ? sh.ready() : this.world.isReady(glbLevel(sh.level)); }   // P6b-F1: 敷地 'G' = 1F の GLB(＋外観)
   _enterShot(sh) {
     this._shotEntered = true;
     if (sh.enter) sh.enter();
@@ -602,7 +682,7 @@ export class Tutorial {
     const S = this._scenes()[this.index];
     let sh = S[this._shot];
     if (this.waiting) {
-      if (this.world.isReady(sh.level)) { this.waiting = false; this._enterShot(sh); }
+      if (this._ready(sh)) { this.waiting = false; this._enterShot(sh); }
       else { this.black.style.opacity = '1'; this.log.push({ ev: 'wait', index: this.index }); if (this.log.length > 600) this.log.splice(0, 100); return; }
     }
     this.t += dt; this._shotT += dt; this.total += dt;
@@ -612,7 +692,8 @@ export class Tutorial {
     let b;
     if (this.index === LAST) b = this._shotT < 1.0 ? 1 : 1 - smooth((this._shotT - 1.0) / 2.0);
     else if (sh.black) b = 1;
-    else b = Math.max(1 - smooth(this._shotT / fin), smooth((this._shotT - (sh.dur - fout)) / fout));
+    else if (sh.blackAt) b = sh.blackAt(this._shotT);   // P6b-F1 7c: 黒のカット(フェードなし)
+    else b = Math.max(fin > 0 ? 1 - smooth(this._shotT / fin) : 0, fout > 0 ? smooth((this._shotT - (sh.dur - fout)) / fout) : 0);
     this.black.style.opacity = b.toFixed(3);
     // 文字: 0 は中央、1〜7 は画面下(場面の頭 0.5 秒から出て、終わりの 0.6 秒で消える)
     const dur = TUT.dur[this.index];
