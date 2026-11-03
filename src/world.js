@@ -14,6 +14,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { floorWallBoxes, GEOM, evOpeningCenter, doorWidth } from './walls.js';
 import { decorateStoryDoors, updateStoryDoors } from './story_doors.js';
 import { extShade, corrGlass } from './exterior.js';
+import { powerPatch, addPatch } from './power.js';
 
 export const FH = GEOM.FLOOR_H;
 export const LEVELS = [1, 2, 3, 4, 5, 6, 7];
@@ -374,6 +375,7 @@ export class World {
         if (m.name === 'MX_Mass' || m.name === 'MX_CorrAlu') extShade(m, { fog: false });   // P3c: 外の塊は外観と同じ月明かり(霧は scene のまま)。P3c-2: 廊下端の窓の外の枠も
         m.userData.n2Emissive = m.emissiveIntensity;   // 倍率を掛ける前(EV のカゴの照明を点ける時に使う)
         if (L.emissiveScale[m.name] !== undefined) m.emissiveIntensity *= L.emissiveScale[m.name];
+        powerPatch(m);   // P6b-F1: 停電・消え掛かり(ライトマップと発光面に階ごとの倍率。src/power.js)
         m.needsUpdate = true;
       }
     });
@@ -700,9 +702,9 @@ export function brokenDoorBlockers(room, d, entry = 1.2, side = 0.12) {
 
 // 環境マップを鏡面反射だけに使う(拡散の IBL を足さない。拡散はベイク済みライトマップ)
 const SPEC_ONLY_CHUNK = THREE.ShaderChunk.lights_fragment_maps.replace('iblIrradiance += getIBLIrradiance( geometryNormal );', '');
+//  P6b-F1: 停電の差し込み(power.js)と重ねられるよう addPatch で足す(旧: onBeforeCompile を上書き)
 function specularOnlyEnv(m) {
-  m.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_maps>', SPEC_ONLY_CHUNK); };
-  m.customProgramCacheKey = () => 'n2SpecOnlyEnv';
+  addPatch(m, 'n2SpecOnlyEnv', (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_maps>', SPEC_ONLY_CHUNK); });
 }
 const PHYS_GLASS = new Set(['M_GlassClear']);
 

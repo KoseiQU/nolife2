@@ -19,6 +19,7 @@
 //  11) P5b-3: 食堂のガラス扉・シアターの二重扉(前室)を E で開けて通る・段床を登る・管理人が 2 枚を抜けて来る
 // 8c) P6b #12: 敷地の外周と車 3 台の周りを 0.25m 刻み × 16 方向に走って、敷地 'G' の外・1F の当たり・床の高さの異常に出ない(自転車置き場で 1F に化けていた)
 //  10) P3c-2 廊下端の窓: 各窓の正面でガラスが透明・開口が抜けている・外を描く・窓越しに外が見える(画素の差)・1フレームの時間
+// 12〜14) P6b-F1 停電: 全消灯で廊下の輝度 ≤ 1/5 → 階ごとにずれて点滅して戻る(±5%)/消え掛かりは最も近い 1 灯だけ/異空間・地下・チュートリアル・タイトルでは起こさない
 
 const DT = 1 / 60;
 const EXPECT_UNITS = { 1: 9, 2: 22, 3: 22, 4: 19, 5: 16, 6: 11, 7: 5 };
@@ -841,6 +842,140 @@ export async function run(N) {
       && reached;
     return { pass, gap, glass, blockedZ, hintV, openV, inVest, hintT, openT, inRoom, maxLift: +maxLift.toFixed(2), maxEye: +maxEye.toFixed(2), topZ, downLift,
       manager: { reached, passedV, passedT, sec: +t2.toFixed(1), enemyAt, doorEvs } };
+  });
+
+  // ------------------------------------------------------------ P6b-F1(§3.12 #4): 停電(src/power.js)
+  // 画面の輝度(sRGB 表示値の Rec.709。0..1)。全体と中央 50%
+  const lumNow = () => {
+    N.render();
+    const R = N.renderer, gl = R.getContext(), w = R.domElement.width, h = R.domElement.height, px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let s = 0, c = 0, cn = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const y = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+      s += y; const X = (i >> 2) % w, Y = ((i >> 2) / w) | 0;
+      if (X >= w / 4 && X < w * 3 / 4 && Y >= h / 4 && Y < h * 3 / 4) { c += y; cn++; }
+    }
+    return { full: s / (w * h) / 255, center: c / cn / 255 };
+  };
+  const corridorView = async () => {
+    if (N.level !== 4) { await N.teleport(4, 6.9, 7.6, Math.PI); await settle('3,4,5'); }
+    N.ai.setState('SCRIPTED', { force: true }); N.enemy.place(23.0, 21.2, 0);   // 管理人は廊下の画角の外(南棟の奥)
+    N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false); N.pump(DT, 20, false);
+  };
+
+  // 12) 全消灯: 廊下の輝度が平常の 1/5 以下 → 階ごとに 0.3 秒ずつずれて点滅しながら戻る → 平常の ±5%。消えている間も EV は動く・管理人だけに効く常夜灯の光も消える
+  await T('12_blackout', async () => {
+    const P = N.power;
+    await corridorView();
+    P.stop();
+    N.pump(DT, 2, false);
+    const L0 = lumNow();
+    const log0 = P.log.length;
+    const dur = P.startBlackout();   // 長さは時計の乱数(45〜75 秒)
+    const t0 = P.t;
+    N.pump(DT, 90, false);   // つっかえ(0.42 秒)の後、消えている
+    const L1 = lumNow();
+    const off = P.state();
+    const lampsOff = N.enemyObj._lampAll.filter((l) => l._kind === 'lamp').every((l) => l.c.r + l.c.g + l.c.b === 0);
+    // 消えている間に EV を 4F へ呼ぶ → 動く
+    const car0 = N.elevator.car.level;
+    N.elevator.call(car0 === 4 ? 1 : 4);
+    let carMoved = false;
+    // 戻るまで進める。階ごとに「最後に点いた時刻」(=点きっぱなしになった時刻)と点いた回数を記録
+    const onAt = new Array(8).fill(null), blinks = new Array(8).fill(0), prev = off.em.slice();
+    let t = 0;
+    while (P.out && t < 90) {
+      N.pump(DT, 1, false); t += DT;
+      if (N.elevator.car.level !== car0 || N.elevator.car.state === 'moving') carMoved = true;
+      const em = P.state().em;
+      for (let k = 1; k < 8; k++) { if (em[k] === 1 && prev[k] === 0) { blinks[k]++; onAt[k] = +(P.t - t0).toFixed(3); } prev[k] = em[k]; }
+    }
+    const endAt = +(P.t - t0).toFixed(2);
+    await corridorView();
+    N.pump(DT, 30, false);
+    const L2 = lumNow();
+    const stagger = onAt.slice(1, 8).map((v, i, A) => (i ? +(v - A[i - 1]).toFixed(3) : 0)).slice(1);
+    const ratio = L1.full / L0.full, back = L2.full / L0.full;
+    const ev = P.log.slice(log0).map((l) => l.ev);
+    N.elevator.car.pending = [];
+    return { pass: dur >= 45 && dur <= 75 && Math.abs(endAt - dur) < 0.05 && ratio <= 0.2 && L1.center / L0.center <= 0.2 && Math.abs(back - 1) <= 0.05 && Math.abs(L2.center / L0.center - 1) <= 0.05
+        && off.lm.slice(1).every((v) => v === 0.03) && off.em.slice(1).every((v) => v === 0) && lampsOff && carMoved
+        && stagger.length === 6 && stagger.every((d) => Math.abs(d - 0.3) < 0.03) && blinks.slice(1).every((n) => n >= 3) && ev.includes('blackout') && ev.includes('blackout_end')
+        && P.state().lm.every((v) => v === 1) && P.state().em.every((v) => v === 1),
+      lum: { normal: +L0.full.toFixed(4), off: +L1.full.toFixed(4), back: +L2.full.toFixed(4), ratio: +ratio.toFixed(3), backRatio: +back.toFixed(4), centerRatio: +(L1.center / L0.center).toFixed(3) },
+      dur: +dur.toFixed(2), endAt, onAt: onAt.slice(1), stagger, blinks: blinks.slice(1), lampsOff, carMoved, events: ev };
+  });
+
+  // 13) 消え掛かり: プレイヤーに一番近い天井灯 1 灯だけが 2〜4 秒ちらついて戻る(変わる発光体は常に 1 つ以下・少なくとも 1 回は 1 つ)
+  await T('13_flicker_one_lamp', async () => {
+    const P = N.power;
+    await corridorView();
+    N.setView(6.9, 10.6, Math.PI, 0.55); N.pump(DT, 10, false);   // 常夜灯(z 12.8)を見上げる
+    P.stop();
+    const Lb = lumNow();
+    const f = P.startFlicker();
+    const target = f && [+f.pos[0].toFixed(2), +f.pos[2].toFixed(2)];
+    const all = P.emitterFactors(4);
+    let maxChanged = 0, framesOne = 0, n = 0, dimMin = 1, minLum = 1, t = 0;
+    const changedIds = new Set();
+    while (P.flick && t < 6) {
+      N.pump(DT, 1, false); t += DT; n++;
+      const fa = P.emitterFactors(4), ch = fa.filter((e) => e.k < 0.95);
+      maxChanged = Math.max(maxChanged, ch.length); if (ch.length === 1) framesOne++;
+      for (const e of ch) changedIds.add(e.x + ',' + e.z);
+      const d = P.state().dim[3]; dimMin = Math.min(dimMin, 1 - d);
+      if (d > 0.7 && n % 3 === 0) minLum = Math.min(minLum, lumNow().center / Lb.center);
+    }
+    const after = P.emitterFactors(4).every((e) => e.k === 1) && P.state().dim[3] === 0;
+    // 最も近い灯: (6.9, 10.6) から (6.9, 12.8)
+    const nearest = all.reduce((b, e) => (Math.hypot(e.x - 6.9, e.z - 10.6) < Math.hypot(b.x - 6.9, b.z - 10.6) ? e : b), all[0]);
+    return { pass: !!f && f.dur >= 2 && f.dur <= 4 && Math.abs(t - f.dur) < 0.05 && target[0] === nearest.x && target[1] === nearest.z && maxChanged === 1 && framesOne > 10 && changedIds.size === 1 && after && minLum < 0.85 && all.length >= 5,
+      target, nearest: [nearest.x, nearest.z], emitters: all.length, dur: f && +f.dur.toFixed(2), sec: +t.toFixed(2), maxChanged, framesOne, changed: [...changedIds], minLumRatio: +minLum.toFixed(3), after };
+  });
+
+  // 14) 起こさない所: 異空間(X…)・地下 B1 では時計が来ても始めない(後ろへずらす)。チュートリアル・タイトル中は始めず、進行中の停電も打ち切る。
+  //     消えている間に階を移っても壊れない(戻れば全部 1)
+  await T('14_blackout_excluded', async () => {
+    const P = N.power, en0 = P.enabled;
+    P.stop(); P.enabled = true;
+    const log0 = P.log.length;
+    // a) 異空間
+    await N.teleport('X105', 0, 0, 0); N.pump(DT, 5, false);
+    P.nextBlackout = P.t + 0.1; P.nextFlicker = P.t + 0.1;
+    N.pump(DT, 60, false);
+    const inSpace = { started: !!P.out || !!P.flick, postponed: P.log.slice(log0).filter((l) => l.ev === 'postpone' && l.why === 'space').length };
+    // b) 地下 B1
+    await N.teleport('B1', ...N.building.basement.spawn, 0); N.pump(DT, 5, false);
+    const log1 = P.log.length;
+    P.nextBlackout = P.t + 0.1; P.nextFlicker = P.t + 0.1;
+    N.pump(DT, 60, false);
+    const inB1 = { started: !!P.out || !!P.flick, postponed: P.log.slice(log1).filter((l) => l.ev === 'postpone' && l.why === 'b1').length };
+    // c) チュートリアル中(演出の update は止めて、active だけ立てる)
+    await N.teleport(4, 6.9, 7.6, Math.PI); await settle('3,4,5');
+    const tu = N.tutorial;
+    P.startBlackout(50); N.pump(DT, 30, false);
+    const wasOut = !!P.out;
+    tu.update = () => {}; tu.active = true;
+    N.pump(DT, 10, false);
+    const tut = { canceled: !P.out, gains: P.state().lm.every((v) => v === 1) && P.state().em.every((v) => v === 1), why: (P.log.filter((l) => l.ev === 'cancel').slice(-1)[0] || {}).why };
+    P.nextBlackout = P.t + 0.1; N.pump(DT, 30, false);
+    tut.startedWhileActive = !!P.out;
+    tu.active = false; delete tu.update;
+    // d) タイトル中: step はタイトルの背景だけ = 時計も進まない
+    const tT = P.t; N.title.active = true; N.title.bg = null; N.pump(DT, 30, false); const titleClock = P.t === tT; N.title.active = false;
+    // e) 消えている間に階を移る(4F → 2F → 4F)→ 戻ると全部 1
+    P.startBlackout(46);
+    N.pump(DT, 60, false);
+    await N.teleport(2, 6.9, 19.5, 0); await settle('1,2,3'); N.pump(DT, 60, false);
+    const on2F = { em: P.state().em[2], lm: P.state().lm[2] };
+    await N.teleport(4, 6.9, 7.6, Math.PI); await settle('3,4,5');
+    let t = 0; while (P.out && t < 60) { N.pump(DT, 6, false); t += 6 * DT; }
+    const backAll = P.state().lm.every((v) => v === 1) && P.state().em.every((v) => v === 1) && N.ambientFloor.intensity === N.LOOK.ambientFloor;
+    P.enabled = en0; P.stop();
+    return { pass: !inSpace.started && inSpace.postponed >= 1 && !inB1.started && inB1.postponed >= 1 && wasOut && tut.canceled && tut.gains && tut.why === 'tutorial' && !tut.startedWhileActive
+        && titleClock && on2F.em === 0 && on2F.lm === 0.03 && backAll,
+      inSpace, inB1, tutorial: tut, titleClock, on2F, backAll };
   });
 
   await N.teleport(4, 6.9, 7.6, Math.PI);
