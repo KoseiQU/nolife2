@@ -8,6 +8,10 @@
 //  2) 終わり: 410 のベッド脇・操作が戻る・操作一覧・管理人/扉/EV/帯/クローゼット/ロッカー/覗き穴/懐中電灯/環境光が開始前と同じ・目標「1階の食堂へ」・既読になる
 //  3) 初回(未読)は Esc で飛ばせない
 //  4) 既読なら Esc で飛ばせる(場面 4 の途中 = 扉・覗き穴・EV が動いた後)→ 場面 8 → 終わりの状態は 2) と同じ。ポインタロックが外れた時も飛ばせる
+//  5) P6b-E1(§3.11 #3): チュートリアルの露出。場面 0 は本編の値・場面 1〜7b は 3.2・場面 8 の暗転で本編(4.5)へ戻る。
+//     場面 1(410)の画面中央 50%(test_enemy の centerLuma・P2c の暗さの判定と同じ範囲。960×540 で描く)の平均輝度が 4.5 の時の 0.6〜0.75 倍・
+//     中間調(sRGB 表示値の Rec.709 輝度 40〜120/255)が 15% 以上(場面 1 の 3 か所の平均。画面全体の値も記録する)。Esc・ロック解除で飛ばしても 4.5 に戻る
+//     (2〜4 の終わりの状態の比較にも露出を入れている)
 
 const DT = 1 / 60;
 const EXPECT = [
@@ -61,7 +65,8 @@ export async function run(N) {
       car: { level: car.level, state: car.state, open: car.open, pending: car.pending.join(',') }, npc: N.elevator.npc,
       door410: { angle: +d.angle.toFixed(3), target: d.target, blocked: !(d.collision && d.collision.disabled) },
       lurk: N.doorFx.lurkId, hidden: N.rooms.hidden, closet410: N.rooms.closets.get('410').open01, burst611: [N.rooms.bursts.get('611').open01, N.rooms.bursts.get('611').jiggle],
-      peep: N.peepholeObj.active, fov: N.camera.fov, flashlight: N.player.flashlightOn, flashI: N.player.flashlight.intensity, ambient: +N.ambientFloor.intensity.toFixed(3) };
+      peep: N.peepholeObj.active, fov: N.camera.fov, flashlight: N.player.flashlightOn, flashI: N.player.flashlight.intensity, ambient: +N.ambientFloor.intensity.toFixed(3),
+      exposure: +N.renderer.toneMappingExposure.toFixed(3) };   // P6b-E1
   };
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const endState = async (before) => {
@@ -229,6 +234,76 @@ export async function run(N) {
     const e2 = await endState(b);
     return { pass: hint > 0 && mid.index === IX('4') && mid.peep && mid.car === 3 && jumped.index === LAST && e.pass && mid2.index === 2 && jumped2.index === LAST && e2.pass,
       hint, mid, jumped: jumped.index, end: e, mid2: mid2.index, jumped2: jumped2.index, end2: e2.pass };
+  });
+
+  // 5) P6b-E1: チュートリアルの露出(場面 1〜7b は 3.2、本編 4.5)と場面 1 の輝度
+  await T('5_exposure', async () => {
+    const R = N.renderer, X0 = N.LOOK.exposure;
+    // 960×540 で描く。中央 50%(480×270)と画面全体: sRGB 表示値の Rec.709 輝度の平均(0..1)と、中間調(40〜120/255)の割合
+    const measure = () => {
+      N.setRenderSize(960, 540); N.render();
+      const gl = R.getContext(), w = 960, h = 540, px = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      N.setRenderSize(0);
+      let s = 0, mid = 0, cs = 0, cm = 0, cn = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        const y = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2], m = y >= 40 && y <= 120;
+        s += y; if (m) mid++;
+        const X = (i >> 2) % w, Y = ((i >> 2) / w) | 0;
+        if (X >= 240 && X < 720 && Y >= 135 && Y < 405) { cn++; cs += y; if (m) cm++; }
+      }
+      return { mean: cs / cn / 255, mid: cm / cn, fullMean: s / (w * h) / 255, fullMid: mid / (w * h) };
+    };
+    const at = (i) => PLAN.slice(0, i).reduce((a, b) => a + b, 0);
+    tu.seen = false;
+    const ex = { start: null, s0: null, s1: null, s7b: null, s8: null, end: null };
+    tu.start();
+    ex.start = R.toneMappingExposure;
+    await advance(2.0); ex.s0 = { index: tu.state().index, v: R.toneMappingExposure };
+    // 場面 1 の 3 か所(天井の照明・敷物のスマホ・窓)で 3.2 と 4.5 を描き比べる(同じフレーム。暗転が明けた後)
+    const shots = [];
+    let clock = 2.0;   // チュートリアルの開始からの時刻
+    for (const t of [2.2, 4.2, 6.6]) {
+      await advance(at(1) + t - clock); clock = at(1) + t;
+      const st = tu.state();
+      const v = R.toneMappingExposure;
+      const dark = measure();
+      R.toneMappingExposure = X0; const ref = measure(); R.toneMappingExposure = v;
+      shots.push({ t, index: st.index, black: st.black, exposure: v, mean32: +dark.mean.toFixed(4), mean45: +ref.mean.toFixed(4), ratio: +(dark.mean / ref.mean).toFixed(3), mid32: +dark.mid.toFixed(3), mid45: +ref.mid.toFixed(3),
+        full: { mean32: +dark.fullMean.toFixed(4), mean45: +ref.fullMean.toFixed(4), mid32: +dark.fullMid.toFixed(3), mid45: +ref.fullMid.toFixed(3) } });
+    }
+    const avg = (k) => shots.reduce((a, s) => a + s[k], 0) / shots.length;
+    const scene1 = { mean32: +avg('mean32').toFixed(4), mean45: +avg('mean45').toFixed(4), ratio: +(avg('mean32') / avg('mean45')).toFixed(3), mid32: +avg('mid32').toFixed(3), mid45: +avg('mid45').toFixed(3) };
+    // 7b(最後の暗い場面)→ 8 の暗転で戻る
+    const seen = []; let s8first = null;
+    await advance(200, (st) => {
+      if (!st.active) return;
+      if (seen[st.index] === undefined) seen[st.index] = R.toneMappingExposure;
+      if (st.index === LAST && s8first === null) s8first = { t: st.t, v: R.toneMappingExposure, black: st.black };
+    }, () => !tu.active);
+    ex.s1 = seen[1]; ex.s7b = seen[IX('7b')]; ex.s8 = s8first; ex.end = R.toneMappingExposure;
+    const mids = seen.slice(1, LAST);
+    // Esc で飛ばす(既読・場面 2 の途中)・ロック解除で飛ばす(場面 5 の途中)
+    tu.seen = true;
+    tu.start(); await advance(at(2) + 3.0, null, () => !tu.active);
+    const escMid = R.toneMappingExposure;
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape', key: 'Escape', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keyup', { code: 'Escape', key: 'Escape', bubbles: true }));
+    const escJump = R.toneMappingExposure;
+    await advance(5, null, () => !tu.active);
+    const escEnd = R.toneMappingExposure;
+    tu.start(); await advance(at(IX('5')) + 2.0, null, () => !tu.active);
+    const unlockMid = R.toneMappingExposure;
+    N.player.controls.dispatchEvent({ type: 'unlock' });
+    await advance(5, null, () => !tu.active);
+    const unlockEnd = R.toneMappingExposure;
+    const r = { lookExposure: X0, ex, scene1, shots, perScene: seen.map((v) => v), esc: { mid: escMid, jump: escJump, end: escEnd }, unlock: { mid: unlockMid, end: unlockEnd } };
+    r.pass = X0 === 4.5 && ex.start === 4.5 && ex.s0.index === 0 && ex.s0.v === 4.5
+      && shots.every((s) => s.index === 1 && s.black < 0.01 && s.exposure === 3.2)
+      && scene1.ratio >= 0.6 && scene1.ratio <= 0.75 && scene1.mid32 >= 0.15
+      && mids.length === LAST - 1 && mids.every((v) => v === 3.2) && ex.s8 && ex.s8.v === 4.5 && ex.s8.black > 0.99 && ex.end === 4.5 && !tu.active
+      && escMid === 3.2 && escJump === 4.5 && escEnd === 4.5 && unlockMid === 3.2 && unlockEnd === 4.5;
+    return r;
   });
 
   N.testResult = out;

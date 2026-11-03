@@ -36,6 +36,8 @@ export const TUT = {
   open6b: '410', closed6b: '409',   // P6b 場面 6b: 4F の廊下の北端から、手前の開いた扉(410)と奥の閉まった扉(409)
   // P6b-A2 場面 7b: 4F の廊下を南(EV ホール)へ走る。z0→z1 を run 秒(≈2.5 m/s)、足音の間隔 step 秒、目の上下 bob m。
   //  カゴは 2F から呼ばれて travel 秒で 4F へ(表示 2→3→4・チャイム。扉は開けない)
+  // P6b-E1(§3.11 #3): チュートリアルの間(場面 1〜7b)だけ露出を 1 段暗く(本編 LOOK.exposure 4.5)。場面 0 の黒はそのまま、場面 8 の暗転(片付け)で開始時の値へ戻す
+  exposure: 3.2,
   run7b: { x: 6.9, z0: 8.6, z1: 14.0, t0: 0.3, run: 2.2, step: 0.3, bob: 0.035, eye: 1.52, callAt: 0.6, from: 2, to: 4, travel: 3.4 },
 };
 const LAST = TUT.ids.length - 1;   // 最後の場面(黒 → ベッド脇)
@@ -165,7 +167,7 @@ export class Tutorial {
       car: { ...E.car, pending: [...E.car.pending] }, npc: E.npc, npcStop: E.npcStop,
       door410: D ? { angle: D.angle, target: D.target, speedMul: D.speedMul, locked: D.locked } : null,
       flashlight: P.flashlightOn, flashI: P.flashlight.intensity, fov: this.camera.fov, ambient: this.ambientFloor.intensity,
-      aiDormant: this.ai.dormant,
+      aiDormant: this.ai.dormant, exposure: this._exposure(),
     };
     this.active = true;
     this.index = -1; this.total = 0;
@@ -199,6 +201,7 @@ export class Tutorial {
     if (i === 0) { this.centerEl.textContent = this.cap; this.capEl.textContent = ''; }
     else { this.centerEl.textContent = ''; this.capEl.textContent = this.cap; }
     this.log.push({ ev: 'scene', index: i, id: TUT.ids[i], text: this.cap, at: +this.total.toFixed(3) });
+    this._exposure(i >= 1 && i < LAST ? TUT.exposure : this.snap.exposure);   // P6b-E1: 1〜7b は暗く、0・8 は開始時の値(場面の頭は暗転の中)
     this._enterScene(i);
   }
 
@@ -210,6 +213,7 @@ export class Tutorial {
     P.frozen = false;
     P.controls.enabled = true;
     this.index = LAST + 1;
+    this._exposure(this.snap.exposure);   // P6b-E1: 念のため(_restore で戻している)
     this.log.push({ ev: 'end', total: +this.total.toFixed(3) });
     if (this.onDone) this.onDone();
   }
@@ -547,6 +551,7 @@ export class Tutorial {
     this.leakMat.opacity = 0; if (this.leakEdgeMat) this.leakEdgeMat.opacity = 0;
     this.props.removeFromParent();
     this.ambientFloor.intensity = s.ambient;
+    this._exposure(s.exposure);   // P6b-E1: 本編の露出へ(暗転の中。Esc・ロック解除で飛ばした時もここを通る)
     this.camera.fov = s.fov; this.camera.updateProjectionMatrix();
     this.enemy.aimPoint = null; this.enemy.speed = 0;
     this.enemyAudio.setOccluded(false);
@@ -556,6 +561,14 @@ export class Tutorial {
     P.frozen = true;
     this.resetAI(s.aiDormant);
     this.log.push({ ev: 'restore' });
+  }
+
+  // P6b-E1: レンダラの露出の読み書き(ctx に renderer が無ければ window.__N2 のものを使う。main.js は触らない工程のため)
+  _exposure(v) {
+    const r = this.renderer || (window.__N2 && window.__N2.renderer);
+    if (!r) return undefined;
+    if (v !== undefined && Number.isFinite(v)) r.toneMappingExposure = v;
+    return r.toneMappingExposure;
   }
 
   _enterScene(i) { this._nextShot(); }
