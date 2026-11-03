@@ -24,7 +24,7 @@ export const TITLE = {
   flicker: { every: [3, 8], dur: [0.2, 0.6], blinks: [2, 4] },
   outage: { every: [20, 40], dur: [0.4, 0.8], back: 0.1, lm: 0.02, amb: 0.5, expo: 0.6, enemyLamp: 0.12 },   // 消えている間は環境光と露出も落とす(真っ黒に近く、管理人の輪郭だけ僅かに)
   text: { size: 0.096, y: 0.19, spacing: 0.62, color: '#a9a196', font: '"Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif', in: 3.2, delay: 0.4 },
-  blood: { n: [8, 10], w: [3, 6], start: 2.2, done: [20, 30], len: [0.07, 0.36] },   // 太さは CSS px、長さは画面の高さの割合
+  blood: { n: [8, 10], w: [2, 6], start: 2.2, done: [20, 30], len: [0.07, 0.36], stall: [3, 8], stalls: [2, 3], branches: 2, dry: 10, blur: 0.6 },   // 太さは CSS px、長さは画面の高さの割合
 };
 
 const CSS = `
@@ -275,7 +275,17 @@ export class Title {
     g.drawImage(this.bg.ink.text, 0, 0);
     g.restore();
     this._dripModel(t);
-    for (const d of this.bg.drips) drawDrip(g, d, dpr, alpha);   // 太さは CSS px(3〜6px)
+    // 血は別の層に描いてから僅かにぼかして重ねる(線の縁が硬い「定規の線」に見えないように)
+    let L = this.bg.inkBlood;
+    if (!L || L.width !== W || L.height !== H) { L = this.bg.inkBlood = document.createElement('canvas'); L.width = W; L.height = H; }
+    const lg = L.getContext('2d');
+    lg.clearRect(0, 0, W, H);
+    for (const d of this.bg.drips) drawDrip(lg, d, dpr);   // 太さは CSS px(2〜6px)
+    g.save();
+    g.globalAlpha = alpha;
+    g.filter = `blur(${(TITLE.blood.blur * dpr).toFixed(2)}px)`;
+    g.drawImage(L, 0, 0);
+    g.restore();
   }
 
   // 文字を描いた層と、文字の下端(列ごとの一番下の画素)から選んだ滴の起点
@@ -323,13 +333,18 @@ export class Title {
         }
       }
       used.sort((a, b) => a[0] - b[0]);
-      B.drips = used.map((b) => makeDrip(R, b[0] / W, b[1] / H, D));
+      // 途中で長く止まる本(2〜3 本)と枝分かれする本(2 本)を先に決める
+      const order = used.map((_, i) => i).sort(() => R() - 0.5);
+      const nStall = D.stalls[0] + Math.floor(R() * (D.stalls[1] - D.stalls[0] + 1));
+      const stallSet = new Set(order.slice(0, nStall)), branchSet = new Set(order.slice(nStall, nStall + D.branches));
+      B.drips = used.map((b, i) => makeDrip(R, b[0] / W, b[1] / H, D, { stall: stallSet.has(i), branch: branchSet.has(i) }));
     }
     for (const d of B.drips) {
       const tt = t - D.start - d.delay;
       d.len = d.L * lenAt(d, tt);
       d.done = tt >= d.T;
       d.pool = d.done ? smooth((tt - d.T) / 2.0) : 0;
+      d.dry = d.done ? Math.min(1, (tt - d.T) / D.dry) : 0;   // 伸び切ってから D.dry 秒で乾いて暗くなる
     }
   }
 
@@ -338,29 +353,41 @@ export class Title {
     return { active: this.active, shown: !!this.root, leaving: !!this.leaving, name: this.root ? this.root.querySelector('.name').textContent : null,
       start: this.root ? this.root.querySelector('.start').textContent : null,
       bg: B ? { t: +B.t.toFixed(2), ready: B.ready, flicks: B.flicks, outs: B.outs, lights: B.lights, black: +(this.blackV ?? 1).toFixed(3),
-        drips: B.drips ? B.drips.map((d) => ({ x: +d.x.toFixed(3), len: +d.len.toFixed(4), L: +d.L.toFixed(4), w: +d.w.toFixed(2), T: +(d.delay + d.T).toFixed(2), done: d.done })) : null } : null };
+        drips: B.drips ? B.drips.map((d) => ({ x: +d.x.toFixed(3), len: +d.len.toFixed(4), L: +d.L.toFixed(4), w: +d.w.toFixed(2), wTop: +d.wTop.toFixed(2), wBot: +d.wBot.toFixed(2), T: +(TITLE.blood.start + d.delay + d.T).toFixed(2), done: d.done, dry: +d.dry.toFixed(2), stall: d.stallSec ? +d.stallSec.toFixed(2) : 0, branch: !!d.br })) : null } : null };
   }
 }
 
 // ---------------------------------------------------------------- 滴(1 本)
-// 伸びの予定: 動く区間と止まる区間を交互に(本ごとに区間の数・長さ・速さが違う)。delay + T 秒で長さ L に着く(T + delay は 20〜30 秒)
-function makeDrip(R, x, y, D) {
+// 伸びの予定: 動く区間と止まる区間を交互に(本ごとに区間の数・長さ・速さが違う)。delay + T 秒で長さ L に着く(T + delay は 20〜30 秒)。
+//  opts.stall = 途中で 3〜8 秒止まってから再び流れる本、opts.branch = 途中から細い枝が分かれる本
+function makeDrip(R, x, y, D, opts = {}) {
   const done = D.done[0] + (D.done[1] - D.done[0]) * R();
   const delay = R() * 3.0, T = done - D.start - delay;
-  const n = 3 + Math.floor(R() * 4);            // 動く区間の数
+  const n = 3 + Math.floor(R() * 3);            // 動く区間の数
   const seg = [];
   for (let i = 0; i < n; i++) {
     seg.push({ move: true, w: 0.6 + R() * 1.6, d: 0.3 + R() ** 1.7 * 1.6 });     // 区間の時間の重み・進む量の重み
-    if (i < n - 1) seg.push({ move: false, w: 0.4 + R() * 2.2 });
+    if (i < n - 1) seg.push({ move: false, w: 0.15 + R() * 0.5 });             // 短いためらい
   }
-  const tw = seg.reduce((a, s) => a + s.w, 0), dw = seg.reduce((a, s) => a + (s.move ? s.d : 0), 0);
+  const dw = seg.reduce((a, s) => a + (s.move ? s.d : 0), 0);
+  // 長く止まる本: 真ん中あたりの止まる区間を 3〜8 秒に(残りの時間を動く区間に配る)
+  let stallSec = 0, longIdx = -1;
+  if (opts.stall) { stallSec = D.stall[0] + (D.stall[1] - D.stall[0]) * R(); longIdx = 2 * Math.floor(R() * (n - 1)) + 1; }   // 止まる区間(奇数番)のどれか
+  const restW = seg.reduce((a, s, i) => a + (i === longIdx ? 0 : s.w), 0), restT = T - stallSec;
   let t = 0, l = 0;
-  for (const s of seg) { s.t0 = t; t += s.w / tw * T; s.t1 = t; s.l0 = l; if (s.move) l += s.d / dw; s.l1 = l; }
-  const L = D.len[0] + (D.len[1] - D.len[0]) * R() ** 1.3;
+  seg.forEach((s, i) => { s.t0 = t; t += i === longIdx ? stallSec : s.w / restW * restT; s.t1 = t; s.l0 = l; if (s.move) l += s.d / dw; s.l1 = l; });
+  const L = D.len[0] + (D.len[1] - D.len[0]) * R() ** 1.3;   // 長さが 7〜36% で時間は 20〜30 秒 = 速さは本ごとに 0.5〜2 倍以上違う
   const w = D.w[0] + (D.w[1] - D.w[0]) * R();
+  // 上下で幅が約 1.5 倍変わる(上は細い筋、下へ行くほど重さで太り、玉になる)
+  const wTop = w * (0.66 + 0.08 * R()), wBot = w * (1.06 + 0.12 * R());
   const k = R();
-  const rgb = [90 + k * 48 | 0, 10 + R() * 8 | 0, 10 + R() * 8 | 0];   // #5a0a0a〜#8a1212
-  return { x, y, L, w, T, delay, seg, rgb, wob: R() * 6.28, wobA: 0.25 + R() * 0.55, len: 0, done: false, pool: 0, k };
+  const rgb = [74 + k * 48 | 0, 8 + R() * 8 | 0, 8 + R() * 8 | 0];   // #4a0808〜#7a1010
+  const dp = { x, y, L, w, wTop, wBot, T, delay, seg, rgb, k, len: 0, done: false, pool: 0, dry: 0, stallSec,
+    // 低い周波数の揺れ(1〜2px): 2 つの正弦の和
+    wob: [R() * 6.28, R() * 6.28], wobA: [0.7 + R() * 0.5, 0.3 + R() * 0.4], wobF: [0.016 + R() * 0.012, 0.04 + R() * 0.02],
+    poolW: 8 + R() * 6 };   // 文字の下端の横に薄く広がった溜まり(幅 8〜14px)
+  if (opts.branch) dp.br = { at: 0.22 + 0.25 * R(), len: 0.3 + 0.2 * R(), side: R() < 0.5 ? -1 : 1, drift: 5 + R() * 5, w: 0.5 + 0.15 * R() };
+  return dp;
 }
 function lenAt(d, tt) {
   if (tt <= 0) return 0;
@@ -374,70 +401,98 @@ function lenAt(d, tt) {
   }
   return 1;
 }
-// 描く: 濃い輪郭 → 本体(縁が暗く中央が少し明るい。止まった所は少し太い)→ 中央寄りの細い艶(途切れる)→ 先端の玉(しずく形)→ 伸び切ったら下端の溜まり
-//  太さ w は CSS px(×dpr)。長さ・位置は画面の割合
-function drawDrip(g, d, px, alpha) {
-  const W = g.canvas.width, H = g.canvas.height, s = px;
-  const x0 = d.x * W, y0 = d.y * H, len = d.len * H, w = d.w * s;
-  const [r, gg, b] = d.rgb;
-  const col = (k, a) => `rgba(${Math.min(255, r * k) | 0},${Math.min(255, gg * k) | 0},${Math.min(255, b * k) | 0},${a * alpha})`;
-  const base = col(1, 0.94), dark = col(0.34, 0.9), rim = col(0.22, 0.55);
-  const cxAt = (y) => { const u = (y - y0) / s; return x0 + (Math.sin(u * 0.045 + d.wob) * d.wobA + Math.sin(u * 0.013 + d.wob * 1.7) * d.wobA * 1.6) * s; };
-  // 止まっていた所(通り過ぎた区間)は少し膨らむ
-  const beads = d.seg.filter((q) => !q.move && q.l0 * d.L * H < len - 2 * w).map((q) => y0 + q.l0 * d.L * H);
-  const wAt = (y) => {
-    const u = (y - y0) / s;
-    let k = 0.74 + 0.1 * Math.sin(u * 0.07 + d.wob * 2) + 0.07 * Math.sin(u * 0.19 + d.wob) + 0.6 * Math.max(0, 1 - u / 7);
-    for (const by of beads) k += 0.42 * Math.exp(-(((y - by) / (2.6 * w)) ** 2));
-    return w * k;
-  };
-  g.save();
-  // 文字の下端に付いた溜まり(横に平たい)
-  g.fillStyle = rim; g.beginPath(); g.ellipse(x0, y0 + 0.5 * s, w * 1.15 + s, w * 0.62 + s, 0, 0, Math.PI * 2); g.fill();
-  g.fillStyle = base; g.beginPath(); g.ellipse(x0, y0 + 0.5 * s, w * 1.05, w * 0.52, 0, 0, Math.PI * 2); g.fill();
-  const step = Math.max(1, 1.5 * s);
-  const L = [], Rr = [];
-  if (len > step) for (let y = y0; y <= y0 + len; y += step) { const c = cxAt(y), hw = wAt(y) / 2; L.push([c - hw, y]); Rr.push([c + hw, y]); }
-  const poly = (grow) => { g.beginPath(); g.moveTo(L[0][0] - grow, L[0][1]); for (const p of L) g.lineTo(p[0] - grow, p[1]); for (let i = Rr.length - 1; i >= 0; i--) g.lineTo(Rr[i][0] + grow, Rr[i][1]); g.closePath(); };
-  // 先端の玉: しずく形(上が細く筋につながり、下が丸い)。伸び切った後は重さで少し膨らんで溜まる
-  const ty = y0 + len, tx = cxAt(ty);
-  const rx = w * (0.78 + 0.12 * Math.sin(d.k * 9)) * (1 + 0.45 * d.pool), ry = rx * (1.25 + 0.15 * d.pool);
-  const cy = ty + ry * 0.35;
-  const drop = (grow) => {
+// 色: 乾く(dry 0→1)と彩度 −30%・明度 −20%
+function dryRGB([r, g, b], dry, gain = 1) {
+  r *= gain; g *= gain; b *= gain;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  const v = mx * (1 - 0.2 * dry), s0 = mx > 0 ? (mx - mn) / mx : 0, s = s0 * (1 - 0.3 * dry);
+  const f = (c) => { const sat = mx > mn ? (c - mn) / (mx - mn) : 0; return (v * (1 - s) + v * s * sat) | 0; };   // 同じ色相で彩度と明度を変える
+  return [Math.min(255, f(r)), Math.min(255, f(g)), Math.min(255, f(b))];
+}
+// 1 本の筋(中心線 cx(y)・幅 wAt(y))を描く: 本体(上 0.9 → 下 0.6 の半透明)→ 縁 1px の濃い輪郭(#2a0404)→ 中央の 1px の艶(アルファ 0.25)
+function drawStrand(g, cx, wAt, ya, yb, step, rgb, aTop, aBot, px, gloss = true) {
+  if (yb - ya < step) return;
+  const Lp = [], Rp = [];
+  for (let y = ya; y <= yb; y += step) { const c = cx(y), hw = wAt(y) / 2; Lp.push([c - hw, y]); Rp.push([c + hw, y]); }
+  const path = () => { g.beginPath(); g.moveTo(Lp[0][0], Lp[0][1]); for (const p of Lp) g.lineTo(p[0], p[1]); for (let i = Rp.length - 1; i >= 0; i--) g.lineTo(Rp[i][0], Rp[i][1]); g.closePath(); };
+  const [r, gg, b] = rgb;
+  // 下地: 半透明の分だけ背景を暗く沈める(血は光を吸う = 明るい天井の上でも朱色に浮かず黒ずんで見える)
+  g.fillStyle = 'rgba(8,2,2,0.7)'; path(); g.fill();
+  const gr = g.createLinearGradient(0, ya, 0, yb);
+  gr.addColorStop(0, `rgba(${r},${gg},${b},${aTop})`); gr.addColorStop(1, `rgba(${r},${gg},${b},${aBot})`);
+  g.fillStyle = gr; path(); g.fill();
+  const er = g.createLinearGradient(0, ya, 0, yb);
+  er.addColorStop(0, `rgba(42,4,4,${aTop})`); er.addColorStop(1, `rgba(42,4,4,${aBot * 0.9})`);
+  g.strokeStyle = er; g.lineWidth = px; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(Lp[0][0], Lp[0][1]); for (const p of Lp) g.lineTo(p[0], p[1]); g.stroke();
+  g.beginPath(); g.moveTo(Rp[0][0], Rp[0][1]); for (const p of Rp) g.lineTo(p[0], p[1]); g.stroke();
+  if (!gloss) return;
+  g.strokeStyle = 'rgba(255,212,204,0.25)'; g.lineWidth = px; g.lineCap = 'round';   // 白っぽい艶(血の色を映して僅かに赤い)
+  g.beginPath();
+  let pen = false;
+  for (let y = ya + 3 * px; y < yb - 2 * px; y += step) {
+    const on = Math.sin(y / px * 0.09 + r) + 0.5 * Math.sin(y / px * 0.027 + b) > 0.1;   // ところどころ途切れる(光った所だけ)
+    const xx = cx(y) - wAt(y) * 0.12;
+    if (on && !pen) { g.moveTo(xx, y); pen = true; } else if (on) g.lineTo(xx, y); else pen = false;
+  }
+  g.stroke();
+}
+// 先端の玉(幅の 1.6 倍の楕円。上は筋から細い首でつながる = しずく形)。明るいのは玉の上の小さな所だけ
+function drawBead(g, tx, ty, wid, rgb, bead, a, px) {
+  const rx = wid * 0.8, ry = rx * 1.2, cy = ty + ry * 0.35;
+  const shape = (grow) => {
     g.beginPath();
-    g.moveTo(tx - w * 0.35 - grow, ty - ry * 1.4);
-    g.quadraticCurveTo(tx - rx * 0.6 - grow, ty - ry * 0.4, tx - rx - grow, cy);
+    g.moveTo(tx - wid * 0.32 - grow, ty - ry * 1.5);
+    g.quadraticCurveTo(tx - rx * 0.75 - grow, ty - ry * 0.5, tx - rx - grow, cy);
     g.ellipse(tx, cy, rx + grow, ry + grow, 0, Math.PI, 0, true);
-    g.quadraticCurveTo(tx + rx * 0.6 + grow, ty - ry * 0.4, tx + w * 0.35 + grow, ty - ry * 1.4);
+    g.quadraticCurveTo(tx + rx * 0.75 + grow, ty - ry * 0.5, tx + wid * 0.32 + grow, ty - ry * 1.5);
     g.closePath();
   };
-  // 輪郭(筋と玉の両方)→ 本体(筋 → 玉)の順に塗る(玉の輪郭が筋を横切らない)
-  g.fillStyle = rim;
-  if (L.length > 1) { poly(0.7 * s + 0.3); g.fill(); }
-  drop(0.7 * s + 0.3); g.fill();
-  if (L.length > 1) {
-    const gr = g.createLinearGradient(x0 - w * 0.9, 0, x0 + w * 0.9, 0);
-    gr.addColorStop(0, dark); gr.addColorStop(0.28, base); gr.addColorStop(0.45, col(1.04, 0.95)); gr.addColorStop(0.72, base); gr.addColorStop(1, dark);
-    g.fillStyle = gr; poly(0); g.fill();
-  }
-  const lg = g.createLinearGradient(tx - rx * 1.05, 0, tx + rx * 1.05, 0);   // 玉も筋と同じ横の陰影(首の所が暗い帯にならない)
-  lg.addColorStop(0, dark); lg.addColorStop(0.3, base); lg.addColorStop(0.5, col(1.03, 0.95)); lg.addColorStop(0.7, base); lg.addColorStop(1, dark);
-  g.fillStyle = lg; drop(0); g.fill();
-  const rg = g.createRadialGradient(tx - rx * 0.25, cy - ry * 0.15, 0, tx - rx * 0.25, cy - ry * 0.15, rx * 0.9);   // 玉の丸み(上寄りの明るみ)
-  rg.addColorStop(0, col(1.2, 0.35)); rg.addColorStop(1, col(1.2, 0));
+  g.fillStyle = 'rgba(8,2,2,0.7)'; shape(px * 0.7); g.fill();
+  g.fillStyle = `rgba(42,4,4,${a * 0.85})`; shape(px * 0.7); g.fill();
+  g.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a})`; shape(0); g.fill();
+  const [r, gg, b] = bead;
+  const rg = g.createRadialGradient(tx - rx * 0.2, cy - ry * 0.25, 0, tx - rx * 0.2, cy - ry * 0.25, rx * 0.75);
+  rg.addColorStop(0, `rgba(${r},${gg},${b},${a * 0.9})`); rg.addColorStop(1, `rgba(${r},${gg},${b},0)`);
   g.fillStyle = rg; g.beginPath(); g.ellipse(tx, cy, rx, ry, 0, 0, Math.PI * 2); g.fill();
-  if (L.length > 1) {
-    // 艶: 中央より少し左の細い線(ところどころ途切れる)
-    g.strokeStyle = `rgba(255,205,195,${0.24 * alpha})`; g.lineWidth = Math.max(0.6, 0.12 * w); g.lineCap = 'round';
-    g.beginPath();
-    let pen = false;
-    for (let y = y0 + 4 * s; y < y0 + len - w * 1.2; y += step) {
-      const on = Math.sin((y - y0) / s * 0.11 + d.wob * 3) + 0.6 * Math.sin((y - y0) / s * 0.031 + d.wob) > -0.35;
-      const xx = cxAt(y) - wAt(y) * 0.16;
-      if (on && !pen) { g.moveTo(xx, y); pen = true; } else if (on) g.lineTo(xx, y); else pen = false;
+  g.fillStyle = 'rgba(255,232,226,0.25)'; g.beginPath(); g.ellipse(tx - rx * 0.38, cy - ry * 0.35, Math.max(0.5, px * 0.55), Math.max(0.6, px * 0.8), -0.4, 0, Math.PI * 2); g.fill();
+}
+// 1 本を描く(太さは CSS px × px。長さ・位置は画面の割合)
+function drawDrip(g, d, px) {
+  const W = g.canvas.width, H = g.canvas.height;
+  const x0 = d.x * W, y0 = d.y * H, len = d.len * H, Lfull = d.L * H;
+  const rgb = dryRGB(d.rgb, d.dry), bead = dryRGB([138, 20, 20], d.dry);   // 玉だけ僅かに明るい #8a1414
+  const cx = (y) => { const u = (y - y0) / px; return x0 + (Math.sin(u * d.wobF[0] + d.wob[0]) * d.wobA[0] + Math.sin(u * d.wobF[1] + d.wob[1]) * d.wobA[1]) * px; };
+  const beads = d.seg.filter((q) => !q.move && q.l0 * Lfull < len - 4 * px).map((q) => y0 + q.l0 * Lfull);   // 止まっていた所は少し太い
+  const wAt = (y) => {
+    const u = Math.min(1, (y - y0) / Math.max(1, Lfull));
+    let w = d.wTop + (d.wBot - d.wTop) * u ** 0.8;
+    w *= 1 + 0.08 * Math.sin((y - y0) / px * 0.11 + d.wob[1]);
+    for (const by of beads) w *= 1 + 0.22 * Math.exp(-(((y - by) / (4 * px)) ** 2));
+    return w * px;
+  };
+  const aBot = 0.95 - 0.25 * Math.min(1, len / Math.max(1, Lfull));   // 下へ行くほど薄く(伸び切ると 0.7。明るい天井の上でも黒ずんで見える下限)
+  g.save();
+  // 出所: 文字の下端に沿った薄い横の溜まり(幅 8〜14px)
+  const pw = d.poolW * px * (0.6 + 0.4 * Math.min(1, len / (12 * px)));
+  const pg = g.createRadialGradient(x0, y0, 0, x0, y0, pw / 2);
+  pg.addColorStop(0, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.75)`); pg.addColorStop(0.7, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0.45)`); pg.addColorStop(1, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},0)`);
+  g.fillStyle = pg; g.beginPath(); g.ellipse(x0, y0 + 0.5 * px, pw / 2, 1.6 * px, 0, 0, Math.PI * 2); g.fill();   // 溜まりは薄いまま(文字の縁に沿って滲んだ跡)
+  const step = Math.max(1, 1.5 * px);
+  drawStrand(g, cx, wAt, y0, y0 + len, step, rgb, 0.95, aBot, px);
+  // 枝: 本線の途中から細く横へ逸れて垂れる(本線がそこを過ぎてから伸びる)
+  if (d.br) {
+    const by0 = y0 + d.br.at * Lfull;
+    const blen = Math.max(0, Math.min(d.br.len * Lfull, (len - d.br.at * Lfull) * 0.6));
+    if (blen > 2 * px) {
+      const bx = (y) => cx(by0) + d.br.side * d.br.drift * px * smooth((y - by0) / Math.max(1, d.br.len * Lfull) * 1.6) + Math.sin((y - by0) / px * 0.05 + d.wob[0]) * 0.4 * px;
+      const bw = (y) => wAt(by0) * d.br.w * (1 - 0.2 * (y - by0) / Math.max(1, d.br.len * Lfull));
+      const aB = 0.95 - 0.25 * d.br.at;
+      drawStrand(g, bx, bw, by0, by0 + blen, step, rgb, aB, aB * 0.8, px, false);
+      drawBead(g, bx(by0 + blen), by0 + blen, bw(by0 + blen) * 1.2, rgb, bead, aB * 0.8, px);
     }
-    g.stroke();
   }
-  g.fillStyle = `rgba(255,220,210,${0.38 * alpha})`; g.beginPath(); g.ellipse(tx - rx * 0.36, cy - ry * 0.3, Math.max(0.5, rx * 0.16), Math.max(0.6, ry * 0.22), -0.35, 0, Math.PI * 2); g.fill();
+  // 先端の玉(伸び切ると少し膨らんで溜まる)
+  if (len > 1) drawBead(g, cx(y0 + len), y0 + len, wAt(y0 + len) * (1 + 0.25 * d.pool), rgb, bead, aBot + 0.1, px);
   g.restore();
 }

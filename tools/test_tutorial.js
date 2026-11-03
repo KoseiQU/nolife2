@@ -120,13 +120,16 @@ export async function run(N) {
     const gaps = flicks.slice(1).map((f, i) => +(f.at - flicks[i].at).toFixed(2));
     const grows = lens.length > 25 && drips.every((d, k) => lens[3][k] < d.len && lens[20][k] <= d.len);
     const doneBy30 = drips.every((d) => d.T >= 20 && d.T <= 30 && d.done);
-    const stalls = drips.map((_, k) => lens.slice(3, 30).filter((v, j, A) => j > 0 && v[k] === A[j - 1][k] && v[k] < drips[k].L).length);   // 途中で止まった秒の数(本ごと)
+    const stalls = drips.map((_, k) => lens.slice(3, 30).filter((v, j, A) => j > 0 && v[k] === A[j - 1][k] && v[k] > 0 && v[k] < drips[k].L).length);   // 途中で止まった秒の数(本ごと。1 秒ごとの標本)
     const titleBg = { frames: n, enemyOk, camOk, exposure: N.renderer.toneMappingExposure, flicks: flicks.length, flickDur: flicks.map((f) => f.dur), blinks: flicks.map((f) => f.blinks), gaps,
-      outs: outs.map((o) => [o.at, o.dur]), drips: drips.length, widths: drips.map((d) => d.w), doneBy30, grows, stalls, aiFrozen: N.ai.time === aiTime0, levelLog: N.levelLog.length - simT0 };
+      outs: outs.map((o) => [o.at, o.dur]), drips: drips.length, widths: drips.map((d) => d.w), stallSec: drips.map((d) => d.stall), branches: drips.filter((d) => d.branch).length, doneBy30, grows, stalls, aiFrozen: N.ai.time === aiTime0, levelLog: N.levelLog.length - simT0 };
     const bgPass = n > 1500 && enemyOk === n && camOk === n && titleBg.exposure === 4.3
       && flicks.length >= 4 && flicks.every((f) => f.dur >= 0.2 && f.dur <= 0.6 && f.blinks >= 2 && f.blinks <= 4) && gaps.every((g) => g >= 2.9 && g <= 8.9)
       && outs.length >= 1 && outs[0].at >= 20 && outs[0].at <= 40 && outs.every((o) => o.dur >= 0.4 && o.dur <= 0.8)
-      && drips.length >= 8 && drips.length <= 10 && drips.every((d) => d.w >= 3 && d.w <= 6) && doneBy30 && grows && stalls.filter((x) => x > 0).length >= 4 && titleBg.aiFrozen;
+      && drips.length >= 8 && drips.length <= 10 && drips.every((d) => d.w >= 2 && d.w <= 6 && d.wBot / d.wTop >= 1.3) && doneBy30 && grows && titleBg.aiFrozen
+      // 差し戻し(2026-11-04): 2〜3 本が途中で 3〜8 秒止まって再び流れる・2 本が枝分かれ・伸び切ってから乾く
+      && drips.filter((d) => d.stall >= 3 && d.stall <= 8).length >= 2 && drips.filter((d) => d.stall >= 3).length <= 3
+      && drips.every((d, k) => !(d.stall >= 3) || stalls[k] >= 2) && drips.filter((d) => d.branch).length >= 2 && drips.some((d) => d.dry > 0);
     // クリック → 1.4 秒で黒 → 片付け → チュートリアル(片付けの直後 = チュートリアルの開始前に、終わりの比較の基準を取る)
     ti.onRestored = () => { before = snapshot(); };
     ti.click();
