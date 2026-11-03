@@ -46,7 +46,7 @@ export const SPAWN = {
   7: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },          // 1F ロビー(正面玄関を向く)
   8: { level: 4, x: 8.75, z: 7.3, yaw: -Math.PI / 2 },      // 410 の玄関(窓の方を向く)
   9: { level: 7, x: 18.8, z: 21.2, yaw: -Math.PI / 2 },     // 7F の 705 の手前(東を向く)
-  '9c': { level: 7, x: 16.2, z: 21.2, yaw: Math.PI / 2 },   // 最終追跡の途中で死んだ時: 705 の西の廊下(外階段の方を向く)
+  '9c': { level: 7, x: 16.2, z: 21.2, yaw: Math.PI / 2 },   // 最終追跡の途中で死んだ時: 705 の西の廊下(EV ホールの方を向く。P6b-D: 階段は鎖、EV で下りる)
   10: { level: 1, x: 6.9, z: 7.0, yaw: 0 },                 // 食堂(奥の地下への階段の方を向く)
   11: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },         // 1F ロビー(正面玄関を向く)
 };
@@ -54,7 +54,7 @@ export const SPAWN = {
 const START_ITEM = { 1: null, 2: 'small', 3: '105', 4: null, 5: '220', 6: '312', 7: 'entrance', 8: 'padlock', 9: '705', 10: 'b1', 11: 'car' };
 // 解放(この段から開いている)
 const UNLOCK_AT = { KEYBOX: 3, 105: 4, 220: 6, 312: 7, KEYSWITCH: 8, GLOVEBOX: 8, PADLOCK: 9, 705: 10, B1DOOR: 11 };
-// P6b-C(§3.10 #3): 鎖と南京錠をかける外階段(各階)・北階段(2F・3F)の鉄扉。第3段の開始(105 の鍵を取った時)から第9段の追跡の開始まで
+// P6b-C(§3.10 #3): 鎖と南京錠をかける外階段(各階)・北階段(2F・3F)の鉄扉。P6b-D 改訂: 第5段の開始(220 の鍵)から恒久
 export const CHAIN_DOORS = ['MST1', 'MST2', 'MST3', 'MST4', 'MST5', 'MST6', 'MST7', 'NST2', 'NST3'];
 // 鍵穴(扉・箱)と鍵
 const LOCKS = { 312: '312', 105: '105', 220: '220', 705: '705', B1DOOR: 'b1', KEYBOX: 'small', KEYSWITCH: 'entrance', PADLOCK: 'padlock' };
@@ -97,9 +97,10 @@ export class Story {
 
   log(ev, extra = {}) { this.logCount++; this.events.push({ n: this.logCount, t: +this.time.toFixed(2), ev, stage: this.stage, ...extra }); if (this.events.length > 300) this.events.shift(); }
   get active() { return this.mode === 'play'; }
-  get evDisabled() { return this.active && (this.sub === 'chase' || this.stage >= 10); }
-  // P6b-C(§3.10 #3): 外階段・北階段の鉄扉の鎖。第3段の開始(105 の鍵を取った時)から第9段の追跡の開始(地下の鍵を取った時)まで
-  get chained() { return this.active && this.stage >= 3 && this.stage <= 9 && !(this.stage === 9 && this.sub === 'chase'); }
+  // P6b-D(§3.10 #3 改訂): 第9段の最終追跡(9c)は EV で下りるので使える。第10段以降は従来どおり反応しない
+  get evDisabled() { return this.active && this.stage >= 10; }
+  // P6b-C(§3.10 #3)→ P6b-D 改訂: 外階段・北階段の鉄扉の鎖は第4段の終わり(6F で 220 の鍵を取った時 = 第5段の開始)から恒久(再び開けない)
+  get chained() { return this.active && this.stage >= 5; }
   objectiveKey() {
     if (this.ended) return 'end';
     if (this.stage === 1 && this.sub === 'memo') return '1m';
@@ -374,7 +375,7 @@ export class Story {
     this.hud.flash(S.got(S.tags[pk.item]), 1.4);
     if (pk.item === 'small') this.setStage(2);   // P5b-1b: 逃げ切ってから戻って拾う(飛び出しは奥へ進んだ時 = _check221)
     else if (pk.item === '105') this.setStage(3);   // P6b-C: 管理室 → 105
-    else if (pk.item === '220') this.setStage(5);   // 6F → 220
+    else if (pk.item === '220') { this.setStage(5); this._announceChains(); }   // 6F → 220(P6b-D: この瞬間に外階段・北階段に鎖)
     else if (pk.item === '312') this.setStage(6);   // 220 → 312
     else if (pk.item === 'entrance') this.setStage(7);
     else if (pk.item === '705') this.setStage(9);
@@ -464,10 +465,11 @@ export class Story {
     this.ai.portals.push({ id: 'entrance', a: { lv: 1, x: 17.6, z: 27.5 }, b: { lv: 'G', x: 17.6, z: 28.9 } });
   }
   _startFinalChase() {
-    this.stage = 9; this.sub = 'chase';
+    this.stage = 9; this.sub = 'chase'; this.finalEV = false;
     this.log('stage', { stage: 9, sub: 'chase' });
+    this._parkCar(7);   // P6b-D: カゴを 7F に止めておく(呼ぶとすぐ開く)
     if (!this.aiControl) return;
-    this.ai.allowStairs = true; this.ai.noEV = true;
+    this.ai.allowStairs = false; this.ai.noEV = true;   // P6b-D: 階段は鎖・管理人は EV に乗れない(プレイヤーが EV で下りれば追って来ない)
     const D = SPACE_DEFS.X705;
     if (!this.ai.portals.some((p) => p.id === 'X705')) this.ai.portals.push({ id: 'X705', a: { lv: 'X705', x: D.exit.x, z: D.exit.z + 0.5 }, b: { lv: 7, x: D.back.x, z: D.back.z } });
     this.pending.push({ t: STORY.chaseAppearDelay, fn: () => {
@@ -475,6 +477,32 @@ export class Story {
       if (a) this.ai.appear({ level: 'X705', x: a.x, z: a.z, lock: 1.0, recover: 1.5, label: 'appear_705' });
       else this.ai.appear({ level: 7, x: D.back.x, z: D.back.z, lock: 0.8, recover: 1.2, label: 'appear_705' });
     } });
+  }
+
+  // P6b-D(§3.10 #3 改訂): 鎖が掛かった瞬間の画面中央の一文(3.5 秒)。鎖の金属音の採用素材が無い(door_locked・door_steel は「なし」)ので無音・記録だけ
+  _announceChains() {
+    if (this.hud && this.hud.banner) this.hud.banner(HUD_TEXT.story.chainsOn, 3.5);
+    this.log('chains_announce', { silent: true });
+  }
+  // P6b-D: 最終追跡のカゴを level に止める(扉は閉じて待つ。呼ぶとすぐ開く)。プレイヤーが乗っている時は動かさない
+  _parkCar(level) {
+    const E = this.elevator; if (!E || !E.car) return;
+    if (E.car.riding) return;
+    Object.assign(E.car, { level, state: 'idle', open: 0, hold: 0, pending: [], riding: false, to: null, t: 0 });
+    E.npc = null;
+    this.log('park_car', { level });
+  }
+  // P6b-D: 最終追跡で EV に乗って扉が閉まった → 追跡は終わり。管理人は乗れない・追って来ない(本体は別の階へ潜伏に、1F を 30 秒避ける)
+  _endFinalChaseByEV() {
+    this.finalEV = true;
+    this.log('final_chase_ev');
+    if (!this.aiControl) return;
+    this.ai.chaseOmni = false; this.ai.chaseFast = 0;
+    if (this.onAIReset) this.onAIReset(4);
+    this.ai.allowStairs = false; this.ai.noEV = false;
+    this.ai.portals = this.ai.portals.filter((p) => p.id !== 'X705');
+    this.ai.avoidFloor(1, STORY.spaceExitAvoid);
+    this.pending = [];
   }
 
   // ?stage=N / テスト: その段の開始状態へ(必要な解放と鍵)
@@ -528,8 +556,10 @@ export class Story {
       this.log('stage', { stage: 1, sub: null, why: 'respawn_before_escape' });
     }
     if (this.aiControl && this.stage === 1 && this.sub !== 'return') this.ai.setDormant(true);
+    if (this.stage === 9 && this.sub === 'chase') { this.finalEV = false; this._parkCar(7); }   // P6b-D: カゴは 7F で待つ
     if (this.aiControl && this.stage === 9 && this.sub === 'chase') {   // 最終追跡のやり直し: 705 の戸口から現れる
       const D = SPACE_DEFS.X705;
+      this.ai.allowStairs = false; this.ai.noEV = true;
       this.pending.push({ t: 2.0, fn: () => this.ai.appear({ level: 7, x: D.back.x, z: D.back.z, lock: 0.8, recover: 1.2, label: 'appear_705' }) });
     }
     this.log('respawn', { stage: this.stage, sub: this.sub });
@@ -646,7 +676,9 @@ export class Story {
         }
       }
     }
-    // 第9段の最終追跡: 1F(または敷地)まで下りたら第10段「地下へ」
+    // P6b-D: 最終追跡で EV に乗って扉が閉まったら追跡は終わり
+    if (this.stage === 9 && this.sub === 'chase' && !this.finalEV && typeof lv === 'number' && this.elevator.inCar(p.x, p.z, lv) && this.elevator.car.open <= 0.001) this._endFinalChaseByEV();
+    // 第9段の最終追跡: 1F(または敷地)まで下りたら第10段「地下へ」(P6b-D: EV で 1F に着いた時も)
     if (this.stage === 9 && this.sub === 'chase' && (lv === 1 || lv === 'G')) this.setStage(10);
     // 第11段: 敷地へ出て玄関から離れたら、管理人が玄関から追ってくる(最後だけ。安全地帯が破られる)
     if (this.stage === 11 && lv === 'G' && !this.siteChased && this.aiControl && Math.hypot(p.x - 17.6, p.z - 28.1) >= STORY.siteChaseDist) {
