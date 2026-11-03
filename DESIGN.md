@@ -382,8 +382,8 @@ data/building.json
 | **P6b-D** | **地下 C「潜んでやり過ごす」**（§3.10 #6 の C 仕様。P6b-C の後に着手） | C の機械テスト列。全スイート通過。目視: 作業場の陰・管理人の光の掃き | Opus **済 2026-11-03**（971c139〜467d1ee。xb1 8/8・story 25/25 をメイン再実行。鎖＝220 の鍵から恒久＋中央の一文、最終追跡は EV。妥協: 息遣い無音・迷路でも円錐判定あり・死亡後ループは解けたまま） |
 | **P6b-E1** | **タイトルのサンプル 4 案＋チュートリアルの露出**（§3.11 #1・#3）。触るのは `src/title.js`・`src/tutorial.js`・`tools/test_tutorial.js`・新規 `docs/p6-title-samples/`・`tools/title_samples.*` のみ | 4 枚提示・露出のテスト通過 | Opus **済 2026-11-04（A〜C をユーザーに提示、D は事前ゲートで差し戻し→D2）**（cf3c7cd〜2999b41。露出 3.2 は場面 1 で平均輝度 0.72 倍・中央 50% の中間調 19%（全画面では 5.8%＝契約の 15% は中央測定で判定）。tutorial 6/6） |
 | **P6b-E2** | **居室の家具の質感**（§3.11 #2）。触るのは `tools/blender/build_rooms.py`・`tools/room_textures.py`・`build/floor_*.glb`・`docs/p6b-e2/` のみ（src は触らない） | before/after 合格・≤35MB・全スイート通過 | Opus **済 2026-11-04（監査合格・ユーザー目視待ち）**（e1a0ed1〜dd7fa67。1 巡目＝材質のみで変化なし→メインが差し戻し、2 巡目＝面取り・布団の垂れと皺・枕・キルト・椅子の曲面、全階再ベイク。+139,618 三角形、30.20MB。妥協: 机の天板の楕円の艶は出ない（環境反射は暗室で白く浮くため不採用）、小物は箱のまま） |
-| **P6b-F1** | **タイトル C・チュートリアル 1/7c・停電**（§3.12 #1・#2・#3 のチュートリアル側・#4）。触るのは `src/title.js`・`src/tutorial.js`・`src/world.js`（灯りの一斉制御）・`src/main.js`・`src/hud_text.js`（文言なしなら不要）・`tools/test_tutorial.js`・`tools/test_building.js`・`tools/test_enemy.js`・`docs/p6b-f1/`。**着手はユーザー OK 後** | §3.12 の各仕様が動く。全スイート通過。目視: タイトル・7c・場面 1・全消灯 | Opus |
-| **P6b-F2** | **外観の磨き直し**（§3.12 #3 の F2）。触るのは `tools/blender/build_exterior.py`・`tools/ext_textures.py`・`build/exterior.glb`・`build/tex/`・`docs/p6b-f2/`。**着手はユーザー OK 後** | A の構図の before/after 合格・≤35MB | Opus |
+| **P6b-F1** | **タイトル C・チュートリアル 1/7c・停電**（§3.12 #1・#2・#3 のチュートリアル側・#4）。触るのは `src/title.js`・`src/tutorial.js`・`src/world.js`（灯りの一斉制御）・`src/main.js`・`src/hud_text.js`（文言なしなら不要）・`tools/test_tutorial.js`・`tools/test_building.js`・`tools/test_enemy.js`・`docs/p6b-f1/`。**2026-11-04 ユーザー OK・着手** | §3.12 の各仕様が動く。全スイート通過。目視: タイトル・7c・場面 1・全消灯 | Opus |
+| **P6b-F2** | **外観の磨き直し**（§3.12 #3 の F2）。触るのは `tools/blender/build_exterior.py`・`tools/ext_textures.py`・`build/exterior.glb`・`build/tex/`・`docs/p6b-f2/`。**2026-11-04 ユーザー OK・着手** | A の構図の before/after 合格・≤35MB | Opus |
 | P6b-G | 5 回目の通しプレイの反映 | ユーザー合格 | Opus |
 
 ## 8. 検証環境の罠
