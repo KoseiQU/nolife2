@@ -126,6 +126,7 @@ export class Player {
     dt = Math.min(dt, 0.05);
     this._t += dt;
     if (this.frozen) {
+      this.wish = { x: 0, z: 0 };   // P6b-C
       if (this.onKey) for (const c of this._justPressed) this.onKey(c);
       this._justPressed.clear();
       return;
@@ -143,6 +144,7 @@ export class Player {
     if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed);
 
     const ox = this.pos.x, oz = this.pos.z;
+    this.wish = { x: move.x * dt, z: move.z * dt };   // P6b-C(§3.10 #2): このフレームに進もうとした移動(当たりの前。階段の口の判定)
     const [rx, rz] = this._resolveXZ(this.pos.x + move.x * dt, this.pos.z + move.z * dt);
     this.pos.x = rx; this.pos.z = rz;
     // P5b-3: 床の嵩上げ(シアターの段床。world.floorAt(x, z) = 床からの高さ)。段は当たりを置かず、足元の高さを

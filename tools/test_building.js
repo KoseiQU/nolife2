@@ -290,7 +290,7 @@ export async function run(N) {
     const g = N.building.stairs.find((s) => s.id === 'main').geom;
     const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
     const from = N.level;
-    N.setView((lane[0] + lane[1]) / 2, g.s0 - 0.3, Math.PI, 0);
+    N.setView((lane[0] + lane[1]) / 2, g.s0 - 0.55, Math.PI, 0);   // P6b-C(§3.10 #2): 口の奥(段の手前の当たりまで 0.57m)から流れの向きに 0.35m 歩いて始まる
     N.pump(DT, 1, false);
     key('KeyW', true);
     let t = 0;
@@ -336,7 +336,7 @@ export async function run(N) {
     const g = st.geom;
     const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
     const from = N.level;
-    N.setView(g.s0 - 0.3, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); N.pump(DT, 1, false);
+    N.setView(g.s0 - 0.55, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); N.pump(DT, 1, false);   // P6b-C: 口の奥から歩いて始める
     const hint = N.hudState().hint;
     key('KeyW', true); let t = 0;
     while (N.level === from && t < 20) { N.pump(DT, 1, false); t += DT; }
@@ -353,7 +353,7 @@ export async function run(N) {
       const st = N.building.stairs.find((s) => s.id === id), g = st.geom;
       const lane = dir === 'up' ? g.lanes.up : g.lanes.down;
       const from = N.level;
-      if (g.axis === 'x') N.setView(g.s0 - 0.3, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); else N.setView((lane[0] + lane[1]) / 2, g.s0 - 0.3, Math.PI, 0);
+      if (g.axis === 'x') N.setView(g.s0 - 0.55, (lane[0] + lane[1]) / 2, -Math.PI / 2, 0); else N.setView((lane[0] + lane[1]) / 2, g.s0 - 0.55, Math.PI, 0);   // P6b-C
       N.pump(DT, 1, false);
       key('KeyW', true); let t = 0;
       while (S.busy || N.level === from) { N.pump(DT, 1, false); t += DT; if (t > 25) break; }
@@ -385,6 +385,56 @@ export async function run(N) {
     const pass = main.map((a) => a.to).join(',') === '2,3,4,5,6,7,RB,7,6,5,4,3,2,1' && north.map((a) => a.to).join(',') === '2,1,2,3' && base.map((a) => a.to).join(',') === 'B1,1'
       && all.every(ok) && main.every((a) => a.dist <= 1.2 && a.dist >= 0.8) && base.every((a) => a.dist <= 1.2);
     return { pass, main, north, base, bad: all.filter((a) => !ok(a)) };
+  });
+
+  // P6b-C(§3.10 #2): 段は視線でなく移動で始まる。全停留所で ①着いた位置から扉へ歩く(下を向いたままでも)②口の中で段を見て立っているだけ ③口を横切る、では始まらない。
+  //  ④口に入って流れの向きに 0.35m 進むと始まる(始まった時の累積 0.35〜0.45m)。外階段 1〜7・RB、北階段 1〜3、地下 1・B1
+  await T('4c_p6bc_stair_start_by_movement', async () => {
+    const S = N.stairs, A = N.stairsArrival;
+    const flow = (st) => (st.geom.axis === 'x' ? [1, 0] : [0, 1]);
+    const W = (st, s, c) => (st.geom.axis === 'x' ? [s, c] : [c, s]);
+    const walkFor = (x, z, frames, pitch = 0) => { let started = false; key('KeyW', true); for (let i = 0; i < frames && !started; i++) { const p = N.player.pos; if (Math.hypot(x - p.x, z - p.z) < 0.12) break; N.setView(p.x, p.z, Math.atan2(-(x - p.x), -(z - p.z)), pitch); N.pump(DT, 1, false); started = S.busy; } key('KeyW', false); N.pump(DT, 1, false); if (S.busy) started = true; return started; };
+    const finish = () => { for (let i = 0; i < 60 * 25 && S.busy; i++) N.pump(DT, 1, false); N.pump(DT, 2, false); };
+    const stops = [];
+    for (const st of N.building.stairs) for (const key of st.stops) stops.push({ st, key });
+    const res = [];
+    for (const { st, key: lv } of stops) {
+      const g = st.geom, i = st.stops.indexOf(lv), r = { id: st.id, lv };
+      const level = lv;
+      await N.teleport(level, ...(() => { const a = A(st, lv); return a ? [a.x, a.z] : W(st, g.s0 - 0.9, (g.lanes.up[0] + g.lanes.down[1]) / 2); })(), 0); { const fl = typeof lv === 'number' ? lv : lv === 'RB' ? 7 : 1; for (let k = 0; k < 100 && N.world.loadedLevels().indexOf(fl) < 0; k++) await sleep(50); }
+      // ① 着いた位置(arrival)から扉へ歩く(視線は扉、下を向いたまま -0.9 rad)
+      const a = A(st, lv);
+      // 到着 → 扉の直線が段の口に重ならない(扉の手前 0.7m は除く: 外階段の鉄扉は扉そのものが口の帯 s0−0.6〜s0+0.35 の中にあり、どの到着位置でも扉の前は口になる。
+      //  そこは ① の歩きで始まらないことを見る)。北階段の 1F は扉が無い(地面の囲い。向くだけの点 st.door は建物の壁の向こう)ので除く
+      if (a && !(st.id === 'north' && lv === 1)) { r.overlap = 0; r.overlapNearDoor = 0; for (let k = 0; k <= 40; k++) { const t = k / 40, x = a.x + (a.door[0] - a.x) * t, z = a.z + (a.door[1] - a.z) * t; if (S.mouth(x, z, lv)) { if (Math.hypot(a.door[0] - x, a.door[1] - z) > 0.7) r.overlap++; else r.overlapNearDoor++; } } }
+      if (a) { N.setView(a.x, a.z, a.yaw, 0); N.pump(DT, 2, false); r.toDoor = walkFor(a.door[0], a.door[1], 300, -0.9); r.toDoorEnd = [+N.player.pos.x.toFixed(2), +N.player.pos.z.toFixed(2)]; if (r.toDoor) finish(); }
+      // 口の中の位置(上り/下り)
+      const lanes = [];
+      if (i + 1 < st.stops.length) lanes.push(['up', g.lanes.up]);
+      if (i - 1 >= 0) lanes.push(['down', g.lanes.down]);
+      r.lanes = [];
+      for (const [dir, ln] of lanes) {
+        const c = (ln[0] + ln[1]) / 2, q = { dir };
+        // ② 口の中で段を見て(下を向いて)2 秒立っている
+        await N.teleport(level, ...W(st, g.s0 - 0.3, c), 0); N.setView(...W(st, g.s0 - 0.3, c), st.geom.axis === 'x' ? -Math.PI / 2 : Math.PI, -0.8);
+        N.pump(DT, 120, false); q.lookOnly = S.busy; if (S.busy) finish();
+        // ③ 口を横切る(流れと直角に、レーンの端から端へ)
+        await N.teleport(level, ...W(st, g.s0 - 0.3, ln[0] + 0.3), 0); N.pump(DT, 1, false);
+        q.cross = walkFor(...W(st, g.s0 - 0.3, ln[1] - 0.3), 120); if (q.cross) finish();
+        // ④ 口の外から流れの向きに歩いて入る → 0.35m で始まる
+        await N.teleport(level, ...W(st, g.s0 - 0.8, c), 0); N.pump(DT, 1, false);
+        key('KeyW', true);
+        for (let k = 0; k < 200 && !S.busy; k++) { const p = N.player.pos; N.setView(p.x, p.z, st.geom.axis === 'x' ? -Math.PI / 2 : Math.PI, 0); N.pump(DT, 1, false); }
+        key('KeyW', false);
+        q.started = S.busy; q.accAtStart = +(S.lastStartAcc || 0).toFixed(3); q.to = S.busy ? S.active.toKey : null;
+        if (S.busy) finish();
+        r.lanes.push(q);
+      }
+      res.push(r);
+    }
+    const okR = (r) => (r.toDoor === undefined || r.toDoor === false) && !r.overlap && r.lanes.every((q) => !q.lookOnly && !q.cross && q.started && q.accAtStart >= 0.35 && q.accAtStart <= 0.42);
+    const pass = res.length === 13 && res.every(okR) && res.filter((r) => r.toDoor === false).length >= 12;
+    return { pass, bad: res.filter((r) => !okR(r)), res };
   });
 
   await T('5_north_stairs', async () => {

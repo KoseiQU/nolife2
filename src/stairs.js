@@ -6,6 +6,8 @@
 //  P3a-2: 北階段は屋外の鉄骨(2F・3F の鉄扉→屋外通路→階段、下は 1F の地面)。地下への階段(basement)は 1F→'B1'。
 //  P6b(§3.9 #5): 着く位置は段の口(mouthDepth)の外 +0.3m、かつその階の扉(扉が無い所は出口)寄り＝扉から約 1.0m で扉を向く。
 //   着いてから 1.5 秒は段のヒント(「下の階へ」等)を出さない。扉が段の口から遠い所(北階段の 2F/3F の屋外通路の端の鉄扉)は口の外に着いて扉の方を向く。
+//  P6b-C(§3.10 #2): 始まる条件は視線でなく移動。段の口の中で、水平の移動(前フレームとの差)が段の流れ(+s)と dot ≥ 0.7 のまま 0.35m 進んだ時だけ。
+//   見ているだけ・横切るだけ・下を向くだけでは始まらない。口から出る・流れから外れる・別の口(上り/下り)へ移ると数え直す。
 
 import * as THREE from 'three';
 import { levelY } from './world.js';
@@ -14,7 +16,9 @@ export const STAIRS = {
   speed: 1.25,         // m/s(段に沿った3D距離)。上りは少し遅く
   downSpeed: 1.45,
   eye: 1.62,
-  forwardDot: 0.25,    // 段の方を向いている判定(視線の水平成分と流れの向き)
+  flowDot: 0.7,        // P6b-C(§3.10 #2): 移動の向きと段の流れの dot(これ以上のまま)
+  flowDist: 0.35,      // P6b-C: 口の中で流れの向きに進んだ累積(m)。これで始まる
+  jump: 0.5,           // 1 フレームの移動がこれより大きい = 移された(テレポート・復帰)。数えない
   arriveOut: 0.3,      // P6b #5: 着く位置 = 段の口(mouthDepth)の外へさらにこれだけ
   arriveDoor: 1.0,     // P6b #5: 扉からの距離(扉が口から遠い時は口の外に着いて扉を向く)
   arriveMargin: 0.3,   // 踊り場の縁(壁)から離す(プレイヤーの半径 0.28)
@@ -73,6 +77,9 @@ export class Stairs {
     this.armed = true;      // 到着直後は、口から出るか W を離すまで再び上り下りしない
     this.quiet = 0;         // P6b #5: 着いてからヒントを出さない残り時間
     this.lastArrive = null; // P6b #5: 最後に着いた位置(テスト用)
+    this.prev = null;       // P6b-C(§3.10 #2): 前フレームの位置 { x, z, key }
+    this.acc = 0;           // P6b-C: 口の中で流れの向きに進んだ累積
+    this.accKey = null;     // P6b-C: 数えている口(stair id + 向き)
   }
 
   get busy() { return !!this.active; }
@@ -104,19 +111,33 @@ export class Stairs {
 
   // 毎フレーム(移動中でなければ口の判定)。moving=前進キー
   update(dt) {
-    if (this.active) return this._advance(dt);
+    if (this.active) { this._resetAcc(); return this._advance(dt); }
     const p = this.player.pos;
     const key = this.getLevel();
     const m = this.mouth(p.x, p.z, key);
     this.quiet = Math.max(0, this.quiet - dt);
     this.hint = this.quiet > 0 ? null : m;   // P6b #5: 着いた直後はヒントを出さない
-    if (!m || !this.player.keys.has('KeyW')) { this.armed = true; return; }
-    if (this.player.frozen || !this.armed) return;
-    const fwd = this.camera.getWorldDirection(new THREE.Vector3());
-    const flow = m.st.geom.axis === 'x' ? fwd.x : fwd.z;
-    if (flow < STAIRS.forwardDot) return;   // 段の方(+s)を向いて進む
+    // P6b-C(§3.10 #2): 移動の向き(前フレームとの差)で数える。視線は使わない
+    const prev = this.prev;
+    this.prev = { x: p.x, z: p.z, key };
+    if (!m) { this.armed = true; this._resetAcc(); return; }
+    const mk = m.st.id + ':' + m.dir;
+    if (mk !== this.accKey) { this.acc = 0; this.accKey = mk; }
+    if (!prev || prev.key !== key) return;
+    const dx = p.x - prev.x, dz = p.z - prev.z, d = Math.hypot(dx, dz);
+    if (d > STAIRS.jump) { this.acc = 0; return; }   // 移された
+    const ax = m.st.geom.axis === 'x';
+    const w = this.player.wish || { x: dx, z: dz }, wl = Math.hypot(w.x, w.z);
+    if (wl < 1e-6 && d < 1e-5) return;               // 止まっている(累積はそのまま)
+    const wAlong = wl > 1e-6 ? (ax ? w.x : w.z) / wl : 0;   // 動かそうとした向き(WASD の合成 = 移動の向き。視線ではない)
+    if (wAlong < STAIRS.flowDot) { this.acc = 0; return; }   // 横切る・戻る・扉の方へ歩く
+    const along = d > 1e-5 ? (ax ? dx : dz) / d : 0;
+    // 進んだ距離(流れの向きの成分)。段の手前の当たり(段の始まり)に押し付けて止められている間は、押している移動量で数える
+    this.acc += along >= STAIRS.flowDot ? along * d : (d < wl * 0.5 ? wAlong * wl : 0);
+    if (this.acc < STAIRS.flowDist || this.player.frozen || !this.armed) return;
     this.start(m);
   }
+  _resetAcc() { this.acc = 0; this.accKey = null; }
 
   // P5b-1b: 段の途中で死んだ・物語で移された時に上り下りを打ち切る(残ると復帰後も段の上へ引き戻され、着いた階へ移される)
   cancel() {
@@ -134,6 +155,8 @@ export class Stairs {
     const arr = arrival(m.st, m.toKey);
     if (arr) path.push(new THREE.Vector3(arr.x, path[path.length - 1].y, arr.z));
     this.active = { st: m.st, path, seg: 0, t: 0, toKey: m.toKey, dir: m.dir, from: this.getLevel(), face: arr ? arr.yaw : null };
+    this.lastStartAcc = this.acc;   // P6b-C: 始まった時の累積(テスト用)
+    this._resetAcc();
     this.player.frozen = true;
     if (this.onStart) this.onStart(this.active.from, m.toKey);
   }
