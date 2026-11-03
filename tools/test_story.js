@@ -784,6 +784,7 @@ export async function run(N) {
 
   // ---------------------------------------------------------------- 13) 目標の文言と強調・持ち物の札
   await T('13_objective_text_and_item_tag', async () => {
+    S.applyStage(4); quiet(); N.pump(DT, 2, false);   // 12 番(第5段)と同じ文言から始めると強調されないので、一度別の段へ
     S.applyStage(5); quiet(); N.pump(DT, 2, false);   // P6b-C: 220(第5段)→ 312(第6段)
     const a = N.hudState();
     N.pump(DT, 200, false);   // P6b #6: 強調は 3 秒
@@ -1160,9 +1161,10 @@ export async function run(N) {
   await T('19_p6bc_chains_stair_doors', async () => {
     const tryDoor = async (lv, x, z, yaw, id, look) => {
       await tp(lv, x, z, yaw); N.setView(x, z, yaw, 0); N.pump(DT, 2, false);
-      const d = door(id), hint = N.hudState().hint, a0 = N.enemyAudio.log.length;
+      const d = door(id), hint = N.hudState().hint;
+      N.enemyAudio.log.length = 0;   // (ログは 200 件で頭から捨てるので、件数の差では数えない)
       tap('KeyE'); N.pump(DT, 50, false);
-      const r = { id, hint, toast: N.hudState().toast, open: N.doorApi.isOpen(id), angle: +d.angle.toFixed(2), rattle: N.enemyAudio.log.slice(a0).some((l) => l.name === 'rattle'), propVisible: !!(S.chains.find((c) => c.id === id) || {}).g?.visible };
+      const r = { id, hint, toast: N.hudState().toast, open: N.doorApi.isOpen(id), angle: +d.angle.toFixed(2), rattle: N.enemyAudio.log.some((l) => l.name === 'rattle'), propVisible: !!(S.chains.find((c) => c.id === id) || {}).g?.visible };
       // 扉へ向かって 1 秒歩く(通れない)
       key('KeyW', true); for (let i = 0; i < 60; i++) { N.setView(N.player.pos.x, N.player.pos.z, yaw, 0); N.pump(DT, 1, false); } key('KeyW', false); N.pump(DT, 2, false);
       r.through = look(N.player.pos);
