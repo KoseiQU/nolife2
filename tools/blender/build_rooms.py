@@ -95,22 +95,20 @@ def _srgb2lin(c):
 
 
 def _img_mean_lin(path, rect=None):
-    """画像(sRGB)の矩形(Blender の UV 0..1)の平均を線形で。"""
+    """画像(sRGB)の矩形(Blender の UV 0..1)の全画素の平均を線形で(間引くと 8px 周期の織りと位相がそろって偏る)。"""
+    import numpy as np
     im = bpy.data.images.load(path, check_existing=False)
     w, h = im.size
-    px = list(im.pixels)
+    px = np.empty(w * h * 4, np.float32)
+    im.pixels.foreach_get(px)
     bpy.data.images.remove(im)
+    px = px.reshape(h, w, 4)[..., :3]
     u0, v0, u1, v1 = rect or (0, 0, 1, 1)
     x0, x1 = int(u0 * w), max(int(u0 * w) + 1, int(u1 * w))
     y0, y1 = int(v0 * h), max(int(v0 * h) + 1, int(v1 * h))
-    acc = [0.0, 0.0, 0.0]; n = 0
-    for y in range(y0, y1, max(1, (y1 - y0) // 64)):
-        for x in range(x0, x1, max(1, (x1 - x0) // 64)):
-            i = (y * w + x) * 4
-            for c in range(3):
-                acc[c] += _srgb2lin(px[i + c])
-            n += 1
-    return [a / n for a in acc]
+    c = px[y0:y1, x0:x1].reshape(-1, 3).astype(np.float64)
+    c = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    return [float(v) for v in c.mean(0)]
 
 
 def _furniture_materials(ctx):
