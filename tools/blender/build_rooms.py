@@ -75,7 +75,7 @@ def build_materials(ctx):
 # ---------------------------------------------------------------- P6b-E2: 居室の家具の質感(DESIGN §3.11 #2)
 #  木部(机の天板・ベッドのフレーム/脚/頭の板・シューズケースの天板・壁の棚板) = ニス仕上げ: 木目の albedo(door_wood)は従来のまま、
 #    粗さ = furn_wood_roughness(0.31〜0.39、木目の濃い筋ほど粗い)・法線は木目を弱めに(0.35。ニスが導管を埋める)・クリアコート 0.4(粗さ 0.18)
-#  金属脚(机の脚・椅子の支柱と脚・倒れた椅子の脚) = roughness 0.35・metal 1.0
+#  金属脚(机の脚・椅子の支柱・倒れた椅子の脚) = roughness 0.35・metal 1.0(椅子の十字の台座は樹脂のまま)
 #  シーツ・布団・枕・マットレス = 布: 平織りの albedo(無彩色)× 色ごとの tint・法線に織りの凹凸・roughness 0.85・sheen 0.3(sheenColorFactor)
 #  形(面の数・並び)は従来と同じ(色見本の面を同じ面のまま材質だけ替える)→ 部屋の組のライトマップ UV は変わらず、再ベイク不要
 #  食堂・管理室・シアターの什器と玄関の框は従来の MR_DeskWood のまま(対象外)
@@ -125,7 +125,7 @@ def _furniture_materials(ctx):
         b.inputs['Coat Roughness'].default_value = 0.18
     # 金属は実行時に共通の環境(明るいスタジオ)を metalEnv で映すので、地の色(F0)が明るいと暗い部屋で脚が光って見える
     #  → 黒い焼付の鋼管に近い暗い F0。懐中電灯の当たる面だけ鈍く光る
-    pm('MR_LegMetal', base=(0.10, 0.10, 0.105), rough=0.35, metal=1.0)    # 机の脚・椅子の脚(黒い鋼管)
+    pm('MR_LegMetal', base=(0.10, 0.10, 0.105), rough=0.35, metal=1.0)    # 机の脚(黒い鋼管)
     pm('MR_SteelMetal', base=(0.22, 0.22, 0.225), rough=0.35, metal=1.0)  # 椅子の支柱・倒れた椅子の脚(鋼のガス圧支柱)
     base = _img_mean_lin(tex('cloth_weave_albedo.jpg'))
     pal = json.load(open(os.path.join(ctx.TEX, 'room_palette.json')))   # init() より先に呼ばれるので自前で読む
@@ -674,8 +674,8 @@ def build_unit_items(room, col):
             L.pbox(b, 0.02, W - 0.02, 0.42, 0.49, 0.04, D - 0.04, 'chair')
             L.pbox(b, 0.04, W - 0.04, 0.52, 0.88, D - 0.07, D - 0.02, 'chair')
             L.pbox(b, W / 2 - 0.025, W / 2 + 0.025, 0.06, 0.42, D / 2 - 0.025, D / 2 + 0.025, 'steel', gloss=True, tile='MR_SteelMetal')
-            L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray', tile='MR_LegMetal')
-            L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray', tile='MR_LegMetal')
+            L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray')                # 十字の台座(樹脂のまま。金属にすると 312 の複製で環境 0.25 を映して白く浮く)
+            L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray')
         elif k == 'chairfallen':
             # P5b-1(220): 横倒しの椅子。椅子の「上」= a(0→0.88)、横幅 = y(0.44)、前後 = d(0.38)
             L.pbox(b, 0.42, 0.49, 0.02, 0.42, 0.0, 0.36, 'chair')               # 座面(縦になった)

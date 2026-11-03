@@ -85,13 +85,14 @@ for N in $FLOORS; do
     --lightmap2 "$ST/floor_${N}_rooms_lightmap.webp" --images NONE \
     > "build/logs/floor_${N}_export.log" 2>&1 || true
   grep -E '^\[n2|Error|Traceback' "build/logs/floor_${N}_export.log" || true
-  test "$ST/floor_${N}.glb" -nt "build/floor_${N}_scene.blend"
+  grep -q '^\[n2.*exported' "build/logs/floor_${N}_export.log"   # (-nt は --no-bake だと同じ秒になり誤って止まる)
   if [ "$SAFE" = 1 ]; then   # 実行時に読む 4 つを差し替える(GLB を最後に)
     for F in "floor_${N}_lightmap.webp" "floor_${N}_rooms_lightmap.webp" "floor_${N}_manifest.json" "floor_${N}.glb"; do
       if [ -f "$ST/$F" ]; then mv -f "$ST/$F" "build/$F"; fi
     done
   fi
 done
+if [ "$SAFE" = 1 ]; then rmdir "$ST" 2>/dev/null || true; fi
 if [ "$NO_EXT" = 0 ]; then
 echo "== exterior (P3c)"
 python3 tools/ext_textures.py | tail -1
