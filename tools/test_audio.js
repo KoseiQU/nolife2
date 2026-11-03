@@ -177,6 +177,37 @@ export async function run(N) {
     return { pass, roomSteps: steps, corridorSteps, closetSegs: closet, fallSegs: falls };
   });
 
+  // 2b) P6b-C(§3.10 #4): 走りの足音は全面で鳴る(廊下 = lowpass 1.2kHz・0.6 / 屋外・外階段 = highpass 300Hz・0.12 秒・0.8)。歩きは居室だけ(廊下・敷地・踊り場は 0)
+  await T('2b_p6bc_run_steps_every_surface', async () => {
+    S.applyStage(1); S.introDone = true; quiet();
+    const steps = (lv, x0, z0, x1, z1, run) => {
+      const n0 = B.n;
+      return (async () => {
+        await tp(lv, x0, z0, 0);
+        walkTo(x1, z1, { max: 400, run }); walkTo(x0, z0, { max: 400, run });
+        return B.log.filter((l) => l.n > n0 && l.id === 'pl_step_room').map((l) => ({ tag: l.tag, vol: l.vol, cutoff: l.cutoff, highpass: l.highpass, dur: l.dur }));
+      })();
+    };
+    const res = {
+      corridorRun: await steps(4, 6.9, 9.0, 6.9, 15.0, true),
+      corridorWalk: await steps(4, 6.9, 9.0, 6.9, 15.0, false),
+      siteRun: await steps('G', 30.0, 6.0, 30.0, 12.0, true),
+      siteWalk: await steps('G', 30.0, 6.0, 30.0, 12.0, false),
+      landingRun: await steps(4, 5.6, 20.65, 3.0, 20.65, true),    // 4F の外階段の踊り場(段の口の外)
+      landingWalk: await steps(4, 5.6, 20.65, 3.0, 20.65, false),
+      roomRun: await steps(4, 9.6, 7.3, 12.6, 7.3, true),
+      roomWalk: await steps(4, 9.6, 7.3, 12.6, 7.3, false),
+    };
+    const all = (a, f) => a.length >= 2 && a.every(f);
+    const corr = (l) => l.tag === 'corridor' && l.cutoff === 1200 && !l.highpass && Math.abs(l.vol - 0.6) < 1e-6;
+    const hard = (l) => l.tag === 'hard' && l.highpass === 300 && l.dur === 0.12 && !l.cutoff && Math.abs(l.vol - 0.8) < 1e-6;
+    const room = (v) => (l) => l.tag === 'room' && !l.cutoff && !l.highpass && Math.abs(l.vol - v) < 1e-6;
+    const pass = all(res.corridorRun, corr) && res.corridorWalk.length === 0 && all(res.siteRun, hard) && res.siteWalk.length === 0
+      && all(res.landingRun, hard) && res.landingWalk.length === 0 && all(res.roomRun, room(1.0)) && all(res.roomWalk, room(0.75));
+    const sum = Object.fromEntries(Object.entries(res).map(([k, v]) => [k, { n: v.length, first: v[0] || null }]));
+    return { pass, steps: sum };
+  });
+
   // 3) 環境音
   await T('3_ambience_zones_and_stop', async () => {
     const where = {};
@@ -317,7 +348,7 @@ export async function run(N) {
 
   // 7) 105: 空気と追跡の始まりの悲鳴
   await T('7_x105_amb_scream', async () => {
-    S.applyStage(4); quiet();
+    S.applyStage(3); quiet();   // P6b-C: 105 は第3段
     const b = SP.def('X105').back;
     await tp(1, b.x, b.z, b.yaw + Math.PI);
     const lv = openAndEnter('105');

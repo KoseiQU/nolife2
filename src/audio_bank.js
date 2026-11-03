@@ -89,7 +89,8 @@ export class AudioBank {
   _rec(id, o, kind) {
     this.n++;
     this.count[id] = (this.count[id] || 0) + 1;
-    this.log.push({ n: this.n, id, kind, t: +this.ctx.currentTime.toFixed(3), vol: +(o.vol ?? 1).toFixed(3), ...(o.seg ? { seg: o.seg } : {}), ...(o.pos ? { pos: [o.pos.x, o.pos.y, o.pos.z].map((v) => +v.toFixed(2)) } : {}) });
+    this.log.push({ n: this.n, id, kind, t: +this.ctx.currentTime.toFixed(3), vol: +(o.vol ?? 1).toFixed(3), ...(o.seg ? { seg: o.seg } : {}), ...(o.pos ? { pos: [o.pos.x, o.pos.y, o.pos.z].map((v) => +v.toFixed(2)) } : {}),
+      ...(o.tag ? { tag: o.tag } : {}), ...(o.cutoff ? { cutoff: o.cutoff } : {}), ...(o.highpass ? { highpass: o.highpass } : {}), ...(o.dur ? { dur: o.dur } : {}) });   // P6b-C: 足音の面(tag)と加工
     if (this.log.length > 300) this.log.shift();
   }
   get running() { return this.ctx.state === 'running'; }
@@ -100,6 +101,7 @@ export class AudioBank {
     const g = c.createGain(); g.gain.value = (o.vol ?? 1) * (AUDIO.gain[id] ?? 1); nodes.push(g);
     let node = g;
     if (o.cutoff) { const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = o.cutoff; lp.Q.value = 0.5; node.connect(lp); node = lp; nodes.push(lp); }
+    if (o.highpass) { const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = o.highpass; hp.Q.value = 0.7; node.connect(hp); node = hp; nodes.push(hp); }   // P6b-C(§3.10 #4): 硬い面の足音
     if (o.pos) {
       const p = c.createPanner(); p.panningModel = 'HRTF'; p.distanceModel = 'inverse';
       p.refDistance = o.ref ?? AUDIO.ref; p.rolloffFactor = o.rolloff ?? AUDIO.rolloff; p.maxDistance = AUDIO.maxDistance;
@@ -110,7 +112,7 @@ export class AudioBank {
     return { input: g, gain: g, nodes, dispose: () => { for (const n of nodes) { try { n.disconnect(); } catch (e) { /* */ } } } };
   }
 
-  // 1 回鳴らす。o: { pos(Vector3。無ければ耳元), vol, ref, rolloff, cutoff(Hz), rate, seg(区間の名前), slot(足音の何番目。無ければ乱数), dur(秒で切る), delay(秒) }
+  // 1 回鳴らす。o: { pos(Vector3。無ければ耳元), vol, ref, rolloff, cutoff(Hz), highpass(Hz), rate, seg(区間の名前), slot(足音の何番目。無ければ乱数), dur(秒で切る), delay(秒), tag(記録用) }
   play(id, o = {}) {
     this._rec(id, o, 'play');
     const b = this.bufs.get(id);
@@ -124,6 +126,7 @@ export class AudioBank {
     const s = c.createBufferSource(); s.buffer = b; s.playbackRate.value = o.rate || 1; s.connect(ch.input);
     const t = c.currentTime + (o.delay || 0);
     if (len !== undefined && Number.isFinite(len)) s.start(t, off, len); else s.start(t, off);
+    if (o.dur && len !== undefined && Number.isFinite(len)) { const gg = ch.gain.gain, v = gg.value; gg.setValueAtTime(v, t + Math.max(0, len - 0.025)); gg.linearRampToValueAtTime(0, t + len); }   // P6b-C: 短く切る時の尻を 25ms で落とす(クリック音を出さない)
     s.onended = () => { try { s.disconnect(); } catch (e) { /* */ } ch.dispose(); };
     return { src: s, gain: ch.gain, stop: (fade = 0.3) => { const n = c.currentTime; ch.gain.gain.cancelScheduledValues(n); ch.gain.gain.setValueAtTime(ch.gain.gain.value, n); ch.gain.gain.linearRampToValueAtTime(0, n + fade); try { s.stop(n + fade + 0.02); } catch (e) { /* */ } } };
   }
