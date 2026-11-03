@@ -62,7 +62,9 @@ def materials():
     pm('XE_Ground', files={'albedo': tex('ext_ground.jpg')}, size=4.0, rough=1.0); MT['XE_Ground']['tint'] = [0.42, 0.46, 0.4]   # 林床(木の下は暗い)
     pm('XE_Grass', files={'albedo': tex('ext_grass.jpg')}, size=1.5, rough=1.0)
     pm('XE_Pavers', files={'albedo': tex('ext_pavers.jpg')}, size=1.2, rough=0.8)
-    pm('XE_Asphalt', files=tf('paving', rough=False), size=3.0, rough=0.85); MT['XE_Asphalt']['tint'] = [0.85, 0.85, 0.86]
+    # P6b-F2: 濡れたアスファルト(自作。粗さ 0.3 前後)。旧: paving(CC0 の暗い舗装)× tint 0.85・粗さ 0.85
+    pm('XE_Asphalt', files={'albedo': tex('ext_asphalt_albedo.jpg'), 'normal': tex('ext_asphalt_normal.jpg'), 'roughness': tex('ext_asphalt_rough.jpg')},
+       size=4.0, rough=0.3)
     pm('XE_Concrete', files=tf('concrete', rough=False), size=2.0, rough=0.9)
     pm('XE_Curb', files=tf('concrete', rough=False), size=1.0, rough=0.9); MT['XE_Curb']['tint'] = [1.15, 1.15, 1.12]
     pm('XE_Line', base=(0.62, 0.62, 0.6), rough=0.7)
@@ -92,9 +94,171 @@ def materials():
     pm('XE_City', files={'albedo': tex('ext_city.webp')}, size=1.0, rough=1.0)
     for i in range(3):
         pm(f'XE_Ridge{i}', base=(0.01, 0.012, 0.014), rough=1.0)
+    f2_materials()
     pm('XE_Bin', base=(0.05, 0.12, 0.08), rough=0.6)
     pm('XE_BinLid', base=(0.04, 0.06, 0.12), rough=0.6)
     pm('XE_Seat', base=(0.02, 0.02, 0.02), rough=0.6)
+
+
+# ---------------------------------------------------------------- P6b-F2: 外観の磨き直しの材質(DESIGN §3.12 #3 F2)
+F2 = dict(wall_off=0.010, box_grow=0.003, bars_off=0.004, card_locked=0.036, card_enter=0.045)
+F2_SKIN = {'MR_Rail': 'XE_RailMetal', 'MR_Partition': 'XE_Partition', 'MR_Alu': 'XE_FrameMetal', 'MX_Bars': 'MX_Bars'}   # 被せる材質(元 → 新)
+# 格子(MX_Bars。アルファの板)は金属にしない: 環境の映り込みが遠目に白い点のちらつき(モアレ)になったため(1 巡目の自己批評)。
+#   代わりに全階共通の被せ物にして、本物の階(ベイクで明るい)と帯(実行時の光で暗い)の差をなくす。明るさは tint で本物の階に寄せる
+
+
+def _set_bsdf(name, metal=None, rough=None, base=None):
+    b = C.MATS[name].node_tree.nodes.get('Principled BSDF')
+    if metal is not None: b.inputs['Metallic'].default_value = metal
+    if rough is not None: b.inputs['Roughness'].default_value = rough
+    if base is not None: b.inputs['Base Color'].default_value = (*base, 1.0)
+
+
+def f2_materials():
+    pm, tex, MT = C.pbr_material, C.tex, C.MAT_TEX
+    TM = TEXMETA
+    # 外壁のタイル(外の塊 MX_Mass に 1cm 外へ被せる。全階・常時)。albedo の平均を従来の外の塊(コンクリート×0.95 ≒ 0.16)に合わせる tint
+    pm('XE_TileWall', files={'albedo': tex('ext_tile_albedo.jpg'), 'normal': tex('ext_tile_normal.jpg'), 'roughness': tex('ext_tile_rough.jpg')}, rough=0.6)
+    MT['XE_TileWall']['tint'] = [0.54, 0.54, 0.54]
+    # バルコニーの手すり・笠木・手すりの枠 = 金属(アルミ)。roughness 0.4・metal 1.0。地の色(F0)は夜の暗さに合わせて抑える
+    pm('XE_RailMetal', base=(0.16, 0.165, 0.17), rough=0.4, metal=1.0)
+    # 隔て板(塗装したケイ酸カルシウム板)
+    pm('XE_Partition', files={'albedo': tex('ext_partition_albedo.jpg'), 'normal': tex('ext_partition_normal.jpg')}, rough=0.7, normal_strength=0.6)
+    MT['XE_Partition']['tint'] = [1.3, 1.31, 1.29]
+    # サッシの枠(固定)= アルミ。障子(MX_Alu)は外観の帯の中だけ金属にする(入れる部屋の障子は動くので被せない)
+    _set_bsdf('MX_Bars', metal=0.0, rough=0.5)
+    MT['MX_Bars']['tint'] = [2.4, 2.4, 2.4]
+    pm('XE_FrameMetal', base=(0.14, 0.145, 0.15), rough=0.35, metal=1.0)
+    _set_bsdf('MX_Alu', metal=1.0, rough=0.35, base=(0.14, 0.145, 0.15))
+    # 濡れの膜(敷地の地面に重ねる。A = 水たまり、RGB = 映り込みの発光)。tint 0 = 拡散は無し(発光だけ)
+    img = C.load_img(tex('ext_wet.webp'), False)
+    pm('XE_Wet', base=(0.0, 0.0, 0.0), rough=0.1, emit_tex=img, emit_strength=TM.get('wetS', 1.0), alpha=1.0)
+    MT['XE_Wet']['tint'] = [0.0, 0.0, 0.0]
+    # 窓ガラスの映り込みの膜(ガラスの 6〜15mm 外。暗い空の映り込みと室内の暗さ)
+    img = C.load_img(tex('ext_glass_sheen.webp'), False)
+    pm('XE_GlassSheen', base=(0.0, 0.0, 0.0), rough=0.1, emit_tex=img, emit_strength=TM.get('glassS', 1.0), alpha=1.0)
+    MT['XE_GlassSheen']['tint'] = [0.0, 0.0, 0.0]
+
+
+def _g(v):   # Blender 座標 → ゲーム座標
+    return (v.x, v.z, -v.y)
+
+
+def _skin_split(o, mats, L, skins):
+    """o の面のうち材質が mats(元の名前)のものを複製して被せ物(新しい材質)にし、o からは消す。被せ物は skins に足す。
+    MX_Mass(外の塊)= 外へ 1cm・面の中で 1cm 広げる(出隅で隣の面と閉じる)、UV は階ごとのタイル(上端 = 階の上端)。
+    手すり・隔て板・枠 = 外へ 3mm・面の中で 3mm 広げる(3mm 太った箱が元の箱を包む)。格子(板)= 外へ 4mm。"""
+    names = [sl.material.name.split('.')[0] if sl.material else '' for sl in o.material_slots]
+    idx = {i for i, n_ in enumerate(names) if n_ in mats}
+    if not idx:
+        return
+    src_bm = bmesh.new(); src_bm.from_mesh(o.data)
+    uv_src = src_bm.loops.layers.uv.active
+    me = bpy.data.meshes.new(f'Skin_{o.name}')
+    out = bmesh.new()
+    uv_out = out.loops.layers.uv.new('UVMap')
+    new_mats = []
+    y0 = (L - 1) * FH
+    rr = random.Random(1000 * L + len(skins))
+    uoff = {}
+    kill = []
+    for f in src_bm.faces:
+        if f.material_index not in idx:
+            continue
+        kill.append(f)
+        src = names[f.material_index]
+        dst = 'XE_TileWall' if src == 'MX_Mass' else F2_SKIN[src]
+        if dst not in new_mats:
+            new_mats.append(dst)
+        n = f.normal.copy()
+        ax = max(range(3), key=lambda k: abs(n[k]))
+        if src == 'MX_Mass':
+            push, grow = F2['wall_off'], F2['wall_off']
+        elif src == 'MX_Bars':
+            push, grow = F2['bars_off'], 0.0
+        else:
+            push, grow = F2['box_grow'], F2['box_grow']
+        cen = f.calc_center_median()
+        vs = []
+        for lp in f.loops:
+            v = lp.vert.co.copy()
+            for k in range(3):
+                if k != ax and abs(v[k] - cen[k]) > 1e-6:
+                    v[k] += math.copysign(grow, v[k] - cen[k])
+            vs.append(out.verts.new(v + n * push))
+        nf = out.faces.new(vs)
+        nf.material_index = new_mats.index(dst)
+        nf.smooth = False
+        gn = (n.x, n.z, -n.y)
+        for lp_s, lp_d in zip(f.loops, nf.loops):
+            gx, gy, gz = _g(lp_d.vert.co)
+            if src == 'MX_Mass' or src == 'MR_Partition':
+                if abs(gn[0]) >= abs(gn[2]):
+                    u = -gz if gn[0] > 0 else gz
+                else:
+                    u = gx if gn[2] > 0 else -gx
+                if src == 'MX_Mass':
+                    key = (round(gn[0]), round(gn[2]))
+                    if key not in uoff:
+                        uoff[key] = rr.random()
+                    lp_d[uv_out].uv = (u / TEXMETA['tileSize'][0] + uoff[key], (gy - y0) / TEXMETA['tileSize'][1])
+                else:
+                    lp_d[uv_out].uv = (u / 1.2, (gy - y0 - 0.02) / 1.2)
+            else:
+                lp_d[uv_out].uv = lp_s[uv_src].uv.copy() if uv_src else (0.0, 0.0)
+    if kill:
+        bmesh.ops.delete(src_bm, geom=kill, context='FACES')
+        src_bm.to_mesh(o.data)
+    src_bm.free()
+    out.normal_update()
+    out.to_mesh(me); out.free()
+    for m in new_mats:
+        me.materials.append(C.MATS[m])
+    ob = bpy.data.objects.new(f'Skin_{o.name}', me)
+    for c_ in o.users_collection:
+        c_.objects.link(ob)
+    skins.append(ob)
+
+
+def glass_cards(enterable):
+    """P6b-F2: 窓ガラスの映り込みの膜(ガラスの外 6〜15mm、外向きの片面)。enterable=False: 入れない部屋(全階・常時。灯りの点いた窓は除く)、
+    True: 入れる部屋(その階の帯の中だけ。帯は本物の階が出ている時は隠れる=開いた窓に膜が残らない)。返り値 {階: [MeshBuilder の物]}"""
+    lit = {r['id'] for r in pick_lit_windows()}
+    out = {}
+    for L, f in FLOORS.items():
+        mb = None
+        for r in f['rooms']:
+            if r['kind'] != 'unit' or not r.get('balcony'):
+                continue
+            ent = bool(r['door'].get('enterable'))
+            if ent != enterable or r['id'] in lit:
+                continue
+            win = r.get('window') or BR._make_window(r)
+            ax = win['axis']; fx, fz = BR.FACING[win['facing']]; line = win['line']
+            y0 = (L - 1) * FH
+            fw = 0.045
+            lo, hi = win['pos'][0 if ax == 'x' else 1] - win['width'] / 2 + fw, win['pos'][0 if ax == 'x' else 1] + win['width'] / 2 - fw
+            off = F2['card_enter'] if ent else F2['card_locked']
+            ya, yb = y0 + 0.035, y0 + BR.WIN_H - fw
+            if mb is None:
+                mb = C.MeshBuilder(f'GlassCards_{L}_{int(enterable)}')
+            if ax == 'x':
+                zz = line + off * fz
+                pts = [(lo, ya, zz), (hi, ya, zz), (hi, yb, zz), (lo, yb, zz)]
+                if fz < 0: pts = [pts[1], pts[0], pts[3], pts[2]]
+            else:
+                xx = line + off * fx
+                pts = [(xx, ya, hi), (xx, ya, lo), (xx, yb, lo), (xx, yb, hi)]
+                if fx < 0: pts = [pts[1], pts[0], pts[3], pts[2]]
+            fc = C.orient(mb.quad(pts, (fx, 0, fz), 'XE_GlassSheen'), (fx, 0, fz))
+            for lp in fc.loops:   # u = 外から見て左→右、v = 下→上
+                gx, gy, gz = _g(lp.vert.co)
+                t = ((gx if ax == 'x' else gz) - lo) / (hi - lo)
+                right = (fz > 0) if ax == 'x' else (fx < 0)
+                lp[mb.uv].uv = (t if right else 1.0 - t, (gy - ya) / (yb - ya))
+        if mb is not None:
+            out[L] = mb
+    return out
 
 
 def link_mat(mat_name):
@@ -167,7 +331,7 @@ def in_rects(x, z, rects, s=0.04):
     return False
 
 
-def extract_band(L, col):
+def extract_band(L, col, skins=None):
     path = os.path.join(ROOT, 'build', f'floor_{L}.glb')
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=path)
@@ -229,12 +393,16 @@ def extract_band(L, col):
                     kill.append(f)
             bmesh.ops.delete(bm, geom=kill, context='FACES')
             bm.to_mesh(me); bm.free()
+        if skins is not None and len(me.polygons):   # P6b-F2: 外の塊・手すり・隔て板・枠・格子は全階共通の被せ物へ(帯からは消す)
+            _skin_split(o, {'MX_Mass'} if k == 'massing' else set(F2_SKIN), L, skins)
         if len(me.polygons):
             out.append(o)
     for o in new:
         if o not in out:
             bpy.data.objects.remove(o, do_unlink=True)
     for o in out:
+        if not len(o.data.polygons):
+            continue
         for c_ in list(o.users_collection):
             c_.objects.unlink(o)
         col.objects.link(o)
@@ -467,6 +635,16 @@ def wheel(mb, cx, cy, cz, r, w, axis, mat, n=10):
         C.orient(mb.quad(q, nm, mat), nm)
 
 
+def wet_film(mb, r, y=0.008):
+    """P6b-F2: 敷地の地面に重ねる濡れの膜(XE_Wet)。UV = 敷地全体に 1 枚(ext_textures.json の wetBox。画像の行 = z)。"""
+    x0, z0, x1, z1 = r
+    bx0, bz0, bx1, bz1 = TEXMETA['wetBox']
+    f = C.orient(mb.quad([(x0, y, z1), (x1, y, z1), (x1, y, z0), (x0, y, z0)], (0, 1, 0), 'XE_Wet'), (0, 1, 0))
+    for lp in f.loops:
+        gx, gy, gz = _g(lp.vert.co)
+        lp[mb.uv].uv = ((gx - bx0) / (bx1 - bx0), 1.0 - (gz - bz0) / (bz1 - bz0))
+
+
 def build_site(col):
     mb = C.MeshBuilder('Site')
     fp = SITE['footprint']
@@ -484,6 +662,8 @@ def build_site(col):
         holes = [porch] + bed_r
         for q in rect_sub(r, holes):
             flat(mb, q, 0.0, mats[kinds[i]])
+            if kinds[i] != 'concrete':   # P6b-F2: 濡れの膜(2F の張り出しの下 = コンクリートは乾いたまま)
+                wet_film(mb, q)
     # アプローチと車路の境の縁石(S の東端 x=26.12 は E と同じ高さなので線だけ)
     # --- 植え込み: 縁石・土・低木 ---
     for o in beds:
@@ -1018,9 +1198,14 @@ def main():
     bpy.context.scene.collection.children.link(tmp)
     nodes = []
     bands = {}
+    skins = []
+    cards_ent = glass_cards(True)
     for L in range(1, 8):
-        parts = extract_band(L, tmp)
+        parts = extract_band(L, tmp, skins)
+        parts = [o for o in parts if len(o.data.polygons)]
         parts.append(enterable_backing(L, tmp))
+        if L in cards_ent:
+            parts.append(cards_ent[L].finish(tmp, {}))
         parts.append(corr_depth(L, tmp))
         if L == 1:
             parts.append(lobby_glow(tmp))
@@ -1032,7 +1217,9 @@ def main():
         nodes.append(j)
         log(f'band {L}: {bands[L]["tris"]} tris')
     C.BASE_Y = 0.0
-    al = join(build_always(tmp), 'ExtAlways', {'n2_kind': 'extalways'})
+    cards_locked = [mb.finish(tmp, {}) for mb in glass_cards(False).values()]
+    log(f'F2 skins: {len(skins)} objects, {sum(len(o.data.polygons) for o in skins)} faces; glass cards: locked {sum(len(o.data.polygons) for o in cards_locked)} / enterable on {len(cards_ent)} floors')
+    al = join(build_always(tmp) + skins + cards_locked, 'ExtAlways', {'n2_kind': 'extalways'})
     for c_ in list(al.users_collection):
         c_.objects.unlink(al)
     col.objects.link(al); nodes.append(al)
