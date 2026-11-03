@@ -120,11 +120,11 @@ def _furniture_materials(ctx):
         MT[name]['tint'] = tint
         b = _bsdf(m)
         b.inputs['Coat Weight'].default_value = 0.4
-        b.inputs['Coat Roughness'].default_value = 0.18
+        b.inputs['Coat Roughness'].default_value = 0.25
     # 金属は実行時に共通の環境(明るいスタジオ)を metalEnv で映すので、地の色(F0)が明るいと暗い部屋で脚が光って見える
     #  → 黒い焼付の鋼管に近い暗い F0。懐中電灯の当たる面だけ鈍く光る
-    pm('MR_LegMetal', base=(0.10, 0.10, 0.105), rough=0.35, metal=1.0)    # 机の脚(黒い鋼管)
-    pm('MR_SteelMetal', base=(0.22, 0.22, 0.225), rough=0.35, metal=1.0)  # 椅子の支柱・倒れた椅子の脚(鋼のガス圧支柱)
+    pm('MR_LegMetal', base=(0.05, 0.05, 0.053), rough=0.35, metal=1.0)    # 机の脚(黒い鋼管)
+    pm('MR_SteelMetal', base=(0.12, 0.12, 0.123), rough=0.35, metal=1.0)  # 椅子の支柱・倒れた椅子の脚(鋼のガス圧支柱)
     base = _img_mean_lin(tex('cloth_weave_albedo.jpg'))
     pal = json.load(open(os.path.join(ctx.TEX, 'room_palette.json')))   # init() より先に呼ばれるので自前で読む
     for k in CLOTH_KEYS:
@@ -170,6 +170,24 @@ def uv_rect(r, inset=0.0):
     return [(u0 + du, v0 + dv), (u1 - du, v0 + dv), (u1 - du, v1 - dv), (u0 + du, v1 - dv)]
 
 
+def _axis_samples(h, r, mid, n_in, eps=0.0):
+    """角丸の箱の 1 軸の格子位置(-h..h)。丸めの帯(端から r)・平らな面の縁の支えの線(eps 内側。滑らかな陰影が平らな面に
+    にじまないように)・内側の追加の分割。"""
+    s = [-h, -h + r, h - r, h]
+    if mid:
+        s += [-h + 0.4 * r, h - 0.4 * r]
+    if eps > 0 and h - r - eps > 0:
+        s += [-h + r + eps, h - r - eps]
+    inner = h - r
+    for i in range(1, n_in + 1):
+        s.append(-inner + 2 * inner * i / (n_in + 1))
+    out = []
+    for v in sorted(s):
+        if not out or v - out[-1] > 1e-6:
+            out.append(v)
+    return out
+
+
 class B:
     """MeshBuilder の薄い包み: 色見本(palette)・アトラス(appliances/prints)の面を張る。"""
     def __init__(self, name):
@@ -202,6 +220,74 @@ class B:
             else:
                 f = self.mb.quad(pts, n, mat)
                 C.set_uv(f, self.mb, uv_rect(PALUV[key]))
+
+    def rbox(self, mn, mx, r, mat=None, key=None, gloss=False, cull=None, front=None, front_uv=None, front_mat=None,
+             mid=False, n_in=(0, 0, 0), warp=None, smooth=None):
+        """P6b-E2 2巡目: 角を半径 r で丸めた箱(面ごとの格子を「内側の箱へ寄せて r だけ押し出す」写像で丸める)。
+        mat = 張り込みの材質(世界座標の UV)/ key = 色見本(gloss で MR_PalGloss)/ front + front_uv = その面だけアトラス。
+        mid = 丸めの帯を 2 分割(角 0°・約 30°・45°…=90° を 4 分割)、無しは 2 分割(45° の面取り＋分割)。
+        n_in = 各軸の内側の追加の分割(曲げ・へこみの変位用)。warp(世界座標の点) → 点。smooth = 滑らかな陰影(布・枕)。
+        cull = 張らない面(既定は pbox と同じ: 低い箱の底面・天井に接する上面)。返り値 = 三角形数。"""
+        mn, mx = _mm(mn, mx)
+        if cull is None:
+            cull = set()
+            if mn[1] - C.BASE_Y < 0.95: cull.add('-y')
+            if mx[1] - C.BASE_Y > C.CEIL_H - 0.01: cull.add('+y')
+        cen = [(mn[i] + mx[i]) / 2 for i in range(3)]
+        h = [(mx[i] - mn[i]) / 2 for i in range(3)]
+        r = max(0.0, min(r, min(h) * 0.98))
+        if smooth is None:
+            smooth = r > 0   # 丸めの帯は滑らかな陰影(頂点を共有して軽い。2 分割でも丸く見える)
+        flat_mid = warp is None   # 曲げ・へこみの無い箱は面の平らな中央を flat にする(平らな面と帯の境は Blender が鋭い辺として分ける=陰影がにじまない)
+        S = [_axis_samples(h[i], r, mid, n_in[i]) for i in range(3)]
+        def P(q):
+            cl = [max(-(h[i] - r), min(h[i] - r, q[i])) for i in range(3)]
+            d = [q[i] - cl[i] for i in range(3)]
+            L = math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2])
+            p = [cl[i] + r * d[i] / L for i in range(3)] if L > 1e-9 else list(q)
+            w = (cen[0] + p[0], cen[1] + p[1], cen[2] + p[2])
+            return warp(w) if warp else w
+        bf = box_faces(mn, mx)
+        tris = 0
+        for k, ax, sg in (('+x', 0, 1), ('-x', 0, -1), ('+y', 1, 1), ('-y', 1, -1), ('+z', 2, 1), ('-z', 2, -1)):
+            if k in cull:
+                continue
+            ua, va = [a for a in (0, 1, 2) if a != ax]
+            n = [0, 0, 0]; n[ax] = sg; n = tuple(n)
+            atlas = front is not None and k == front and front_uv is not None
+            if atlas:   # アトラスの向き = box_faces の 左下→右下(s)・左下→左上(t)
+                p0, p1, _, p3 = bf[k][0]
+                es = [p1[i] - p0[i] for i in range(3)]; et = [p3[i] - p0[i] for i in range(3)]
+                ls = sum(v * v for v in es) or 1.0; lt = sum(v * v for v in et) or 1.0
+                u0, v0, u1, v1 = front_uv
+            for i in range(len(S[ua]) - 1):
+                for j in range(len(S[va]) - 1):
+                    qs = []
+                    for ii, jj in ((i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)):
+                        q = [0.0, 0.0, 0.0]; q[ax] = sg * h[ax]; q[ua] = S[ua][ii]; q[va] = S[va][jj]
+                        qs.append(q)
+                    pts = [P(q) for q in qs]
+                    if atlas:
+                        f = self.mb.quad(pts, n, front_mat)
+                        uvs = []
+                        for q in qs:
+                            w = [cen[t] + q[t] - p0[t] for t in range(3)]
+                            ss = sum(w[t] * es[t] for t in range(3)) / ls; tt = sum(w[t] * et[t] for t in range(3)) / lt
+                            uvs.append((u0 + (u1 - u0) * ss, v0 + (v1 - v0) * tt))
+                        C.set_uv(f, self.mb, uvs)
+                    elif mat is not None:
+                        f = self.mb.quad(pts, n, mat)
+                    else:
+                        f = self.mb.quad(pts, n, 'MR_PalGloss' if gloss else 'MR_Pal')
+                        u0_, v0_, u1_, v1_ = PALUV[key]
+                        cu = ((u0_ + u1_) / 2, (v0_ + v1_) / 2)
+                        C.set_uv(f, self.mb, [cu, cu, cu, cu])   # 色見本は 1 点(隣の面と頂点を共有できる)
+                    C.orient(f, n)
+                    centre = (r > 0 and abs(qs[0][ua]) <= h[ua] - r + 1e-9 and abs(qs[2][ua]) <= h[ua] - r + 1e-9
+                              and abs(qs[0][va]) <= h[va] - r + 1e-9 and abs(qs[2][va]) <= h[va] - r + 1e-9)
+                    f.smooth = smooth and not (flat_mid and centre)
+                    tris += 2
+        return tris
 
     def ibox(self, mn, mx, mat, keep=None):
         """内向きの面の箱(中から見る: クローゼットの内側など)。keep の key は内向きの法線の向き(例: 左の側面 = '+x')。"""
@@ -276,6 +362,26 @@ class IL:
     def ibox(self, b, a0, a1, y0, y1, d0, d1, mat, keep=None):
         mn, mx = self.mm(a0, a1, y0, y1, d0, d1)
         b.ibox(mn, mx, mat, keep=keep)
+
+    def loc(self, p):
+        """世界座標 → 家具の局所 (a, y, d)。"""
+        x, y, z = p
+        ox, oz = self.o
+        return ((x - ox) * self.R[0] + (z - oz) * self.R[1], y - self.base, -((x - ox) * self.F[0] + (z - oz) * self.F[1]))
+
+    def rbox(self, b, a0, a1, y0, y1, d0, d1, r, back=False, cull=None, atlas=None, atlas_mat='MR_Appl', warp=None, **kw):
+        """P6b-E2 2巡目: 局所座標の角丸の箱。warp は局所 (a, y, d) → (a, y, d)。back = 壁に付く背面を張らない。"""
+        mn, mx = self.mm(a0, a1, y0, y1, d0, d1)
+        if cull is None:
+            cull = set()
+            if self.base + y0 - C.BASE_Y < 0.95: cull.add('-y')
+        cull = set(cull)
+        if back: cull.add(self.back_key())
+        wf = None
+        if warp is not None:
+            def wf(p, W=warp):
+                return self.w(*W(*self.loc(p)))
+        return b.rbox(mn, mx, r, cull=cull, front=self.front if atlas else None, front_uv=atlas, front_mat=atlas_mat, warp=wf, **kw)
 
     def back_key(self):
         """正面と反対(奥)の向きのキー。"""
@@ -453,26 +559,191 @@ def window_unit(room, col, operable, curtain_key=None):
 
 
 # ---------------------------------------------------------------- 家具(居室)
-def _bed(b, it, base, var):
+def _bed(b, it, base, var, room=None):
+    """P6b-E2 2巡目: 角を丸めたニスの木枠(フレームの角丸・頭の板は笠木と一段出た鏡板)・角の丸いマットレス(キルトは法線)・
+    布らしい掛け布団(厚み 7cm・縁から 12cm 垂れる・上面にゆるい皺・乱れた寝床は頭側の折り返しと足元の角のめくれ)・中央がくぼんだ枕。"""
     L = IL(it, base)
     W, D = L.W, L.D
-    L.box(b, 0.0, W, 0.08, 0.30, 0.0, D, 'MR_VarnishWood', keep=lambda k, c, n: k != '-y')            # フレーム(P6b-E2: ニスの木部)
+    V = 'MR_VarnishWood'
+    L.rbox(b, 0.0, W, 0.08, 0.30, 0.0, D, 0.010, mat=V)                                    # フレーム
     for (a, d) in ((0.04, 0.06), (W - 0.08, 0.06), (0.04, D - 0.1), (W - 0.08, D - 0.1)):
-        L.box(b, a, a + 0.04, 0.0, 0.08, d, d + 0.04, 'MR_VarnishWood', keep=lambda k, c, n: k not in ('+y', '-y'))
-    L.box(b, 0.0, W, 0.0, 0.78, 0.0, 0.04, 'MR_VarnishWood')                                             # 頭の板(外壁側)
-    L.pbox(b, 0.03, W - 0.03, 0.30, 0.50, 0.05, D - 0.03, 'mattress', keep=lambda k, c, n: k != '-y', tile=cloth('mattress'))
+        L.rbox(b, a, a + 0.04, 0.0, 0.08, d, d + 0.04, 0.0, mat=V, cull={'-y', '+y'})              # 脚(小さいので丸めない)
+    L.rbox(b, 0.0, W, 0.0, 0.74, 0.0, 0.03, 0.006, mat=V, cull={'-y'})                               # 頭の板(外壁側)
+    L.rbox(b, -0.012, W + 0.012, 0.74, 0.78, -0.006, 0.042, 0.008, mat=V, cull=set())     # 笠木(一段張り出す)
+    L.rbox(b, 0.07, W - 0.07, 0.50, 0.70, 0.03, 0.042, 0.004, mat=V, cull={'-y'})                   # 鏡板(1.2cm の段差)
+    mt = cloth('mattress') or None
+    if mt:
+        L.rbox(b, 0.03, W - 0.03, 0.30, 0.50, 0.05, D - 0.03, 0.025, mat=mt)
+    else:
+        L.pbox(b, 0.03, W - 0.03, 0.30, 0.50, 0.05, D - 0.03, 'mattress', keep=lambda k, c, n: k != '-y')
     bed = var.get('bedding')
     if bed:
         made = var.get('type') == 'tidy'
+        seed = sum(ord(ch) * (i + 7) for i, ch in enumerate(str(room or ''))) + 11
+        open_hi = _bed_open_side(L, room)
+        _duvet(b, L, cloth(bed), 0.03, W - 0.03, 0.50, 0.55 if made else 0.85, D - 0.03, not made, seed, open_hi)
         if made:
-            L.pbox(b, 0.0, W, 0.48, 0.58, 0.55, D - 0.02, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))
-            L.pbox(b, 0.12, W - 0.12, 0.5, 0.63, 0.1, 0.45, 'white', keep=lambda k, c, n: k != '-y', tile=cloth('white'))
+            _pillow(b, L, cloth('white'), 0.12, W - 0.12, 0.50, 0.63, 0.10, 0.45)
         else:
-            L.pbox(b, 0.02, W - 0.05, 0.48, 0.60, 0.9, D - 0.1, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))
-            L.pbox(b, 0.1, W - 0.2, 0.55, 0.70, 0.75, 1.3, bed, keep=lambda k, c, n: k != '-y', tile=cloth(bed))      # めくれた掛け布団の山
-            L.pbox(b, 0.18, W - 0.1, 0.5, 0.64, 0.08, 0.42, 'white', keep=lambda k, c, n: k != '-y', tile=cloth('white'))
+            _pillow(b, L, cloth('white'), 0.18, W - 0.10, 0.50, 0.64, 0.08, 0.42, tilt=0.03)
     else:
         L.pbox(b, 0.03, W - 0.03, 0.50, 0.505, 0.05, D - 0.03, 'trashbag', gloss=True, keep=lambda k, c, n: k == '+y')   # 空室: ビニールを掛けたマットレス
+
+
+def _bed_open_side(L, room):
+    """ベッドの長辺のうち部屋の内側(壁から遠い)側が a の大きい側なら True。"""
+    if not room:
+        return True
+    try:
+        x, z, w, d = room['rect']
+    except Exception:  # noqa: BLE001
+        return True
+    def wall_gap(a):
+        px, _, pz = L.w(a, 0.0, L.D / 2)
+        return min(px - x, x + w - px, pz - z, z + d - pz)
+    return wall_gap(L.W + 0.05) > wall_gap(-0.05)
+
+
+def _smooth01(t):
+    t = max(0.0, min(1.0, t))
+    return t * t * (3 - 2 * t)
+
+
+def _duvet(b, L, mat, a0, a1, yT, dS, d1, unmade, seed, open_hi):
+    """掛け布団: 上面(ゆるい皺の変位)が縁で半径 4.5cm の丸みで折れて 12cm 垂れ、裾は内側へ折り返す(厚みの見える縁)。
+    頭側の縁は厚み 7cm の丸みでマットレスへ下りる。乱れた寝床は頭側に折り返しの山、部屋側の足元の角がめくれて上へ返る。"""
+    import random
+    rnd = random.Random(seed)
+    t, rr, drop = 0.07, 0.045, 0.12
+    arc = rr * math.pi / 2
+    smax = arc + (t - rr) + drop
+    ridges = []
+    for i in range(5 if unmade else 3):   # ゆるい皺(尾根): 幅を横切る向き ±40°
+        ang = rnd.uniform(-0.7, 0.7) + (math.pi / 2 if rnd.random() < 0.25 else 0.0)
+        ridges.append(dict(a=rnd.uniform(a0 + 0.15, a1 - 0.15), d=rnd.uniform(dS + 0.25, d1 - 0.2), ca=math.cos(ang), sa=math.sin(ang),
+                           L=rnd.uniform(0.35, 0.8), sg=rnd.uniform(0.05, 0.09), A=rnd.uniform(0.012, 0.022) if unmade else rnd.uniform(0.006, 0.011)))
+    ph = [rnd.uniform(0, 6.28) for _ in range(4)]
+    def wr(a, d):
+        h = 0.0
+        for r in ridges:
+            u = (a - r['a']) * r['ca'] + (d - r['d']) * r['sa']         # 尾根に沿う
+            v = -(a - r['a']) * r['sa'] + (d - r['d']) * r['ca']        # 尾根を横切る
+            h += r['A'] * math.exp(-(v / r['sg']) ** 2) * math.exp(-(u / r['L']) ** 4)
+        h += 0.004 * math.sin(a * 9.1 + ph[0]) * math.sin(d * 5.3 + ph[1]) + 0.003 * math.sin(a * 17 + d * 11 + ph[2])
+        if unmade:   # 頭側に折り返した布団の山(厚み 2 枚ぶん)
+            h += 0.055 * math.exp(-((d - (dS + 0.09)) / 0.07) ** 2) * (0.85 + 0.15 * math.sin(a * 7 + ph[3]))
+        else:        # 整えた寝床: 頭側の折り返しの帯
+            h += 0.012 * _smooth01((d - dS) / 0.02) * (1 - _smooth01((d - dS - 0.16) / 0.03))
+        return h
+    ac = a1 if open_hi else a0
+    def pos(a, d):
+        ca, cd = min(max(a, a0), a1), min(max(d, dS), d1)
+        oa, od = a - ca, d - cd
+        ex = math.hypot(oa, od)
+        ytop = yT + t + wr(ca, cd)
+        if ex < 1e-9:
+            return (a, ytop, d)
+        ua, ud = oa / ex, od / ex
+        if d < dS:   # 頭側の縁: 厚みぶんの丸みでマットレスへ
+            th = min(ex, t * math.pi / 2) / t
+            out, down = t * math.sin(th), t * (1 - math.cos(th))
+        elif ex <= arc:
+            th = ex / rr
+            out, down = rr * math.sin(th), rr * (1 - math.cos(th))
+        elif ex <= smax:
+            out, down = rr, rr + (ex - arc)
+            out += 0.008 * math.sin((ca + cd) * 9 + ph[2]) * _smooth01((ex - arc) / 0.08)    # 垂れの波打ち
+        else:        # 裾の折り返し(下向きの面 = 厚み)
+            out, down = rr - (ex - smax), rr + (smax - arc)
+        pa, pd, y = ca + ua * out, cd + ud * out, ytop - down
+        if unmade and d > dS:   # 部屋側の足元の角がめくれて上に返る
+            wgt = _smooth01(1 - math.hypot(ca - ac, cd - d1) / 0.38) * _smooth01(ex / 0.03)
+            if wgt > 0:
+                fa, fd = ca - ua * ex * 0.75, cd - ud * ex * 0.75
+                fy = yT + t + wr(fa, fd) + 0.012 + 0.03 * math.sin(min(ex / smax, 1) * math.pi)
+                pa, pd, y = pa + (fa - pa) * wgt, pd + (fd - pd) * wgt, y + (fy - y) * wgt
+        return (pa, y, pd)
+    edge = [0.012, 0.028, 0.045, 0.065, 0.09, 0.13, smax * 0.8, smax, smax + 0.035]
+    head = [0.015, 0.035, 0.06, t * math.pi / 2]
+    def inner(lo, hi, step):
+        n = max(1, int(math.ceil((hi - lo) / step)))
+        return [lo + (hi - lo) * i / n for i in range(n + 1)]
+    A = [a0 - e for e in reversed(edge)] + inner(a0, a1, 0.07) + [a1 + e for e in edge]
+    Dd = [dS - e for e in reversed(head)] + inner(dS, d1, 0.07) + [d1 + e for e in edge]
+    P = [[pos(a, d) for d in Dd] for a in A]
+    tris = 0
+    for i in range(len(A) - 1):
+        for j in range(len(Dd) - 1):
+            q = [P[i][j], P[i + 1][j], P[i + 1][j + 1], P[i][j + 1]]
+            w = [L.w(*p) for p in q]
+            nx = (w[1][1] - w[0][1]) * (w[3][2] - w[0][2]) - (w[1][2] - w[0][2]) * (w[3][1] - w[0][1])
+            ny = (w[1][2] - w[0][2]) * (w[3][0] - w[0][0]) - (w[1][0] - w[0][0]) * (w[3][2] - w[0][2])
+            nz = (w[1][0] - w[0][0]) * (w[3][1] - w[0][1]) - (w[1][1] - w[0][1]) * (w[3][0] - w[0][0])
+            ln = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if ln < 1e-12:
+                continue
+            n = (nx / ln, ny / ln, nz / ln)
+            ax = max(range(3), key=lambda k: abs(n[k]))
+            na = [0, 0, 0]; na[ax] = 1 if n[ax] > 0 else -1
+            f = b.mb.quad(w, tuple(na), mat)
+            C.orient(f, n)
+            f.smooth = True
+            tris += 2
+    return tris
+
+
+def _pillow(b, L, mat, a0, a1, y0, y1, d0, d1, tilt=0.0):
+    """枕: 角の丸い箱を細分し、縁を薄く・中央をくぼませる(滑らかな陰影)。"""
+    ac, dc, wa, wd = (a0 + a1) / 2, (d0 + d1) / 2, (a1 - a0) / 2, (d1 - d0) / 2
+    def warp(a, y, d):
+        na, nd = (a - ac) / wa, (d - dc) / wd
+        prof = max(0.0, 1 - na * na) ** 0.55 * max(0.0, 1 - nd * nd) ** 0.55
+        y2 = y0 + (y - y0) * (0.42 + 0.58 * prof)
+        if y > (y0 + y1) / 2:
+            y2 -= 0.022 * math.exp(-(na * na * 1.6 + nd * nd * 2.2) / 0.35)
+        y2 += tilt * na
+        return (a, y2, d)
+    return L.rbox(b, a0, a1, y0, y1, d0, d1, 0.035, mat=mat, mid=True, n_in=(4, 0, 3), warp=warp, smooth=True, cull={'-y'})
+
+
+def _desk(b, L):
+    """P6b-E2 2巡目: 天板(厚み 25mm・縁の丸み 10mm＝懐中電灯の照り返しの線)・脚(鋼板の側板)・前の幕板と引き出し(前板のまわりに 2mm 幅・0.5mm 深さの溝)・奥の幕板。"""
+    W, D = L.W, L.D
+    V = 'MR_VarnishWood'
+    L.rbox(b, 0, W, 0.695, 0.72, 0, D, 0.010, mat=V, cull=set())                            # 天板(縁の丸み 10mm)
+    for a in (0.02, W - 0.05):
+        L.rbox(b, a, a + 0.03, 0.0, 0.695, 0.02, D - 0.02, 0.004, mat='MR_LegMetal', cull={'-y', '+y'})   # 脚(金属の側板)
+    L.rbox(b, 0.05, W - 0.05, 0.3, 0.66, D - 0.03, D - 0.01, 0.0, key='darkgray', back=True)            # 奥の幕板
+    a0, a1 = 0.05, W - 0.05                     # 前の幕板(脚の付け根の間、天板の縁から 15mm 下がる)
+    k0, k1 = max(a0 + 0.06, W * 0.46), a1 - 0.03   # 引き出しの前板
+    g = 0.002
+    yb, yt = 0.625, 0.695
+    L.rbox(b, a0, k0 - g, yb, yt, 0.015, 0.035, 0.0, mat=V, cull={'+y'})
+    L.rbox(b, k1 + g, a1, yb, yt, 0.015, 0.035, 0.0, mat=V, cull={'+y'})
+    L.rbox(b, k0 - g, k1 + g, yb, yb + 0.005, 0.015, 0.035, 0.0, mat=V)
+    L.rbox(b, k0 - g, k1 + g, yt - 0.004, yt, 0.015, 0.035, 0.0, mat=V, cull={'+y'})
+    L.box(b, k0 - g, k1 + g, yb + 0.005, yt - 0.004, 0.0155, 0.035, 'MR_LegMetal', keep=lambda k, c, n, F=L.front: k == F)   # 溝の底(0.5mm 奥・暗い)
+    L.rbox(b, k0, k1, yb + 0.005 + g, yt - 0.004 - g, 0.015, 0.033, 0.0015, mat=V)                  # 引き出しの前板
+    m = (k0 + k1) / 2
+    L.rbox(b, m - 0.045, m + 0.045, 0.652, 0.662, 0.004, 0.015, 0.004, mat='MR_SteelMetal', cull=set())   # 取っ手
+
+
+def _chair(b, L):
+    """P6b-E2 2巡目: 座面(厚み 7cm・角の丸み 1.5cm・中央が 1.2cm くぼむ)・背もたれ(角の丸み・座る人を包むように両端が前へ反る)・
+    鋼の支柱(ほぼ円柱)・樹脂の十字の台座。"""
+    W, D = L.W, L.D
+    sa, sd = W / 2, D / 2
+    def dip(a, y, d):
+        if y > 0.455:
+            y -= 0.012 * max(0.0, 1 - ((a - sa) / (W / 2 - 0.02)) ** 2) * max(0.0, 1 - ((d - sd) / (D / 2 - 0.04)) ** 2)
+        return (a, y, d)
+    def bend(a, y, d):
+        return (a, y, d - 0.035 * ((a - sa) / (W / 2 - 0.04)) ** 2)
+    L.rbox(b, 0.02, W - 0.02, 0.42, 0.49, 0.04, D - 0.04, 0.015, key='chair', n_in=(3, 0, 3), warp=dip, cull=set())
+    L.rbox(b, 0.04, W - 0.04, 0.52, 0.88, D - 0.07, D - 0.03, 0.012, key='chair', n_in=(4, 1, 0), warp=bend, cull=set())
+    L.rbox(b, sa - 0.025, sa + 0.025, 0.06, 0.42, sd - 0.025, sd + 0.025, 0.022, mat='MR_SteelMetal', cull={'-y', '+y'})
+    L.rbox(b, 0.02, W - 0.02, 0.03, 0.06, sd - 0.03, sd + 0.03, 0.0, key='darkgray')                    # 十字の台座(樹脂)
+    L.rbox(b, sa - 0.03, sa + 0.03, 0.03, 0.06, 0.04, D - 0.04, 0.0, key='darkgray')
 
 
 def _wetroom(b, it, base, kind, room):
@@ -640,13 +911,13 @@ def build_unit_items(room, col):
         L = IL(it, base) if k not in ('genkan', 'ceilinglight') else None
         if k == 'washer':
             W, D = L.W, L.D
-            L.pbox(b, 0, W, 0, 0.07, 0, D, 'appliance', gloss=True, back=True)                          # 防水パン
-            L.pbox(b, 0.04, W - 0.04, 0.07, 0.95, 0.03, D - 0.02, 'appliance', gloss=True, atlas=APPUV['washer'], back=True)
+            L.rbox(b, 0, W, 0, 0.07, 0, D, 0.0, key='appliance', gloss=True, back=True)                       # 防水パン
+            L.rbox(b, 0.04, W - 0.04, 0.07, 0.95, 0.03, D - 0.02, 0.018, key='appliance', gloss=True, atlas=APPUV['washer'], back=True)
             L.pbox(b, W / 2 - 0.02, W / 2 + 0.02, 1.12, 1.2, D - 0.08, D, 'steel', gloss=True)          # 蛇口
         elif k == 'vanity':
             W, D = L.W, L.D
-            L.pbox(b, 0, W, 0, 0.8, 0.02, D, 'appliance', atlas=APPUV['vanity'], back=True)
-            L.pbox(b, -0.01, W + 0.01, 0.8, 0.85, 0.0, D, 'ceramic', gloss=True)
+            L.rbox(b, 0, W, 0, 0.8, 0.02, D, 0.004, key='appliance', atlas=APPUV['vanity'], back=True)
+            L.rbox(b, -0.01, W + 0.01, 0.8, 0.85, 0.0, D, 0.008, key='ceramic', gloss=True, back=True)
             L.pbox(b, W / 2 - 0.2, W / 2 + 0.2, 0.851, 0.853, 0.1, D - 0.12, 'lightgray', gloss=True, keep=lambda kk, c, n: kk == '+y')   # 洗面ボウル
             L.pbox(b, W / 2 - 0.02, W / 2 + 0.02, 0.85, 1.05, D - 0.1, D - 0.05, 'steel', gloss=True)
             L.pbox(b, 0.02, W - 0.02, 1.1, 1.85, D - 0.15, D, 'appliance', gloss=True, back=True)      # 鏡の収納
@@ -654,26 +925,19 @@ def build_unit_items(room, col):
             b.box(mn, mx, 'MR_Mirror', keep=lambda kk, c, n, F=L.front: kk == F)
         elif k == 'fridge':
             W, D = L.W, L.D
-            L.pbox(b, 0.04, W - 0.04, 0, 1.08, 0.02, D - 0.02, 'appliance', gloss=True, atlas=APPUV['fridge'], back=True)
-            L.pbox(b, 0.0, W, 1.08, 1.1, 0.0, D, 'steel')                                                # レンジ台の棚
-            L.pbox(b, 0.03, W - 0.03, 1.1, 1.38, 0.05, D - 0.06, 'lightgray', gloss=True, atlas=APPUV['micro'], back=True)
+            L.rbox(b, 0.04, W - 0.04, 0, 1.08, 0.02, D - 0.02, 0.015, key='appliance', gloss=True, atlas=APPUV['fridge'], back=True)
+            L.rbox(b, 0.0, W, 1.08, 1.1, 0.0, D, 0.0, key='steel', back=True)                              # レンジ台の棚
+            L.rbox(b, 0.03, W - 0.03, 1.1, 1.38, 0.05, D - 0.06, 0.012, key='lightgray', gloss=True, atlas=APPUV['micro'], back=True)
         elif k == 'closet':
             _closet(col, it, base, rid)
         elif k == 'burstlocker':
             _burst_locker(col, it, base, rid)
         elif k == 'desk':
             W, D = L.W, L.D
-            L.box(b, 0, W, 0.69, 0.72, 0, D, 'MR_VarnishWood')                                          # 天板(P6b-E2: ニス)
-            for a in (0.02, W - 0.05):
-                L.pbox(b, a, a + 0.03, 0.0, 0.69, 0.02, D - 0.02, 'darkgray', tile='MR_LegMetal')         # 脚(P6b-E2: 金属)
-            L.pbox(b, 0.05, W - 0.05, 0.3, 0.66, D - 0.03, D - 0.01, 'darkgray')
+            _desk(b, L)
         elif k == 'chair':
             W, D = L.W, L.D
-            L.pbox(b, 0.02, W - 0.02, 0.42, 0.49, 0.04, D - 0.04, 'chair')
-            L.pbox(b, 0.04, W - 0.04, 0.52, 0.88, D - 0.07, D - 0.02, 'chair')
-            L.pbox(b, W / 2 - 0.025, W / 2 + 0.025, 0.06, 0.42, D / 2 - 0.025, D / 2 + 0.025, 'steel', gloss=True, tile='MR_SteelMetal')
-            L.pbox(b, 0.02, W - 0.02, 0.03, 0.06, D / 2 - 0.03, D / 2 + 0.03, 'darkgray')                # 十字の台座(樹脂のまま。金属にすると 312 の複製で環境 0.25 を映して白く浮く)
-            L.pbox(b, W / 2 - 0.03, W / 2 + 0.03, 0.03, 0.06, 0.04, D - 0.04, 'darkgray')
+            _chair(b, L)
         elif k == 'chairfallen':
             # P5b-1(220): 横倒しの椅子。椅子の「上」= a(0→0.88)、横幅 = y(0.44)、前後 = d(0.38)
             L.pbox(b, 0.42, 0.49, 0.02, 0.42, 0.0, 0.36, 'chair')               # 座面(縦になった)
@@ -685,14 +949,14 @@ def build_unit_items(room, col):
             mn, mx = L.mm(0, L.W, 0, L.H, 0, L.D)
             b.box(mn, mx, 'MR_Wall', keep=lambda kk, c, n, Bk=L.back_key(): kk not in ('+y', '-y', Bk))
         elif k == 'ac':
-            L.pbox(b, 0.0, L.W, 0.0, L.H, 0.0, L.D - 0.005, 'appliance', gloss=True, atlas=APPUV['acin'], back=True)
+            L.rbox(b, 0.0, L.W, 0.0, L.H, 0.0, L.D - 0.005, 0.03, key='appliance', gloss=True, atlas=APPUV['acin'], back=True)
         elif k == 'shoecase':
-            L.pbox(b, 0, L.W, 0, 0.93, 0.0, L.D, 'woodlight', atlas=APPUV['shoecase'], back=True)
-            L.box(b, -0.01, L.W + 0.01, 0.93, 0.95, -0.01, L.D, 'MR_VarnishWood')                         # 天板(P6b-E2: ニス)
+            L.rbox(b, 0, L.W, 0, 0.93, 0.0, L.D, 0.004, key='woodlight', atlas=APPUV['shoecase'], back=True)
+            L.rbox(b, -0.01, L.W + 0.01, 0.93, 0.95, -0.01, L.D, 0.005, mat='MR_VarnishWood', back=True, cull={'-y'})   # 天板(P6b-E2: ニス)
         elif k in ('toilet', 'bath'):
             _wetroom(b, it, base, k, rid)
         elif k == 'bed':
-            _bed(b, it, base, var)
+            _bed(b, it, base, var, room)
         elif k == 'ceilinglight':
             x0, z0, x1, z1 = it['b']
             cx, cz = (x0 + x1) / 2, (z0 + z1) / 2
@@ -755,7 +1019,7 @@ def build_unit_decor(room, col):
         elif k == 'snack':
             L.pbox(b, 0, W, 0, H, 0, D, 'orange', gloss=True)
         elif k == 'shelf':
-            L.pbox(b, 0, W, 0, 0.02, 0, D, 'woodlight', tile='MR_VarnishWoodLight')                        # 棚板(P6b-E2: ニス)
+            L.rbox(b, 0, W, 0, 0.02, 0, D, 0.004, mat='MR_VarnishWoodLight', back=True)                     # 棚板(P6b-E2: ニス・角の丸み)
             for a in (0.04, W - 0.06):
                 L.pbox(b, a, a + 0.02, -0.12, 0.0, D - 0.04, D, 'steel')
             n = it.get('books', 5)
