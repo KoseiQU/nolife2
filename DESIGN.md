@@ -370,7 +370,7 @@ data/building.json
 | **P6b-C** | **通しプレイ 2 回目の反映**（§3.10 #1〜#5。章の順序・階段の判定と鎖・走りの足音・地下の口の灯り）。#6 は候補の選択後に P6b-D | §3.10 の機械テスト列。全 9 スイート通過 | Opus **済 2026-11-03**（bf0fb23〜6e07349。story 25・building 17・audio 15・spaces 16・enemy 41・x105 3・rooms 8・tutorial 5。705 の最終追跡は従来どおり追って来る。鎖の音は rattle が「なし」のため無音） |
 | **P6b-D** | **地下 C「潜んでやり過ごす」**（§3.10 #6 の C 仕様。P6b-C の後に着手） | C の機械テスト列。全スイート通過。目視: 作業場の陰・管理人の光の掃き | Opus **済 2026-11-03**（971c139〜467d1ee。xb1 8/8・story 25/25 をメイン再実行。鎖＝220 の鍵から恒久＋中央の一文、最終追跡は EV。妥協: 息遣い無音・迷路でも円錐判定あり・死亡後ループは解けたまま） |
 | **P6b-E1** | **タイトルのサンプル 4 案＋チュートリアルの露出**（§3.11 #1・#3）。触るのは `src/title.js`・`src/tutorial.js`・`tools/test_tutorial.js`・新規 `docs/p6-title-samples/`・`tools/title_samples.*` のみ | 4 枚提示・露出のテスト通過 | Opus |
-| **P6b-E2** | **居室の家具の質感**（§3.11 #2）。触るのは `tools/blender/build_rooms.py`・`tools/room_textures.py`・`build/floor_*.glb`・`docs/p6b-e2/` のみ（src は触らない） | before/after 合格・≤35MB・全スイート通過 | Opus |
+| **P6b-E2** | **居室の家具の質感**（§3.11 #2）。触るのは `tools/blender/build_rooms.py`・`tools/room_textures.py`・`build/floor_*.glb`・`docs/p6b-e2/` のみ（src は触らない） | before/after 合格・≤35MB・全スイート通過 | Opus **済 2026-11-04（監査合格・ユーザー目視待ち）**（e1a0ed1〜dd7fa67。1 巡目＝材質のみで変化なし→メインが差し戻し、2 巡目＝面取り・布団の垂れと皺・枕・キルト・椅子の曲面、全階再ベイク。+139,618 三角形、30.20MB。妥協: 机の天板の楕円の艶は出ない（環境反射は暗室で白く浮くため不採用）、小物は箱のまま） |
 | P6b-F | タイトルの本実装（選択案）＋4 回目の通しプレイの反映 | ユーザー合格 | Opus |
 
 ## 8. 検証環境の罠
