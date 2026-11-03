@@ -378,6 +378,7 @@ export class EnemyAI {
     if (this.elevator && this.elevator.npc && this.elevator.npc.ambush) this.elevator.npc = null;
     this.concealed = false; this.lurkRoomId = null; this.lurkMode = null; this.lurkTargetRoom = null; this._lurkWake = null; this._concealOnClose = null; this._chaseSlowUntil = 0; this._chaseWalkUntil = 0; this._chaseSlowSpeed = null;
     this.chaseOmni = false;   // P5b-2a
+    this.chaseFast = 0;       // P6b-D
     this.runGate = false;     // P6b-A2
     this.setState('PATROL', { force: true, log: true });
   }
@@ -1615,7 +1616,7 @@ export class EnemyAI {
       if (tlv === this.level && graphless(this.level)) {
         e.aimPoint = new THREE.Vector3(p.x, this.floorY + 1.1, p.z);
         const close = dist < 3.0;
-        const sp = close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? AI.roomLurk.darkChase.speed : AI.speed.CHASE);
+        const sp = this.chaseFast || (close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? AI.roomLurk.darkChase.speed : AI.speed.CHASE));   // P6b-D: chaseFast = 地下の作業場で見つかった後(逃げ切れない速さ)
         // P5b-2a: 別空間の経路(105 の分岐の扉を通る)。無ければまっすぐ
         let wp = tgt;
         if (this.spaceNav && isSpace(this.level)) {
@@ -1624,7 +1625,7 @@ export class EnemyAI {
           while (route.length > 1 && Math.hypot(route[0].x - e.pos.x, route[0].z - e.pos.z) < 0.35) route.shift();
           wp = route[0] || tgt;
         }
-        this._stepToward(wp.x, wp.z, sp, close ? 'walk_brutal' : 'run_intent', AI.turnRate.CHASE, 0.3);
+        this._stepToward(wp.x, wp.z, sp, close && !this.chaseFast ? 'walk_brutal' : 'run_intent', AI.turnRate.CHASE, 0.3);
         yield;
         continue;
       }
@@ -1650,7 +1651,7 @@ export class EnemyAI {
       // 近いときは大股の歩き(walk_brutal)、離れていれば走る
       const close = dist < 3.0;
       const walkPh = this.time < (this._chaseWalkUntil || 0);   // P5b-1c: ロッカーから出た後の追い始めは歩き
-      const sp = walkPh ? AI.reveal.walk.speed : close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? (this._chaseSlowSpeed ?? AI.roomLurk.darkChase.speed) : AI.speed.CHASE);
+      const sp = this.chaseFast || (walkPh ? AI.reveal.walk.speed : close ? 1.6 : (this.time < (this._chaseSlowUntil || 0) ? (this._chaseSlowSpeed ?? AI.roomLurk.darkChase.speed) : AI.speed.CHASE));
       const clip = walkPh || close ? 'walk_brutal' : 'run_intent';
       if (this._stepToward(wp.x, wp.z, sp, clip, AI.turnRate.CHASE, 0.3) && route.length) route.shift();
       yield;

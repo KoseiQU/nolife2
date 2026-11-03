@@ -36,6 +36,7 @@ const CSS = `
 #hud-toast { top: calc(50% + 70px); font-size: 14px; }
 #hud-release { bottom: 3.5vh; font-size: 13px; }
 #hud-controls { bottom: 6vh; font-size: 13px; letter-spacing: .1em; padding: 7px 16px; white-space: normal; width: max-content; max-width: 92vw; text-align: center; }
+#hud-whisper { bottom: 15vh; font-size: 14px; letter-spacing: .2em; background: rgba(6,7,9,.42); color: #d8d2c8; transition: opacity .5s linear; }
 #hud-notice { top: 13vh; font-size: 13px; letter-spacing: .14em; background: rgba(6,7,9,.42); color: #d8d2c8; transition: opacity .6s linear; }
 #hud-center { top: 50%; transform: translate(-50%, -50%); font-size: 16px; letter-spacing: .2em; padding: 9px 20px; }
 #hud-tl { position: absolute; left: 18px; top: 16px; display: flex; flex-direction: column; align-items: flex-start; gap: 7px; }
@@ -74,7 +75,7 @@ export class Hud {
     this.root = document.createElement('div');
     this.root.id = 'hud';
     this.root.innerHTML = '<div id="hud-dot"></div><div class="pill" id="hud-hint"></div><div class="pill" id="hud-toast"></div>'
-      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div>'
+      + '<div class="pill" id="hud-release"></div><div class="pill" id="hud-controls"></div><div class="pill" id="hud-center"></div><div class="pill" id="hud-notice"></div><div class="pill" id="hud-whisper"></div>'
       + '<div id="hud-tl"><div id="hud-obj" class="off"></div><div id="hud-item"></div></div><div id="hud-run"></div>'
       + '<div id="hud-light"><svg viewBox="0 0 22 14" aria-hidden="true"><path class="beam" d="M15 4.2 L22 0.5 L22 13.5 L15 9.8 Z" fill="currentColor"/>'
       + '<rect x="0.5" y="5" width="8.5" height="4" rx="1" fill="currentColor"/><path d="M9 4.2 L14.5 3 L14.5 11 L9 9.8 Z" fill="currentColor"/></svg><span></span></div>';
@@ -83,6 +84,7 @@ export class Hud {
       dot: this.root.querySelector('#hud-dot'), hint: this.root.querySelector('#hud-hint'), toast: this.root.querySelector('#hud-toast'),
       release: this.root.querySelector('#hud-release'), controls: this.root.querySelector('#hud-controls'), center: this.root.querySelector('#hud-center'),
       notice: this.root.querySelector('#hud-notice'),
+      whisper: this.root.querySelector('#hud-whisper'),   // P6b-D: 画面下の小さな一言(地下の作業場「ライトを消して動くな」)
       obj: this.root.querySelector('#hud-obj'), item: this.root.querySelector('#hud-item'),
       light: this.root.querySelector('#hud-light'), lightText: this.root.querySelector('#hud-light span'),
       run: this.root.querySelector('#hud-run'),   // P6b-A2(§3.9 #18): 221 の初回の「Shift＋W で走って逃げろ！」(画面中央・大きめ・帯)
@@ -91,6 +93,7 @@ export class Hud {
     this.objective = ''; this.objEmT = 0; this.objLog = []; this.itemText = '';   // P5b-1
     this.noticeT = 0;
     this.noticeLog = [];
+    this.whisperT = 0; this.whisperLog = [];   // P6b-D
     this.el.controls.textContent = TX.controls;
     this.started = false;
     this.locked = false;
@@ -111,6 +114,12 @@ export class Hud {
   flash(text, sec = HUD.flashSec) {
     this.el.toast.textContent = text;
     this.toastT = sec;
+  }
+  // P6b-D: 画面下の小さな一言(sec 秒)
+  whisper(text, sec = 2.5) {
+    this.el.whisper.textContent = text;
+    this.whisperT = sec;
+    this.whisperLog.push({ text, sec });
   }
   // P5a: 画面上部の小さなお知らせ(管理人が同じ階に来た時など。3 秒)
   notice(text, sec = 3.0) {
@@ -179,6 +188,8 @@ export class Hud {
     this.el.toast.classList.toggle('on', this.toastT > 0 && !hidden && !peeping);
     this.noticeT = Math.max(0, this.noticeT - dt);
     this.el.notice.classList.toggle('on', this.noticeT > 0 && !hidden && !peeping);
+    this.whisperT = Math.max(0, this.whisperT - dt);
+    this.el.whisper.classList.toggle('on', this.whisperT > 0 && !hidden && !peeping);
     this.objEmT = Math.max(0, this.objEmT - dt);
     const showObj = !!this.objective && !this.isDead() && !(this.isEnding && this.isEnding());
     this.el.obj.classList.toggle('off', !showObj);
@@ -259,6 +270,7 @@ export class Hud {
       center: this.el.center.classList.contains('on') ? this.el.center.textContent : '',
       runPrompt: this.el.run.classList.contains('on') ? this.el.run.textContent : '',   // P6b-A2
       notice: this.el.notice.classList.contains('on') ? this.el.notice.textContent : '',
+      whisper: this.el.whisper.classList.contains('on') ? this.el.whisper.textContent : '',   // P6b-D
       objective: this.el.obj.classList.contains('off') ? '' : this.objective,
       objectiveEm: this.el.obj.classList.contains('em'),
       item: this.el.item.classList.contains('on') ? this.itemText : '',

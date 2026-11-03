@@ -108,8 +108,14 @@ export class Story {
     if (this.stage === 3 && this.getLevel() === 'X105') return '3x';   // P6b-C: 105 は第3段
     if (this.stage === 9 && this.sub === 'chase') return '9c';
     if (this.stage === 10 && this.getLevel() === 'XB1') return '10b';   // P6b #13: 地下の中「奥の作業場で車のキーを探せ」
-    if (this.stage === 11 && this.getLevel() === 'XB1') return '10c';   // P6b #13: 車のキーを取った後、地下の中は「鉄扉へ戻れ」
+    if (this.stage === 11 && this.getLevel() === 'XB1') return this._xb1Hunting() ? '10h' : '10c';   // P6b #13: 車のキーを取った後、地下の中は「鉄扉へ戻れ」。P6b-D: 管理人の見回りの間は「息を潜めろ」
     return this.stage;
+  }
+
+  // P6b-D: 地下の作業場の見回り(キーを取ってから鉄扉の音まで)の最中か
+  _xb1Hunting() {
+    const c = this.spaces && this.spaces.ctx && this.spaces.ctx('XB1'), h = c && c.state && c.state.hunt;
+    return !!(h && ['wait', 'approach', 'sweep', 'leave', 'found'].includes(h.phase));
   }
 
   // ================================================================ 物
@@ -557,8 +563,9 @@ export class Story {
     ai.chaseOmni = false;
     const near = ai.level === space || ai.level === back || ai.transit || ai.goalLv === back || ['CHASE', 'APPEAR', 'ALERT', 'ATTACK'].includes(ai.state);
     if (near && !ai.dormant && this.onAIReset) this.onAIReset(back === 4 ? 5 : 4);   // 別の階の EV ホールへ(PATROL → 潜伏先は避ける階以外)
-    ai.avoidFloor(back, STORY.spaceExitAvoid);
-    this.log('space_exit_avoid', { space, back, reset: near, ai: ai.level });
+    const lvA = back === 'B1' ? 1 : back;   // P6b-D: 地下(B1)から出た時は 1F を避ける(管理人は B1 の階には来ない。地下の見回りの後の 1F の猶予を上書きで消さない)
+    ai.avoidFloor(lvA, STORY.spaceExitAvoid);
+    this.log('space_exit_avoid', { space, back: lvA, reset: near, ai: ai.level });
   }
 
   // ================================================================ 毎フレーム

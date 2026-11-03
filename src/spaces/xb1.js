@@ -10,12 +10,19 @@
 //   ②迷路は固定の一本道(曲がり 3 回。配置は変わらない。最後の曲がりの先、行き止まりの脇が作業場の灯りの点いた入口)
 //   ③戻りは灯りが背後から消えるだけ。踊り場への扉はキーを取るとすぐ少し開く(2 周余計は廃止)
 //  管理人は地下には来ない(enemy_ai の経路も無い)。上の階の足音・遠い悲鳴(音だけ)。
+//  P6b-D(§3.10 #6 C「潜んでやり過ごす」。上の「管理人は地下には来ない」は失効): 作業場を 6×8m に広げ、棚・吊るした布・作業台(道具板付き)で
+//   裸電球の光が届かない陰を 3 か所(A 棚の裏・B 布の裏・C 作業台の裏)。車のキーを取ると 3 秒で鉄扉の音 → 8 秒で管理人(演出体 = 本体のメッシュを
+//   SCRIPTED で地下へ連れて来る)が足音と光でトンネル側から近づく → 作業場に入る(画面下「ライトを消して動くな」)→ 固定の経路を約 20 秒、光で掃く
+//   (立ち止まり 2 回。2 回目はフックの 2m 以内で息遣い = 非声の素材が無いので無音・記録だけ)→ 迷路へ戻り 10 秒で去る → 鉄扉の音 → 「鉄扉へ戻れ」。
+//   見つかる: 懐中電灯が点いている/0.1m 以上動く/光の円錐(半角 25°・8m・棚や壁で切れる)の中で 4m 以内(作業場の外 = 近づく・去る間は円錐だけ)。
+//   見つかると「みぃつけた」→ 追跡(逃げ切れない速さ・鉄扉からは出られない)→ 死亡 → 鉄扉の内側から・キーはフックへ戻る(第10段)。
 //  光はすべてシェーダの中の計算(トンネルの周期の灯り・標識灯・迷路の格子の灯り・裸電球。three.js のライトは足さない)＋懐中電灯。
 //  座標: 局所 u = x − 520、v = z。トンネルは u −1〜1 を +v へ。周期の窓 v [−6, 18)(踊り場への扉は v 6 の西の壁、標識灯は v 14)。
 
 import * as THREE from 'three';
 import { SPACE_Y } from '../world.js';
 import { GB, GLSL_NOISE, actx } from './gb.js';
+import { HUD_TEXT } from '../hud_text.js';
 
 const OX = 520, OZ = 0;
 // 調整値(docs/p5b2b/NOTES.md §4)
@@ -26,12 +33,26 @@ export const XB1 = {
   // P6b #13: 迷路は固定の一本道(path = 升 [列, 行] の並び。北 → 東 → 北 → 東 の 3 曲がり、行き止まり (7,11) の北の壁が作業場の入口)
   maze: { u0: -9, v0: 52, nc: 9, nr: 12, cell: 2.0, h: 2.45, wall: 2.05, entry: [4, 0], goal: [7, 11],
     path: [[4, 0], [4, 1], [4, 2], [4, 3], [4, 4], [4, 5], [5, 5], [5, 6], [5, 7], [5, 8], [5, 9], [5, 10], [5, 11], [6, 11], [7, 11]] },
-  shop: { u0: 3.5, u1: 8.5, v0: 76.2, v1: 82, h: 2.4, door: 6, bulb: [6.0, 2.15, 79.0] },
+  shop: { u0: 2.5, u1: 8.5, v0: 76.2, v1: 84.2, h: 2.4, door: 6, bulb: [5.4, 2.15, 80.3] },   // P6b-D: 6 × 8m(旧 5 × 5.8m)
   ret: { loops: 0, offBehind: 6.0, offRate: 2.6 },   // P6b #13: 戻りで余計に回る周回 0(踊り場への扉はキーを取るとすぐ開く)
   fog: [0x050607, 0.045],
   sounds: { stepsEvery: [9, 18], stepsEveryRet: [5, 10] },
+  // P6b-D: 潜んでやり過ごす(docs/p6b-d/NOTES.md)。座標は局所 u・v。時刻はキーを取ってからの秒
+  hunt: {
+    doorDelay: 3.0, approach: 8.0, leave: 10.0, walk: 1.0,
+    pathIn: [[2, 69.0], [2, 75.0], [6, 75.0], [6, 76.6]],              // 迷路の一本道 → 作業場の入口(約 8 秒)
+    route: [['walk', 5.6, 79.2], ['stop', 4.0, 0, 1.25, 'stop1'], ['walk', 5.5, 82.5], ['stop', 4.5, 0, 0.7, 'hook'], ['walk', 5.6, 79.2], ['walk', 6.0, 76.6]],
+    pathOut: [[6, 75.0], [2, 75.0], [2, 67.0]],                         // 迷路へ戻って去る(約 10 秒)
+    cone: { half: 25 * Math.PI / 180, range: 8.0, near: 4.0 }, eye: 1.3, pitch: -0.28,
+    move: 0.1, chase: 4.2, sayAfter: 0.8, whisper: 2.5, doorVol: 0.55, doorCut: 700, avoid: 30.0,   // avoid: 去った後に 1F を避ける秒(P6b-C の猶予と同じ)
+    // 光と見通しを遮る物(u0, v0, u1, v1, y0, y1)
+    occ: [{ id: 'shelf', b: [3.4, 77.3, 3.85, 80.7, 0, 2.05] }, { id: 'cloth', b: [7.26, 79.8, 7.34, 81.9, 0.2, 2.3] }, { id: 'bench', b: [7.1, 76.5, 7.75, 78.9, 0, 2.0] }],
+    furn: [[2.5, 82.6, 3.25, 84.0], [4.2, 76.25, 5.3, 76.95], [7.7, 82.8, 8.5, 84.1]],   // 洗い場・冷凍庫・袋の山(低い = 光は遮らない。追跡の経路だけ回り込む)
+    spots: [{ id: 'A', u: 2.95, v: 79.0, by: 'shelf' }, { id: 'B', u: 8.0, v: 80.9, by: 'cloth' }, { id: 'C', u: 8.1, v: 77.6, by: 'bench' }],
+    hook: [5.6, 84.16],
+  },
 };
-const T = XB1.tun, LD = XB1.landing, MZ = XB1.maze, SH = XB1.shop;
+const T = XB1.tun, LD = XB1.landing, MZ = XB1.maze, SH = XB1.shop, HU = XB1.hunt;
 
 export const DEF = {
   origin: [OX, OZ], host: { level: 'B1', door: 'B1DOOR' },
@@ -68,6 +89,20 @@ function makeMaterial(U) {
         float h21p(vec2 i, float per) { i.y = mod(i.y, per); return h21(i); }
         float vnoiseP(vec2 p, float per) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
           return mix(mix(h21p(i, per), h21p(i + vec2(1, 0), per), f.x), mix(h21p(i + vec2(0, 1), per), h21p(i + vec2(1, 1), per), f.x), f.y); }
+        // P6b-D: 作業場の裸電球の光を遮る物(棚・布・作業台)。電球 → P の線分が箱を通れば影
+        float boxHit(vec3 o, vec3 d, vec3 bmin, vec3 bmax) {
+          vec3 P = o + d;
+          if (all(greaterThan(P, bmin - 0.07)) && all(lessThan(P, bmax + 0.07))) return 0.0;   // その物の面・載っている物は自分の影にしない
+          vec3 inv = 1.0 / d; vec3 t0 = (bmin - o) * inv, t1 = (bmax - o) * inv;
+          vec3 tn = min(t0, t1), tf = max(t0, t1);
+          float a = max(max(tn.x, tn.y), tn.z), b = min(min(tf.x, tf.y), tf.z);
+          return (b > max(a, 0.0) && a < 0.985 && b > 0.0) ? 1.0 : 0.0;
+        }
+        float shopVis(vec3 L, vec3 P) {
+          vec3 d = P - L; float hit = 0.0;
+          ${HU.occ.map((o) => { const [u0, v0, u1, v1, y0, y1] = o.b; return `hit = max(hit, boxHit(L, d, vec3(${X(u0).toFixed(3)}, ${Y(y0).toFixed(3)}, ${Z(v0).toFixed(3)}), vec3(${X(u1).toFixed(3)}, ${Y(y1).toFixed(3)}, ${Z(v1).toFixed(3)})));`; }).join('\n          ')}
+          return 1.0 - hit;
+        }
         float lampOn(float z) {   // 戻りで背後から消える灯り(z が uOffZ より奥なら消える。境目は瞬く)
           float x = uOffZ - z;
           if (x > 1.6) return 1.0;
@@ -213,7 +248,7 @@ function makeMaterial(U) {
             // 作業場: 裸電球(黄色い)
             vec3 L = vec3(${X(SH.bulb[0]).toFixed(2)}, uY + ${SH.bulb[1].toFixed(2)}, ${Z(SH.bulb[2]).toFixed(2)});
             vec3 d = L - P; float r2 = dot(d, d); vec3 l = d * inversesqrt(r2);
-            float on = lampOn(L.z);
+            float on = lampOn(L.z) * mix(0.06, 1.0, shopVis(L, P + n * 0.02));   // P6b-D: 棚・布・作業台の陰(わずかな回り込みだけ残す)
             irr += vec3(1.0, 0.82, 0.5) * on * (max(dot(n, l), 0.0) * 0.8 + 0.2) * 0.75 / (r2 + 0.5);
             if (gloss) { vec3 hv = normalize(l + V); sp += vec3(1.0, 0.85, 0.6) * on * pow(max(dot(n, hv), 0.0), 50.0) / (r2 * 0.3 + 1.0); }
           }
@@ -221,7 +256,7 @@ function makeMaterial(U) {
           reflectedLight.indirectSpecular += sp * (1.0 - xR) * 0.5;
         }`);
   };
-  m.customProgramCacheKey = () => 'n2_xb1_v1';
+  m.customProgramCacheKey = () => 'n2_xb1_v2';
   return m;
 }
 
@@ -314,7 +349,7 @@ function buildBeyond(b) {
   b.surf = SURF.oLamp;
   for (let i = 0; i < 4; i++) for (let j = 0; j < 6; j++) { const x = X(-6 + i * 4), z = Z(54 + j * 4); b.box(x - 0.3, Y(MZ.h - 0.02), z - 0.6, x + 0.3, Y(MZ.h - 0.005), z + 0.6, 'ny'); }
   b.surf = SURF.dark; b.box(X(u0), Y(0), Z(v0), X(u1), Y(0.08), Z(v0) + 0.01, 'pz py');
-  // 作業場(古いタイルの壁・コンクリートの床・排水口と染み・洗い場・道具・袋・冷凍庫・ビニールの幕)
+  // 作業場(古いタイルの壁・コンクリートの床・排水口と染み・洗い場・道具・袋・冷凍庫)。P6b-D: 6 × 8m に広げ、棚・布・作業台は別のメッシュ(buildShopProps。影を落とす)
   const S0 = SH;
   b.surf = SURF.cFloor; b.floor(X(S0.u0), X(S0.u1), Z(S0.v0 - 0.2), Z(S0.v1), Y(0));
   b.surf = SURF.cCeil; b.floor(X(S0.u0), X(S0.u1), Z(S0.v0 - 0.2), Z(S0.v1), Y(S0.h), false);
@@ -324,38 +359,75 @@ function buildBeyond(b) {
   b.wallZ(Z(S0.v0 - 0.2), X(S0.u0), X(sd - 0.5), Y(0), Y(S0.h), 1); b.wallZ(Z(S0.v0 - 0.2), X(sd + 0.5), X(S0.u1), Y(0), Y(S0.h), 1); b.wallZ(Z(S0.v0 - 0.2), X(sd - 0.5), X(sd + 0.5), Y(2.05), Y(S0.h), 1);
   b.surf = SURF.dark; b.box(X(sd - 0.5), Y(0), Z(v1), X(sd + 0.5), Y(0.02), Z(S0.v0 - 0.2), 'py');
   for (const a of [sd - 0.56, sd + 0.5]) b.box(X(a), Y(0), Z(v1) - 0.02, X(a + 0.06), Y(2.1), Z(S0.v0 - 0.18), 'px nx pz nz');
-  // 排水口と染み(aCol.xy = 中心の局所 u・v、z = 半径)
+  // 排水口(染みはシェーダの床の中)
   b.surf = SURF.dark; b.floor(X(6.28), X(6.52), Z(79.48), Z(79.72), Y(0.005));
-  // 洗い場(西の壁: 深いシンクと蛇口・ホース)
+  // 洗い場(北西の隅: 深いシンクと蛇口)
   b.surf = SURF.prop; b.col = [0.55, 0.56, 0.55];
-  b.box(X(S0.u0), Y(0.0), Z(78.0), X(S0.u0 + 0.75), Y(0.62), Z(79.5), 'px py pz nz');
-  b.col = [0.22, 0.23, 0.22]; b.box(X(S0.u0 + 0.08), Y(0.4), Z(78.1), X(S0.u0 + 0.67), Y(0.621), Z(79.4), 'py');
-  b.surf = SURF.dark; b.box(X(S0.u0 + 0.02), Y(0.62), Z(78.7), X(S0.u0 + 0.08), Y(1.05), Z(78.78)); b.box(X(S0.u0 + 0.02), Y(1.0), Z(78.7), X(S0.u0 + 0.3), Y(1.04), Z(78.78));
+  b.box(X(S0.u0), Y(0.0), Z(82.6), X(S0.u0 + 0.75), Y(0.62), Z(84.0), 'px py pz nz');
+  b.col = [0.22, 0.23, 0.22]; b.box(X(S0.u0 + 0.08), Y(0.4), Z(82.7), X(S0.u0 + 0.67), Y(0.621), Z(83.9), 'py');
+  b.surf = SURF.dark; b.box(X(S0.u0 + 0.02), Y(0.62), Z(83.3), X(S0.u0 + 0.08), Y(1.05), Z(83.38)); b.box(X(S0.u0 + 0.02), Y(1.0), Z(83.3), X(S0.u0 + 0.3), Y(1.04), Z(83.38));
   b.surf = SURF.prop; b.col = [0.18, 0.32, 0.2];
-  for (let k = 0; k < 3; k++) b.addGeo(new THREE.TorusGeometry(0.28 - k * 0.03, 0.018, 6, 24).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(X(4.6), Y(0.02 + k * 0.035), Z(80.9)));
-  // 道具の板(東の壁): 吊るした道具の影のような形(長柄・のこぎり・ロープ)
-  b.surf = SURF.wood; b.box(X(S0.u1 - 0.03), Y(0.9), Z(79.0), X(S0.u1), Y(2.0), Z(80.8), 'nx');
+  for (let k = 0; k < 3; k++) b.addGeo(new THREE.TorusGeometry(0.28 - k * 0.03, 0.018, 6, 24).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(X(4.4), Y(0.02 + k * 0.035), Z(82.6)));
+  // 道具の板(東の壁・布の裏): 吊るした道具の影のような形(長柄・のこぎり・ロープ)
+  b.surf = SURF.wood; b.box(X(S0.u1 - 0.03), Y(0.9), Z(80.0), X(S0.u1), Y(2.0), Z(81.7), 'nx');
   b.surf = SURF.dark;
-  b.rbox(X(S0.u1 - 0.06), Y(1.42), Z(79.3), 0.03, 0.9, 0.04); b.rbox(X(S0.u1 - 0.06), Y(1.55), Z(79.8), 0.02, 0.35, 0.28);
-  b.rbox(X(S0.u1 - 0.06), Y(1.5), Z(80.35), 0.02, 0.5, 0.06, 0, 0.0, 0.0);
-  b.surf = SURF.prop; b.col = [0.5, 0.42, 0.28]; b.addGeo(new THREE.TorusGeometry(0.17, 0.03, 6, 20).rotateY(Math.PI / 2), new THREE.Matrix4().makeTranslation(X(S0.u1 - 0.07), Y(1.25), Z(80.55)));
-  // ゴムの前掛けと手袋(南の壁)・バケツとモップ・漂白剤の容器(白い・ラベルなし)・黒い袋の山・冷凍庫(鎖)・ビニールの幕
-  b.col = [0.2, 0.17, 0.1]; b.rbox(X(7.6), Y(1.25), Z(S0.v1 - 0.05), 0.55, 0.85, 0.03);
-  b.col = [0.32, 0.28, 0.12]; b.rbox(X(7.15), Y(1.55), Z(S0.v1 - 0.05), 0.12, 0.25, 0.03, 0, 0, 0.2);
-  b.col = [0.3, 0.32, 0.36]; b.addGeo(new THREE.CylinderGeometry(0.15, 0.13, 0.32, 12), new THREE.Matrix4().makeTranslation(X(4.1), Y(0.16), Z(80.3)));
-  b.col = [0.4, 0.35, 0.28]; b.rbox(X(4.25), Y(0.75), Z(80.25), 0.025, 1.5, 0.025, 0, 0.0, 0.18);
-  b.col = [0.84, 0.84, 0.8]; for (let k = 0; k < 4; k++) b.rbox(X(3.75 + k * 0.17), Y(0.16), Z(77.6), 0.14, 0.3, 0.1, k * 0.2);
+  b.rbox(X(S0.u1 - 0.06), Y(1.42), Z(80.3), 0.03, 0.9, 0.04); b.rbox(X(S0.u1 - 0.06), Y(1.55), Z(80.8), 0.02, 0.35, 0.28);
+  b.rbox(X(S0.u1 - 0.06), Y(1.5), Z(81.35), 0.02, 0.5, 0.06, 0, 0.0, 0.0);
+  b.surf = SURF.prop; b.col = [0.5, 0.42, 0.28]; b.addGeo(new THREE.TorusGeometry(0.17, 0.03, 6, 20).rotateY(Math.PI / 2), new THREE.Matrix4().makeTranslation(X(S0.u1 - 0.07), Y(1.25), Z(81.5)));
+  // ゴムの前掛けと手袋(北の壁)・バケツとモップ・漂白剤の容器(白い・ラベルなし)・黒い袋の山(北東)・冷凍庫(南の壁・鎖)
+  b.col = [0.2, 0.17, 0.1]; b.rbox(X(7.2), Y(1.25), Z(S0.v1 - 0.05), 0.55, 0.85, 0.03);
+  b.col = [0.32, 0.28, 0.12]; b.rbox(X(6.75), Y(1.55), Z(S0.v1 - 0.05), 0.12, 0.25, 0.03, 0, 0, 0.2);
+  b.col = [0.3, 0.32, 0.36]; b.addGeo(new THREE.CylinderGeometry(0.15, 0.13, 0.32, 12), new THREE.Matrix4().makeTranslation(X(4.1), Y(0.16), Z(82.0)));
+  b.col = [0.4, 0.35, 0.28]; b.rbox(X(4.25), Y(0.75), Z(81.95), 0.025, 1.5, 0.025, 0, 0.0, 0.18);
+  b.col = [0.84, 0.84, 0.8]; for (let k = 0; k < 4; k++) b.rbox(X(3.95 + k * 0.17), Y(0.16), Z(83.85), 0.14, 0.3, 0.1, k * 0.2);
   b.col = [0.035, 0.035, 0.04];
-  for (const [u, v, s] of [[7.95, 80.1, 0.55], [8.05, 80.75, 0.5], [7.75, 80.6, 0.45], [7.95, 80.4, 0.4]]) b.rbox(X(u), Y(s * 0.4), Z(v), s * 0.9, s * 0.8, s, u * 3.1, 0.1, -0.1);
-  b.col = [0.82, 0.82, 0.8]; b.box(X(7.35), Y(0), Z(77.0), X(8.45), Y(0.85), Z(78.6));
-  b.surf = SURF.dark; for (let k = 0; k < 9; k++) b.rbox(X(7.33), Y(0.8 - k * 0.075), Z(77.5 + (k % 2) * 0.03), 0.02, 0.05, 0.035, 0, 0.6, 0);
-  b.surf = SURF.prop; b.col = [0.62, 0.64, 0.64]; b.rbox(X(5.0), Y(1.3), Z(77.8), 1.0, 2.1, 0.01, 0.3, 0, 0.03);
+  for (const [u, v, s] of [[8.0, 83.3, 0.55], [8.1, 83.8, 0.5], [7.85, 83.65, 0.45], [8.05, 83.0, 0.4]]) b.rbox(X(u), Y(s * 0.4), Z(v), s * 0.9, s * 0.8, s, u * 3.1, 0.1, -0.1);
+  b.col = [0.82, 0.82, 0.8]; b.box(X(4.2), Y(0), Z(76.25), X(5.3), Y(0.85), Z(76.95));
+  b.surf = SURF.dark; for (let k = 0; k < 9; k++) b.rbox(X(4.7 + (k % 2) * 0.03), Y(0.8 - k * 0.075), Z(76.96), 0.05, 0.035, 0.02, 0, 0, 0.6);
   // フックの板(車のキー)・裸電球
   const [hu, hy, hv] = DEF.slots.hook;
   b.surf = SURF.wood; b.box(X(hu - 0.3), Y(hy - 0.12), Z(hv) - 0.02, X(hu + 0.3), Y(hy + 0.08), Z(hv) + 0.02);
   b.surf = SURF.dark; for (const o of [-0.18, 0, 0.18]) b.box(X(hu + o) - 0.004, Y(hy - 0.025), Z(hv) - 0.06, X(hu + o) + 0.004, Y(hy - 0.015), Z(hv) - 0.02);
   b.surf = SURF.bulb; b.addGeo(new THREE.SphereGeometry(0.045, 10, 8), new THREE.Matrix4().makeTranslation(X(SH.bulb[0]), Y(SH.bulb[1]), Z(SH.bulb[2])));
   b.surf = SURF.dark; b.box(X(SH.bulb[0]) - 0.006, Y(SH.bulb[1] + 0.04), Z(SH.bulb[2]) - 0.006, X(SH.bulb[0]) + 0.006, Y(SH.h), Z(SH.bulb[2]) + 0.006, 'px nx pz nz');
+}
+
+// P6b-D: 作業場の陰を作る物(棚・作業台と道具板・布を吊るす棒)。影を落とすので別のメッシュ(管理人の懐中電灯の光も切れる)
+function buildShopProps(b) {
+  const O = Object.fromEntries(HU.occ.map((o) => [o.id, o.b]));
+  // 棚(スチールの棚。裏板と箱で詰まっている = 向こうが見えない)
+  { const [u0, v0, u1, v1, , y1] = O.shelf;
+    b.surf = SURF.iron;
+    for (const u of [u0, u1 - 0.04]) for (const v of [v0, (v0 + v1) / 2, v1 - 0.04]) b.box(X(u), Y(0), Z(v), X(u + 0.04), Y(y1), Z(v + 0.04));
+    for (const y of [0.08, 0.62, 1.16, 1.7, y1 - 0.03]) b.box(X(u0), Y(y), Z(v0), X(u1), Y(y + 0.03), Z(v1));
+    b.surf = SURF.wood; b.box(X(u0), Y(0.05), Z(v0), X(u0 + 0.025), Y(y1), Z(v1), 'px nx');   // 裏板
+    b.surf = SURF.prop; let k = 0;
+    for (const y of [0.11, 0.65, 1.19, 1.73]) for (let v = v0 + 0.08; v < v1 - 0.3; v += 0.42) {
+      const w = 0.28 + ((k * 37) % 9) / 60, h = 0.3 + ((k * 53) % 7) / 40; b.col = [[0.33, 0.27, 0.18], [0.24, 0.24, 0.26], [0.4, 0.33, 0.22], [0.18, 0.2, 0.19]][k % 4];
+      b.box(X(u0 + 0.04), Y(y + 0.03), Z(v), X(u1 - 0.03), Y(y + 0.03 + Math.min(h, 0.5)), Z(v + w)); k++;
+    } }
+  // 作業台(天板 0.9m)と、西の縁に立てた道具板(〜2.0m)・下の幕板 = 西から見ると壁
+  { const [u0, v0, u1, v1, , y1] = O.bench;
+    b.surf = SURF.wood; b.box(X(u0), Y(0.86), Z(v0), X(u1), Y(0.92), Z(v1));
+    b.surf = SURF.iron; for (const u of [u0 + 0.03, u1 - 0.07]) for (const v of [v0 + 0.03, v1 - 0.07]) b.box(X(u), Y(0), Z(v), X(u + 0.04), Y(0.86), Z(v + 0.04));
+    b.surf = SURF.wood; b.box(X(u0), Y(0.04), Z(v0), X(u0 + 0.03), Y(0.86), Z(v1));               // 幕板
+    b.box(X(u0), Y(0.92), Z(v0), X(u0 + 0.04), Y(y1), Z(v1));                                       // 道具板
+    b.surf = SURF.dark;
+    for (let v = v0 + 0.25; v < v1 - 0.2; v += 0.38) b.rbox(X(u0 - 0.03), Y(1.35 + ((v * 7) % 0.3)), Z(v), 0.03, 0.45 + ((v * 13) % 0.3), 0.05, 0, 0, 0.15);   // 掛けた道具の影
+    b.surf = SURF.prop; b.col = [0.3, 0.31, 0.33]; b.rbox(X(u0 + 0.3), Y(1.0), Z(v0 + 0.6), 0.35, 0.16, 0.25);   // 台の上の工具箱
+    b.col = [0.5, 0.48, 0.44]; b.rbox(X(u0 + 0.35), Y(0.97), Z(v1 - 0.5), 0.25, 0.1, 0.4, 0.3); }
+  // 布を吊るす棒(布は別のメッシュ = 揺れる)
+  { const [u0, v0, , v1, , y1] = HU.occ.find((o) => o.id === 'cloth').b;
+    b.surf = SURF.iron; b.addGeo(new THREE.CylinderGeometry(0.012, 0.012, v1 - v0 + 0.3, 8).rotateX(Math.PI / 2), new THREE.Matrix4().makeTranslation(X(u0 + 0.04), Y(y1 + 0.03), Z((v0 + v1) / 2)));
+    for (const v of [v0 - 0.1, v1 + 0.1]) b.box(X(u0 + 0.035), Y(y1 + 0.03), Z(v) - 0.006, X(u0 + 0.047), Y(SH.h), Z(v) + 0.006, 'px nx pz nz'); }
+}
+// 吊るした布(汚れた帆布)。原点 = 上の縁(棒)。両面
+function buildCloth() {
+  const b = new GB(); const [u0, v0, u1, v1, y0, y1] = HU.occ.find((o) => o.id === 'cloth').b; const uc = (u0 + u1) / 2;
+  b.surf = SURF.prop; b.col = [0.36, 0.33, 0.27];
+  for (const nx of [1, -1]) b.quad([nx * 0.004, -(y1 - y0), 0], [0, 0, v1 - v0], [0, y1 - y0, 0], [nx, 0, 0], 6, 4);
+  b.col = [0.2, 0.17, 0.13]; b.quad([0.006, -(y1 - y0) + 0.05, (v1 - v0) * 0.55], [0, 0, 0.5], [0, 0.6, 0], [1, 0, 0]);   // 染み
+  const g = b.geometry(); return { g, x: X(uc), y: Y(y1), z: Z(v0) };
 }
 
 function buildPartitionGeo() {
@@ -413,6 +485,9 @@ export function build(ctx) {
     st.doorPivots = [-1, 0, 1, 2].map((k) => { const pv = new THREE.Group(); pv.position.set(X(-T.w / 2 - 0.15), Y(0), Z(T.door - 0.44 + k * T.L)); const leaf = new THREE.Mesh(geo, mat); leaf.receiveShadow = true; pv.add(leaf); g.add(pv); return pv; }); }
   { const b = new GB(); buildLanding(b); st.landing = mesh(b.geometry(), 'XB1_landing'); }
   { const b = new GB(); buildBeyond(b); st.beyond = mesh(b.geometry(), 'XB1_beyond'); }
+  // P6b-D: 作業場の棚・作業台・布(管理人の懐中電灯の影を落とす)
+  { const b = new GB(); buildShopProps(b); st.shopProps = mesh(b.geometry(), 'XB1_shopProps'); st.shopProps.castShadow = true; }
+  { const c = buildCloth(); const m = st.cloth = new THREE.Mesh(c.g, mat); m.name = 'XB1_cloth'; m.position.set(c.x, c.y, c.z); m.castShadow = true; m.receiveShadow = true; m.frustumCulled = false; g.add(m); }
   // 迷路の仕切り(InstancedMesh。立っていない壁は大きさ 0)
   st.edges = mazeEdges();
   { const pm = st.partMesh = new THREE.InstancedMesh(buildPartitionGeo(), mat, st.edges.length); pm.name = 'XB1_partitions'; pm.receiveShadow = true; pm.castShadow = true; pm.frustumCulled = false; g.add(pm); }
@@ -434,13 +509,15 @@ export function build(ctx) {
   col(ctx, MZ.u0, mv1, SH.door - 0.5, mv1 + 0.2); col(ctx, SH.door + 0.5, mv1, mu1, mv1 + 0.2);
   col(ctx, SH.u0 - 0.2, SH.v0 - 0.2, SH.u0, SH.v1); col(ctx, SH.u1, SH.v0 - 0.2, SH.u1 + 0.2, SH.v1); col(ctx, SH.u0, SH.v1, SH.u1, SH.v1 + 0.2);
   col(ctx, SH.u0, SH.v0 - 0.2, SH.door - 0.5, SH.v0); col(ctx, SH.door + 0.5, SH.v0 - 0.2, SH.u1, SH.v0);
-  col(ctx, SH.u0, 78.0, SH.u0 + 0.75, 79.5, 'furn', 1.0); col(ctx, 7.35, 77.0, 8.45, 78.6, 'furn', 0.85); col(ctx, 7.5, 79.7, 8.5, 81.1, 'furn', 0.6);
+  // P6b-D: 洗い場(北西)・冷凍庫(南の壁)・袋の山(北東)・棚・作業台・布
+  for (const [f, h] of HU.furn.map((b, i) => [b, [1.0, 0.85, 0.6][i]])) col(ctx, f[0], f[1], f[2], f[3], 'furn', h);
+  for (const o of HU.occ) { const [u0, v0, u1, v1, , y1] = o.b; col(ctx, u0, v0, u1, v1, 'furn', y1 + 0.1); }
   for (const e of st.edges) {
     const t = 0.06, L = MZ.cell / 2;
     e.col = e.vert ? col(ctx, e.u - t, e.v - L, e.u + t, e.v + L, 'wall', MZ.wall) : col(ctx, e.u - L, e.v - t, e.u + L, e.v + t, 'wall', MZ.wall);
   }
-  // 敵の照明(使わない = 管理人は来ない。踊り場の電球だけ)
-  ctx.lamps.push([X(LD.bulb[0]), Y(LD.bulb[1]), Z(LD.bulb[2])]);
+  // 敵の照明(踊り場の電球・P6b-D: 作業場の裸電球 = 見回りに来た管理人を照らす)
+  ctx.lamps.push([X(LD.bulb[0]), Y(LD.bulb[1]), Z(LD.bulb[2])], [X(SH.bulb[0]), Y(SH.bulb[1]), Z(SH.bulb[2])]);
   reset(ctx);
   g.visible = false;
 }
@@ -460,7 +537,7 @@ function reset(ctx) {
   const st = ctx.state;
   Object.assign(st, { t: 0, released: false, passes: 0, lastPassV: null, armed: false, travel: 1, prevV: null, teleports: 0, walked: 0,
     keyTaken: false, keyBefore: false, retLoops: 0, retOpen: false, offZ: 1e4, door: 0.9, doorTarget: 0.9, doorLocked: false, flips: 0, log: [], noticed: false,
-    stepsT: 9 + Math.random() * 6, steps: null, screamed: false, walkIn: 0, walkRet: 0, lastPos: null, edgeLog: [] });
+    stepsT: 9 + Math.random() * 6, steps: null, screamed: false, walkIn: 0, walkRet: 0, lastPos: null, edgeLog: [], hunt: null });
   initMaze(st);
   for (const e of st.edges) setEdge(ctx, e, e.on);
   applyRelease(ctx, false);
@@ -491,7 +568,11 @@ export function enter(ctx) {
   if (st.keyBefore) applyRelease(ctx, true);
   st.log.push({ t: 0, ev: 'enter', keyBefore: st.keyBefore });
 }
-export function leave(ctx) { stopSound(ctx); }
+export function leave(ctx) {
+  stopSound(ctx);
+  const h = ctx.state.hunt;   // P6b-D: 見回りの途中で出た(管理人の後始末は story._afterSpaceExit が本体を別の階へ戻す)
+  if (h && !['done', 'aborted'].includes(h.phase)) { h.phase = 'aborted'; ctx.state.log.push({ t: ctx.state.t, ev: 'hunt_aborted' }); if (ctx.ai) { ctx.ai.chaseFast = 0; ctx.ai.chaseOmni = false; } }
+}
 export function dispose(ctx) {
   for (const o of [...ctx.group.children]) { ctx.group.remove(o); o.traverse((m) => { if (m.geometry) m.geometry.dispose(); }); }
   if (ctx.state.mat) ctx.state.mat.dispose();
@@ -551,7 +632,10 @@ export function update(dt, ctx) {
   if (!st.keyBefore && !st.keyTaken && s && s.taken && s.taken.has('kCar')) {
     st.keyTaken = true; st.doorLocked = true; st.doorTarget = 0; st.offZ = pl.pos.z + XB1.ret.offBehind + 2.0;
     st.log.push({ t: st.t, ev: 'key', u, v }); sfx(ctx, 'key_drone');
+    if (s.active && s.aiControl) { st.hunt = { t: 0, phase: 'wait', log: [] }; st.log.push({ t: st.t, ev: 'hunt_start' }); }   // P6b-D
   }
+  if (st.cloth) { const w = Math.sin(st.t * 0.9) * 0.035 + Math.sin(st.t * 2.3 + 1.1) * 0.012; st.cloth.rotation.z = w; st.cloth.rotation.x = Math.sin(st.t * 0.6) * 0.01; }   // P6b-D: 布の揺れ
+  huntUpdate(ctx, dt);
   if (st.keyTaken) {
     const want = pl.pos.z + XB1.ret.offBehind;
     if (want < st.offZ) st.offZ = Math.max(want, st.offZ - XB1.ret.offRate * dt);
@@ -571,7 +655,11 @@ function release(ctx, why) {
 
 // ================================================================ 物語とのつなぎ
 // 戻る口: 鉄扉(歩いて近づくか E で出る)
-export function exits(ctx) { return [{ x: X(LD.door), z: Z(LD.v0 + 0.02), n: [0, 1], auto: true, reach: 1.3, depth: 0.6, half: 0.6 }]; }
+export function exits(ctx) {
+  const h = ctx.state.hunt;
+  if (h && h.phase === 'found') return [];   // P6b-D: 見つかった後は鉄扉から出られない(逃げ切れない)
+  return [{ x: X(LD.door), z: Z(LD.v0 + 0.02), n: [0, 1], auto: true, reach: 1.3, depth: 0.6, half: 0.6 }];
+}
 // 画面ガイドの対象: 踊り場への扉(トンネル側・踊り場側から E で開ける。戻りは 2 周まで開かない)
 export function target(ctx, look) {
   const st = ctx.state;
@@ -593,6 +681,219 @@ function useDoor(ctx) {
   return 'door';
 }
 
+
+// ================================================================ P6b-D: 潜んでやり過ごす(§3.10 #6 C)
+const wrapA = (a) => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+// 時刻表(キーを取ってからの秒 → 管理人の位置・体の向き・光の向き)。純粋な関数(テストが全経路を数える)
+let _tl = null;
+function timeline() {
+  if (_tl) return _tl;
+  const segs = []; let t = HU.doorDelay;
+  const poly = (pts, dur, kind) => { const L = []; let tot = 0; for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); L.push(d); tot += d; } segs.push({ kind, t0: t, t1: t + dur, pts, L, tot }); t += dur; };
+  poly(HU.pathIn, HU.approach, 'approach');
+  const tSweep = t; let cur = HU.pathIn[HU.pathIn.length - 1];
+  for (const r of HU.route) {
+    if (r[0] === 'walk') { const to = [r[1], r[2]], d = Math.hypot(to[0] - cur[0], to[1] - cur[1]); segs.push({ kind: 'sweep', t0: t, t1: t + d / HU.walk, pts: [cur, to], L: [d], tot: d }); t += d / HU.walk; cur = to; }
+    else { segs.push({ kind: 'sweep', stop: r[4], t0: t, t1: t + r[1], at: cur, base: r[2], amp: r[3] }); t += r[1]; }
+  }
+  const tLeave = t;
+  poly([cur, ...HU.pathOut], HU.leave, 'leave');
+  _tl = { segs, tSweep, tLeave, tEnd: t };
+  return _tl;
+}
+export function huntPose(t) {
+  const TL = timeline();
+  if (t < HU.doorDelay) return { phase: 'wait' };
+  if (t >= TL.tEnd) return { phase: 'done' };
+  const sg = TL.segs.find((q) => t < q.t1);
+  if (sg.stop) {
+    const k = (t - sg.t0) / (sg.t1 - sg.t0), aim = sg.base + sg.amp * Math.sin(k * 2 * Math.PI);
+    return { phase: 'sweep', u: sg.at[0], v: sg.at[1], yaw: sg.base + (aim - sg.base) * 0.45, aim, moving: false, stop: sg.stop, speed: 0 };
+  }
+  let d = (t - sg.t0) / (sg.t1 - sg.t0) * sg.tot, i = 0;
+  while (i < sg.L.length - 1 && d > sg.L[i]) { d -= sg.L[i]; i++; }
+  const a = sg.pts[i], b = sg.pts[i + 1], k = Math.min(1, d / Math.max(sg.L[i], 1e-6));
+  const yaw = Math.atan2(b[0] - a[0], b[1] - a[1]);
+  return { phase: sg.kind, u: a[0] + (b[0] - a[0]) * k, v: a[1] + (b[1] - a[1]) * k, yaw, aim: yaw, moving: true, speed: sg.tot / (sg.t1 - sg.t0) };
+}
+// 見通しを遮る物(局所 u・v の矩形): 棚・布・作業台、作業場の南の壁(入口の左右)、迷路の外周の壁、立っている迷路の仕切り
+function blockers(st) {
+  const R = HU.occ.map((o) => o.b.slice(0, 4));
+  R.push([SH.u0 - 0.2, 75.95, SH.door - 0.5, 76.2], [SH.door + 0.5, 75.95, SH.u1 + 0.2, 76.2], [MZ.u0, 75.95, SH.u0, 76.2], [SH.u1, 75.95, MZ.u0 + MZ.nc * MZ.cell, 76.2]);
+  R.push([MZ.u0, 51.8, -T.w / 2, 52.0], [T.w / 2, 51.8, MZ.u0 + MZ.nc * MZ.cell, 52.0]);
+  if (st && st.edges) for (const e of st.edges) if (e.on) R.push(e.vert ? [e.u - 0.06, e.v - MZ.cell / 2, e.u + 0.06, e.v + MZ.cell / 2] : [e.u - MZ.cell / 2, e.v - 0.06, e.u + MZ.cell / 2, e.v + 0.06]);
+  return R;
+}
+function segHitsRect(au, av, bu, bv, r) {
+  let t0 = 0, t1 = 1; const du = bu - au, dv = bv - av;
+  for (const [p, q] of [[-du, au - r[0]], [du, r[2] - au], [-dv, av - r[1]], [dv, r[3] - av]]) {
+    if (Math.abs(p) < 1e-9) { if (q < 0) return false; continue; }
+    const t = q / p; if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+  }
+  return t0 < t1 && t1 > 0.001 && t0 < 0.999;
+}
+// 管理人の光(pose)から局所 (u, v) が見えるか: 円錐の中(水平の角 ≤ 半角・8m 以内)・4m 以内・遮る物なし
+export function coneSees(P, u, v, st = null) {
+  const du = u - P.u, dv = v - P.v, dist = Math.hypot(du, dv);
+  const ang = Math.abs(wrapA(Math.atan2(du, dv) - P.aim));
+  const inCone = ang <= HU.cone.half && dist <= HU.cone.range;
+  const los = !blockers(st).some((r) => segHitsRect(P.u, P.v, u, v, r));
+  return { seen: inCone && dist <= HU.cone.near && los, inCone, dist, ang, los };
+}
+function huntSay(ctx, name, extra = {}) { const h = ctx.state.hunt; h.log.push({ t: +h.t.toFixed(2), ev: name, ...extra }); ctx.state.log.push({ t: ctx.state.t, ev: 'hunt_' + name, ...extra }); }
+function mgrSetup(ctx, P) {
+  const ai = ctx.ai, e = ctx.enemy;
+  ai.uninterruptible = false;
+  ai.setState('SCRIPTED', { force: true, log: true });
+  if (ai.level !== ctx.key) ai.setLevel(ctx.key);
+  ai.dormant = false; ai.concealed = false; ai.transit = false; ai.chaseOmni = false; ai.chaseFast = 0;
+  e.place(X(P.u), Z(P.v), P.yaw); e.setFlashlight(true); e.speed = 0;
+  ctx.state.hunt.yaw = P.yaw;
+}
+function steelDoor(ctx, which) {
+  const p = ctx.player.pos;
+  if (ctx.audio && ctx.audio.play) ctx.audio.play('crash', new THREE.Vector3(p.x, SPACE_Y + 2.5, p.z - 22), HU.doorVol, { cutoff: HU.doorCut, ref: 8 });   // 上の鉄扉(遠く・こもる)
+  huntSay(ctx, 'steel_door', { which });
+}
+function huntUpdate(ctx, dt) {
+  const st = ctx.state, h = st.hunt;
+  if (!h || ['done', 'aborted'].includes(h.phase)) return;
+  if (!ctx.ai || !ctx.enemy) return;
+  h.t += dt;
+  const ai = ctx.ai, e = ctx.enemy, pl = ctx.player;
+  const pu = pl.pos.x - OX, pv = pl.pos.z - OZ;
+  if (h.phase === 'found') {
+    if (!h.chasing && h.t - h.foundAt >= HU.sayAfter && ai.state !== 'ATTACK') {
+      h.chasing = true;
+      ai.chaseOmni = true; ai.chaseFast = HU.chase; ai.lastKnown = { x: pl.pos.x, z: pl.pos.z, lv: ctx.key };
+      ai.setState('CHASE', { force: true });
+      huntSay(ctx, 'chase');
+    }
+    return;
+  }
+  const P = huntPose(h.t);
+  if (P.phase === 'wait') return;
+  if (P.phase === 'done') {
+    // 去った: 演出体を消し、本体は上の階の巡回へ(1F は 30 秒避ける = P6b-C の猶予)
+    h.phase = 'done';
+    e.aimPoint = null; e.speed = 0; e.setFlashlight(false); ai.concealed = true;
+    if (ctx.story && ctx.story.onAIReset) ctx.story.onAIReset(4);
+    if (ai.avoidFloor) ai.avoidFloor(1, HU.avoid);
+    steelDoor(ctx, 'leave');
+    huntSay(ctx, 'done');
+    return;
+  }
+  if (!h.placed) { h.placed = true; steelDoor(ctx, 'enter'); mgrSetup(ctx, P); huntSay(ctx, 'appear', { u: P.u, v: P.v }); }
+  h.phase = P.phase;
+  // 演出体を時刻表どおりに動かす(体の向きはなめらかに)
+  h.yaw += THREE.MathUtils.clamp(wrapA(P.yaw - h.yaw), -3.5 * dt, 3.5 * dt);
+  e.place(X(P.u), Z(P.v), h.yaw);
+  e.speed = P.speed;
+  if (P.moving) { const cs = e.clipSpeed.walk_standard || 1; if (e.current !== 'walk_standard') e.play('walk_standard', { fade: 0.3, timeScale: P.speed / cs }); else e.setTimeScale(P.speed / cs); }
+  else if (e.current !== 'look_idle') e.play('look_idle', { fade: 0.35 });
+  const cp = Math.cos(HU.pitch), sp = Math.sin(HU.pitch);
+  (e.aimPoint ||= new THREE.Vector3()).set(X(P.u) + Math.sin(P.aim) * cp * 3, Y(HU.eye) + sp * 3, Z(P.v) + Math.cos(P.aim) * cp * 3);
+  const inShop = P.v > SH.v0;
+  if (inShop && !h.inShop) {
+    h.inShop = true; h.anchor = { u: pu, v: pv };
+    if (ctx.hud && ctx.hud.whisper) ctx.hud.whisper(HUD_TEXT.story.xb1Hide, HU.whisper);
+    huntSay(ctx, 'enter_shop');
+  }
+  if (P.stop === 'hook' && !h.breath) { h.breath = true; huntSay(ctx, 'breath', { silent: true, dHook: +Math.hypot(P.u - HU.hook[0], P.v - HU.hook[1]).toFixed(2) }); }   // 息遣い: 非声の息の素材が無い = 無音
+  // 見つかる
+  let why = null;
+  if (inShop && pl.flashlightOn) why = 'light';
+  else if (inShop && h.anchor && Math.hypot(pu - h.anchor.u, pv - h.anchor.v) >= HU.move) why = 'move';
+  else { const c = coneSees(P, pu, pv, st); if (c.seen) why = 'cone'; }
+  if (why) found(ctx, why, P);
+}
+function found(ctx, why, P) {
+  const st = ctx.state, h = st.hunt, e = ctx.enemy, pl = ctx.player;
+  h.phase = 'found'; h.foundAt = h.t; h.why = why;
+  const dx = pl.pos.x - e.pos.x, dz = pl.pos.z - e.pos.z;
+  e.place(e.pos.x, e.pos.z, Math.atan2(dx, dz)); e.speed = 0;
+  e.play('look_idle', { fade: 0.2 });
+  (e.aimPoint ||= new THREE.Vector3()).set(pl.pos.x, pl.pos.y + 1.2, pl.pos.z);
+  if (ctx.audio && ctx.audio.play) ctx.audio.play('breath', e.headWorld(new THREE.Vector3()), 0.9);   // 「みぃつけた」(mgr_line_found_01)
+  huntSay(ctx, 'found', { why, u: +(pl.pos.x - OX).toFixed(2), v: +(pl.pos.z - OZ).toFixed(2), mu: +P.u.toFixed(2), mv: +P.v.toFixed(2) });
+}
+// この空間で死んだ時(見つかって捕まった): 第10段の開始(鉄扉の内側)へ。車のキーはフックに戻る(taken・item・段を巻き戻す)
+export function respawn(ctx) {
+  const st = ctx.state, h = st.hunt, s = ctx.story;
+  if (!h || h.phase !== 'found') return null;
+  if (s) { s.taken.delete('kCar'); s.item = null; s.stage = 10; s.sub = null; s.log('stage', { stage: 10, sub: null, why: 'xb1_found' }); }
+  const rel = st.released;
+  reset(ctx);
+  if (rel) applyRelease(ctx, true);   // ループはもう抜けている(解いた謎を繰り返させない)
+  st.log.push({ t: st.t, ev: 'respawn_found' });
+  if (ctx.ai) { ctx.ai.chaseOmni = false; ctx.ai.chaseFast = 0; }
+  return { level: ctx.key, x: X(DEF.entry[0]), z: Z(DEF.entry[1]), yaw: DEF.entry[2] };
+}
+// 管理人の経路(見つかった後の追跡): 作業場 ↔ 入口 ↔ 迷路の一本道 ↔ 前室 ↔ トンネル ↔ 踊り場 の折れ線。作業場の中は棚・布・作業台を回り込む
+const NAV = [[6, 77.3], [6, 76.0], [6, 75], [2, 75], [2, 63], [0, 63], [0, 53], [0, 50.5], [0, 6], [-1.6, 6], [-3.1, 5]];
+const NAV_L = NAV.slice(1).map((p, i) => Math.hypot(p[0] - NAV[i][0], p[1] - NAV[i][1]));
+function navAt(u, v) {
+  if (v > SH.v0) return { i: -1, s: -1 };   // 作業場の中
+  let best = null;
+  for (let i = 0; i < NAV_L.length; i++) {
+    const [ax, az] = NAV[i], [bx, bz] = NAV[i + 1], L = NAV_L[i];
+    const k = THREE.MathUtils.clamp(((u - ax) * (bx - ax) + (v - az) * (bz - az)) / (L * L), 0, 1);
+    const d = Math.hypot(u - (ax + (bx - ax) * k), v - (az + (bz - az) * k));
+    if (!best || d < best.d) best = { i, k, d, s: NAV_L.slice(0, i).reduce((a, b) => a + b, 0) + k * L };
+  }
+  return best;
+}
+// 作業場の中の最短路(障害物の角を 0.55m 外へ出した点だけを通る見通しのグラフ。障害物は 0.32m 太らせて当てる)。返り値 = 途中の点(始点・終点は含まない)
+function shopPath(fu, fv, tu, tv) {
+  const boxes = [...HU.occ.map((o) => o.b.slice(0, 4)), ...HU.furn];
+  const fat = boxes.map((r) => [r[0] - 0.32, r[1] - 0.32, r[2] + 0.32, r[3] + 0.32]);
+  const clear = (au, av, bu, bv) => !fat.some((r) => segHitsRect(au, av, bu, bv, r));
+  const inside = (u, v) => fat.some((r) => u > r[0] && u < r[2] && v > r[1] && v < r[3]);
+  if (clear(fu, fv, tu, tv)) return [];
+  const nodes = [[fu, fv], [tu, tv]];
+  for (const r of boxes) for (const [cu, cv] of [[r[0] - 0.55, r[1] - 0.55], [r[2] + 0.55, r[1] - 0.55], [r[0] - 0.55, r[3] + 0.55], [r[2] + 0.55, r[3] + 0.55]]) {
+    if (cu > SH.u0 + 0.3 && cu < SH.u1 - 0.3 && cv > SH.v0 + 0.3 && cv < SH.v1 - 0.3 && !inside(cu, cv)) nodes.push([cu, cv]);
+  }
+  const n = nodes.length, dist = new Array(n).fill(Infinity), prev = new Array(n).fill(-1), done = new Array(n).fill(false);
+  dist[0] = 0;
+  for (let it = 0; it < n; it++) {
+    let k = -1; for (let i = 0; i < n; i++) if (!done[i] && (k < 0 || dist[i] < dist[k])) k = i;
+    if (k < 0 || dist[k] === Infinity) break;
+    done[k] = true; if (k === 1) break;
+    for (let j = 0; j < n; j++) {
+      if (done[j] || !clear(nodes[k][0], nodes[k][1], nodes[j][0], nodes[j][1])) continue;
+      const d = dist[k] + Math.hypot(nodes[j][0] - nodes[k][0], nodes[j][1] - nodes[k][1]);
+      if (d < dist[j]) { dist[j] = d; prev[j] = k; }
+    }
+  }
+  if (prev[1] < 0) return [];
+  const path = []; for (let k = prev[1]; k > 0; k = prev[k]) path.unshift(nodes[k]);
+  return path;
+}
+export function nav(ctx, fx, fz, tx, tz) {
+  const fu = fx - OX, fv = fz - OZ, tu = tx - OX, tv = tz - OZ, pts = [];
+  const a = navAt(fu, fv), b = navAt(tu, tv);
+  if (a.i === -1 && b.i === -1) {   // 作業場の中: 棚・布・作業台・洗い場・冷凍庫・袋の山を回る(角の点の見通しの最短路)
+    for (const q of shopPath(fu, fv, tu, tv)) pts.push({ x: X(q[0]), z: Z(q[1]) });
+    pts.push({ x: tx, z: tz }); return pts;
+  }
+  if (a.i === -1 || b.i === -1) {   // 作業場 ↔ 外: 作業場の中は入口の内側の点まで回り込む
+    const inner = NAV[0];
+    if (a.i === -1) { for (const q of shopPath(fu, fv, inner[0], inner[1])) pts.push({ x: X(q[0]), z: Z(q[1]) }); pts.push({ x: X(inner[0]), z: Z(inner[1]) }); }
+    const sa2 = a.i === -1 ? 0 : a.s, sb2 = b.i === -1 ? 0 : b.s, ia2 = a.i === -1 ? 0 : a.i, ib2 = b.i === -1 ? 0 : b.i;
+    if (sa2 < sb2) { for (let k = ia2 + 1; k <= ib2; k++) pts.push({ x: X(NAV[k][0]), z: Z(NAV[k][1]) }); }
+    else if (sa2 > sb2) { for (let k = ia2; k > ib2; k--) pts.push({ x: X(NAV[k][0]), z: Z(NAV[k][1]) }); }
+    if (b.i === -1) { pts.push({ x: X(inner[0]), z: Z(inner[1]) }); for (const q of shopPath(inner[0], inner[1], tu, tv)) pts.push({ x: X(q[0]), z: Z(q[1]) }); }
+    pts.push({ x: tx, z: tz }); return pts;
+  }
+  const ia = a.i === -1 ? -1 : a.i, ib = b.i === -1 ? -1 : b.i;
+  const sa = a.i === -1 ? -1 : a.s, sb = b.i === -1 ? -1 : b.s;
+  if (sa < sb) { for (let k = ia + 1; k <= ib; k++) pts.push({ x: X(NAV[k][0]), z: Z(NAV[k][1]) }); }
+  else if (sa > sb) { for (let k = ia; k > ib; k--) pts.push({ x: X(NAV[k][0]), z: Z(NAV[k][1]) }); }
+  pts.push({ x: tx, z: tz });
+  return pts;
+}
+
 // ================================================================ 音(P4b)
 //  水の流れ・滴り = 採用 amb_b1 B「流れる水」のループ。地下(B1・XB1・1F の地下への階段)の空気は main.js の環境音(updateAmbience)がまとめて鳴らす。
 //  踊り場の扉が閉まる音(door_steel)・抜ける音と鍵の低音(space_release)・戻りで扉が開く軋み(door_creak_slow)は「なし」で外した(無音)。
@@ -602,6 +903,7 @@ function sound(ctx, dt, inTun) {
   const st = ctx.state, c = actx(ctx); if (!c) return;
   // 上の階の足音(管理人は地下には来ない。音だけ)
   st.stepsT -= dt;
+  if (st.hunt && !['done', 'aborted'].includes(st.hunt.phase)) { st.steps = null; st.stepsT = Math.max(st.stepsT, 6); }   // P6b-D: 見回りの間は上の足音を鳴らさない
   if (st.stepsT <= 0 && !st.steps) { st.steps = { n: 6 + ((Math.random() * 4) | 0), t: 0 }; const E = st.keyTaken ? XB1.sounds.stepsEveryRet : XB1.sounds.stepsEvery; st.stepsT = E[0] + Math.random() * (E[1] - E[0]); }
   if (st.steps) {
     st.steps.t -= dt;
@@ -642,5 +944,29 @@ export function debug(ctx) {
     // P6b #13: 一本道の曲がりの数(入口から作業場まで)
     turns: () => { let n = 0; for (let i = 2; i < MZ.path.length; i++) { const a = MZ.path[i - 2], b = MZ.path[i - 1], c = MZ.path[i]; if ((b[0] - a[0]) !== (c[0] - b[0]) || (b[1] - a[1]) !== (c[1] - b[1])) n++; } return n; },
     local: (x, z) => ({ u: x - OX, v: z - OZ }), world: (u, v) => ({ x: X(u), z: Z(v) }),
+    // P6b-D
+    hunt: () => (st.hunt ? { t: +st.hunt.t.toFixed(2), phase: st.hunt.phase, why: st.hunt.why || null, inShop: !!st.hunt.inShop, chasing: !!st.hunt.chasing, log: st.hunt.log.slice() } : null),
+    huntPose, coneSees: (P, u, v) => coneSees(P, u, v, st), timeline: () => { const TL = timeline(); return { tSweep: TL.tSweep, tLeave: TL.tLeave, tEnd: TL.tEnd }; },
+    skipHunt: (t) => { if (st.hunt) st.hunt.t = t; },
+    startHunt: (t = 0) => { st.keyTaken = true; st.hunt = { t, phase: 'wait', log: [] }; },   // テスト: 時刻表の途中から(作業場に入る前の時刻なら入った瞬間に立ち位置を覚える)
+    // 3 つの陰が全経路(時刻表を dt 刻み)で光の円錐の 4m 以内に入るか(陰の中心と ±r の 5 点)
+    spotsVsRoute: (dt = 0.05, r = 0.25) => {
+      const TL = timeline(), out = {};
+      for (const sp of HU.spots) {
+        let hits = 0, minDist = 1e9, minLosDist = 1e9;
+        for (let t = HU.doorDelay; t < TL.tEnd; t += dt) {
+          const P = huntPose(t);
+          for (const [du, dv] of [[0, 0], [r, 0], [-r, 0], [0, r], [0, -r]]) {
+            const c = coneSees(P, sp.u + du, sp.v + dv, st);
+            if (c.seen) hits++;
+            minDist = Math.min(minDist, c.dist);
+            if (c.inCone && c.los) minLosDist = Math.min(minLosDist, c.dist);
+          }
+        }
+        out[sp.id] = { hits, minDist: +minDist.toFixed(2), minConeLosDist: minLosDist < 1e8 ? +minLosDist.toFixed(2) : null };
+      }
+      return out;
+    },
+    spots: () => HU.spots.map((p) => ({ ...p, x: X(p.u), z: Z(p.v) })),
   };
 }
