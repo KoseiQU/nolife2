@@ -11,7 +11,7 @@
 //  312_2) 戻り: 鍵の後は 7 部屋(B1〜B7・鏡像)。各部屋で管理人が出口の扉に近づく(座る → 立つ → 戸口の脇)・襲わない・B7 の玄関の扉 = 312 の扉 → 3F(P6b-C: 目標「正面玄関から駐車場へ」)
 //  312_3) 鏡像でも当たりは正しい(乱数で歩き回って壁・家具に入らない・閉じ込めない)・Ctrl は何もしない・死なない・鍵の後に入り直すと 1 部屋だけの普通の 410(奥は開かない)
 //  705_1) 増える(P5b-2b): 奥へ進むほど柱が増える(見ていない・離れた所にだけ)・机の前では入口の扉が柱の列に隠れる(最初の柱だけなら見えていた)
-//  705_2) 反転: 鍵で灯りが一斉に消え、出口は反対側(南)・管理人はそこから現れる → 西の壁際を回って南の出口 → 7F・管理人も出入り口から追ってくる(追跡中は歪み 1)
+//  705_2) 反転: 鍵で灯りが一斉に消え、出口は反対側(南)・管理人はそこから現れる → 西の壁際を回って南の出口 → 7F(追跡中は歪み 1)。P6b-H: 出たら追跡は終わり(管理人は 7F に来ない・副段 escape)
 //  705_3) 歪みは見た目だけ: 歪み 0 と 1 で当たりの一覧が同じ・柱に当たって止まる所が同じ
 //  B1_1) P6b #13 ループ: 前へ歩くだけで、標識灯 2 回目で瞬き(気づく)・3 回目で自然に抜けて迷路の前室へ(その間 z は窓の外へ出ない)。目標「奥の作業場で車のキーを探せ」
 //  B1_2) P6b #13 迷路: 固定の一本道(曲がり 3 回)・歩く間に配置は変わらない・最後の曲がりから作業場の入口が見える(壁を横切らない)・前進だけで作業場へ
@@ -456,7 +456,7 @@ export async function run(N) {
       exitHiddenAtDesk: hidden, exitHiddenFirstAt: s1.exitHiddenAt, fillAppearedAt_playerZ_vs_pillarV: fillBy.slice(0, 8), at };
   });
 
-  await T('705_2_key_lightsout_reverse_manager_chase_7F', async () => {
+  await T('705_2_key_lightsout_reverse_manager_exit_ends_chase', async () => {
     if (N.level !== 'X705') return { pass: false, why: 'needs 705_1' };
     const t0 = N.ai.time;
     const D = SP.def('X705');
@@ -490,14 +490,15 @@ export async function run(N) {
     key('ShiftLeft', false); key('KeyW', false);
     waitTrans();
     const on7 = N.level === 7, back = pos();
-    // 管理人も出口(出入り口)を通って 7F へ追ってくる
-    let enemyOn7 = null;
-    walkTo(16.0, 21.2, { max: 300, run: true });
-    for (let i = 0; i < 60 * 8 && enemyOn7 === null; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 && !N.ai.transit) enemyOn7 = +(N.ai.time - t0).toFixed(2); if (N.ai.state === 'ATTACK') { dead = true; break; } }
+    // P6b-H(§3.14 #2): 出口を抜けたら追跡は終わり。管理人は 7F へ追って来ない(8 秒見ても 7F に 0 フレーム・CHASE でない)。目標「エレベーターで1階へ」
+    let enemyOn7 = 0;
+    for (let i = 0; i < 60 * 8; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 || N.ai.level === 'X705') enemyOn7++; if (N.ai.state === 'ATTACK') { dead = true; break; } }
+    const objAfter = N.hudState().objective;
     const pass = hint.includes('拾う') && st.item === 'b1' && objChase === '逃げろ' && s1.on < 0.05 && s1.revealed && exAfter.length === 1 && exAfter[0].z > 49 && exBefore[0] < 1
-      && portal && portal.a.z > 49 && !!appear && atAmbush && fromNewExit && !dead && maxWarp > 0.99 && on7 && Math.hypot(back.x - D.back.x, back.z - D.back.z) < 0.1 && enemyOn7 !== null && N.ai.state === 'CHASE';
+      && portal && portal.a.z > 49 && !!appear && atAmbush && fromNewExit && !dead && maxWarp > 0.99 && on7 && Math.hypot(back.x - D.back.x, back.z - D.back.z) < 0.1 && enemyOn7 === 0 && N.ai.state !== 'CHASE'
+      && S.sub === 'escape' && objAfter === 'エレベーターで1階へ';
     return { pass, pickHint: hint, item: st.item, objective: objChase, lightsOn: s1.on, revealed: s1.revealed, exitsBefore_z: exBefore, exitsAfter_z: exAfter.map((e) => +e.z.toFixed(2)), portalA: portal && portal.a,
-      appear: appear || null, enemyAt: ePos, atAmbush, fromNewExit, dead, minDist: +minD.toFixed(2), maxWarp, colsUnchangedAtWarp1: colsEq, on7, back, enemyOn7_s: enemyOn7, aiState: N.ai.state };
+      appear: appear || null, enemyAt: ePos, atAmbush, fromNewExit, dead, minDist: +minD.toFixed(2), maxWarp, colsUnchangedAtWarp1: colsEq, on7, back, enemyOn7_frames: enemyOn7, aiState: N.ai.state, aiLevel: N.ai.level, sub: S.sub, objAfter };
   });
 
   await T('705_3_warp_visual_only_same_collision', async () => {

@@ -6,7 +6,8 @@
 //   ②反転(鍵を取ると広間の灯りが一斉に消え、出口は最初と反対側(南の壁)。管理人はそこから現れる = slot ambush。北の入口はふさがる)
 //   ③歪み(追跡中は柱の間隔が詰まり床のタイルが傾く。頂点シェーダだけ。当たりは変えない)
 //  追跡: 鍵を取ると story が第9段「逃げろ」・管理人を ambush へ(_startFinalChase)。このモジュールは管理人に全知(chaseOmni)と広間の経路(nav = 格子の A*)を与え、
-//   出口の出入り口(ai.portals の X705)を南の出口に付け替える。南の出口を抜けると 7F の 705 の前へ(既存の最終追跡に続く。EV は来ない)。
+//   出口の出入り口(ai.portals の X705)を南の出口に付け替える。南の出口を抜けると 7F の 705 の前へ。
+//   P6b-H(§3.14 #2): 出口を抜けたら追跡は終わり(story._startEscape: 管理人は 7F 以外へ・7F を 45 秒避ける・目標「エレベーターで1階へ」)。
 //  光はすべてシェーダの中の計算(天窓の格子・玄関と出口の灯り。three.js のライトは足さない)＋懐中電灯。
 //  座標: 局所 u = x − 420、v = z。y は SPACE_Y からの高さ。北(v 0)が入口、南(v 50)が反転後の出口。
 
@@ -593,8 +594,18 @@ export function exits(ctx) {
 function onLeave(ctx) {
   const st = ctx.state;
   st.log.push({ t: st.t, ev: 'leave', revealed: st.revealed });
-  // 管理人は追跡中なら出入り口を通って 7F へ追ってくる(story の最終追跡)。広間の中の全知は解く
+  // 広間の中の全知は解く。P6b-H: 追跡はここで終わり、管理人は 7F へ追って来ない(story._afterSpaceExit → _startEscape)
   if (ctx.ai && ctx.ai.level === ctx.key) ctx.ai.chaseOmni = false;
+}
+
+// P6b-H(§3.14 #2 改訂 2026-11-12): 最終追跡の途中(鍵を取った後・反転した広間)で死んだ → 追跡をやり直す。復帰は机の手前(鍵を取った直後の位置・南の机を向く)。
+//  広間は反転したまま(同じ空間なので enter はやり直さない = 灯りは消えたまま・出口は南)。鍵を取る前・鍵の後に入り直した暗い広間(keyBefore)は null(物語の段の位置)
+export function respawn(ctx) {
+  const st = ctx.state, s = ctx.story;
+  if (!st.keyTaken || st.keyBefore || !s || s.stage !== 9 || s.sub !== 'chase') return null;
+  if (ctx.ai) ctx.ai.chaseOmni = false;
+  st.log.push({ t: st.t, ev: 'respawn_chase' });
+  return { level: ctx.key, x: X(DK.u), z: Z(DK.v - DK.d / 2 - 0.55), yaw: Math.PI };
 }
 
 // ================================================================ 管理人の経路(格子の A*。柱・机・山を避ける)

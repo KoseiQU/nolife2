@@ -658,17 +658,17 @@ export async function run(N) {
     key('ShiftLeft', false); key('KeyW', false);
     waitTrans();
     const on7 = N.level === 7;
-    // 管理人も 705 から出てくる(出入り口を通って 7F へ)
-    let enemyOn7 = null;
-    walkTo(16.0, 21.2, 300, 0.2, true);
-    for (let i = 0; i < 60 * 8 && enemyOn7 === null; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 && !N.ai.transit) enemyOn7 = +(N.ai.time - t0).toFixed(2); if (N.ai.state === 'ATTACK') { dead = true; break; } }
-    // P6b-D(§3.10 #3 改訂): 階段は鎖のまま。EV で下りる: カゴは 7F に止まっている(呼ぶとすぐ開く)→ 乗って 1 → 扉が閉まると追跡は終わり(管理人は乗れない)→ 1F で第10段
+    // P6b-H(§3.14 #2): 705 を出たら追跡は終わり。出口を抜けてから 5 秒、管理人は 7F にいない・CHASE でない・目標「エレベーターで1階へ」(副段 escape)
+    const tX = N.ai.time;
+    let on7Frames = 0, chaseFrames = 0, objs = new Set();
+    for (let i = 0; N.ai.time - tX < 5.0; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 || N.ai.level === 'X705') on7Frames++; if (N.ai.state === 'CHASE' || N.ai.state === 'APPEAR') chaseFrames++; objs.add(N.hudState().objective); if (N.ai.state === 'ATTACK') { dead = true; break; } }
+    const at5 = { aiLevel: N.ai.level, aiState: N.ai.state, sub: S.sub, objective: N.hudState().objective, avoid7: N.ai._avoided(7), avoidLeft: +((N.ai.avoids.get(7) ?? 0) - N.ai.time).toFixed(1), portal705: N.ai.portals.some((q) => q.id === 'X705'), omni: N.ai.chaseOmni };
+    const escOk = on7Frames === 0 && chaseFrames === 0 && at5.sub === 'escape' && at5.objective === 'エレベーターで1階へ' && [...objs].every((o) => o === 'エレベーターで1階へ') && at5.avoid7 && at5.avoidLeft > 39 && !at5.portal705 && !at5.omni && typeof at5.aiLevel === 'number' && at5.aiLevel !== 7;
+    // P6b-D: 階段は鎖のまま。EV で下りる: カゴは 7F に止まっている(呼ぶとすぐ開く)→ 乗って 1 → 扉が閉まると 1F を避ける → 1F で第10段
     const chainedChase = S.chained && N.doorApi.get('MST7').chained;
     const evOn = !S.evDisabled && N.ai.noEV && !N.ai.allowStairs;
     const car0 = { level: N.elevator.car.level, state: N.elevator.car.state };
-    N.enemyObj.place(30.0, 21.2, -Math.PI / 2);   // 追跡は続けたまま、管理人を東の端へ離して遅くする(呼んで乗る間に捕まらないよう)
-    N.ai._chaseSlowUntil = N.ai.time + 30; N.ai._chaseSlowSpeed = 0.4;
-    const chasing0 = N.ai.state === 'CHASE' || N.ai.state === 'APPEAR';
+    walkTo(16.0, 21.2, 300, 0.2, true);
     const panel = N.world.floors.get(7).panel;
     walkTo(panel.x - 0.18, panel.z - 0.9, 600, 0.15, true);
     face(panel.x, panel.z, 0); N.pump(DT, 2, false);
@@ -689,11 +689,11 @@ export async function run(N) {
     N.pump(DT, 4, false);
     const st = S.state();
     const pass = evBefore && noKey.toast === '鍵がかかっている' && ent.level === 'X705' && pickHint.includes('拾う') && objChase === '逃げろ' && evOn && chainedChase && !!appear && behind
-      && !dead && on7 && enemyOn7 !== null && car0.level === 7 && chasing0 && callHint.includes('呼ぶ') && evToast === '扉が開く' && openedAt7 && inCar
+      && !dead && on7 && escOk && car0.level === 7 && callHint.includes('呼ぶ') && evToast === '扉が開く' && openedAt7 && inCar
       && endAt !== null && endState.open <= 0.001 && endState.ai !== 'CHASE' && endState.aiLevel !== 7 && endState.avoid === 1
       && N.level === 1 && st.stage === 10 && st.item === 'b1' && N.hudState().objective === '食堂の奥の階段から地下へ' && !N.ai.allowStairs && !N.ai.noEV;
-    return { pass, evBefore, noKey, enter: ent, pickHint, objChase, evOn, chainedChase, appear: appear || null, enemyAt: ePos, behind, dead, on7, enemyOn7_s: enemyOn7,
-      car0, chasing0, callHint, evToast, openedAt7, inCar, atCar, chaseEndAt_s: endAt, chaseEnd: endState, level: N.level, stage: st.stage, item: st.item, objective: N.hudState().objective };
+    return { pass, evBefore, noKey, enter: ent, pickHint, objChase, evOn, chainedChase, appear: appear || null, enemyAt: ePos, behind, dead, on7, escape5s: { on7Frames, chaseFrames, ...at5, ok: escOk },
+      car0, callHint, evToast, openedAt7, inCar, atCar, chaseEndAt_s: endAt, chaseEnd: endState, level: N.level, stage: st.stage, item: st.item, objective: N.hudState().objective };
   });
 
   // ---------------------------------------------------------------- 10) 地下の鉄扉 → XB1 → 車のキー
@@ -1306,6 +1306,70 @@ export async function run(N) {
     const pass = lights.length === 2 && lights.every((l) => l.type === 'PointLight' && !l.shadow && l.intensity > 0) && U.text === '地下' && U.plate.material.map && visible1F
       && Math.abs(on.ndc[0]) < 0.8 && Math.abs(on.ndc[1]) < 0.8 && on.mouth > on.around * 1.5 && on.mouth > off.mouth + 3;
     return { pass, lights, text: U.text, visible1F, on, off, signAt: S.basementSignPos && [+S.basementSignPos.x.toFixed(2), +S.basementSignPos.y.toFixed(2), +S.basementSignPos.z.toFixed(2)] };
+  });
+
+  // ---------------------------------------------------------------- 22) P6b-H(§3.14 #2 改訂・#1): 705 の中で(追跡中に)捕まる → 705 の中の机の手前に復帰・副段 chase・鍵は持ったまま・
+  //  管理人は復帰の瞬間 8m 以上離れていて、従来の追跡の開始と同じ広間の口(ambush)から現れて追い直す。逃げて出口を抜けると escape。
+  //  escape 中に 7F で捕まる → 7F の廊下(9c の位置)・副段 escape・管理人は 7F にいない
+  await T('22_p6bh_705_death_retry_and_7F_death_escape', async () => {
+    S.applyStage(9); quiet();
+    N.ai.dormant = false;
+    await tp(7, ...front('705', 0.9), Math.PI);
+    S.item = '705';
+    const ent = openAndEnter('705');
+    const D = { ...N.spaces.def('X705'), x0: N.spaces.def('X705').origin[0] };
+    const deskP = pk('kB1').pos;
+    walkTo(deskP.x, deskP.z - 0.95, 3000);
+    const pickHint = pickAt(pk('kB1'));
+    const subChase = S.sub;
+    const dE = () => (N.ai.level === N.level ? Math.hypot(N.enemyObj.pos.x - N.player.pos.x, N.enemyObj.pos.z - N.player.pos.z) : Infinity);
+    const snap = () => ({ level: N.level, at: pos(), aiLevel: N.ai.level, aiState: N.ai.state, transit: N.ai.transit, dist: +Math.min(999, dE()).toFixed(2), sub: S.sub, item: S.item, objective: S.state().objective,
+      avoid7: N.ai._avoided(7), portal705: N.ai.portals.some((q) => q.id === 'X705'), car: N.elevator.car.level, noEV: N.ai.noEV, evOn: !S.evDisabled, revealed: N.spaces.debug('X705').state().revealed });
+    const catchAndRespawn = () => {
+      const d0 = N.deaths(); let caughtIn = null, at = null;
+      for (let i = 0; i < 60 * 40 && at === null; i++) { N.pump(DT, 1, false); if (caughtIn === null && N.deathState()) caughtIn = N.level; if (N.deaths() === d0 + 1) at = snap(); }
+      return { caughtIn, at };
+    };
+    // A) 机の前で立ち止まったまま捕まる → 机の手前に復帰 → 管理人が ambush に現れて追う
+    const A = catchAndRespawn();
+    const tA = N.ai.time;
+    let minD = Infinity, appear = null, chaseAt = null, objsA = new Set();
+    for (let i = 0; N.ai.time - tA < 5.0; i++) {
+      N.pump(DT, 1, false); objsA.add(N.hudState().objective);
+      minD = Math.min(minD, dE());
+      if (!appear) { const e = N.ai.events.find((q) => q.t > tA && q.ev === 'appear_705'); if (e) appear = { t: +(e.t - tA).toFixed(2), dist: +dE().toFixed(2), at: [+N.enemyObj.pos.x.toFixed(2), +N.enemyObj.pos.z.toFixed(2)], lv: N.ai.level }; }
+      if (chaseAt === null && N.ai.state === 'CHASE') chaseAt = +(N.ai.time - tA).toFixed(2);
+    }
+    const amb = D.at('ambush');
+    const deskFront = { x: deskP.x, z: N.spaces.def('X705').origin[1] + 31.4 - 0.4 - 0.55 };
+    const okA = A.caughtIn === 'X705' && A.at && A.at.level === 'X705' && A.at.sub === 'chase' && A.at.item === 'b1' && A.at.revealed && A.at.dist >= 8 && A.at.portal705
+      && Math.abs(A.at.at.z - deskFront.z) < 0.05 && Math.abs(A.at.at.x - D.x0) < 0.05
+      && appear && appear.lv === 'X705' && appear.dist >= 8 && Math.hypot(appear.at[0] - amb.x, appear.at[1] - amb.z) < 0.8 && chaseAt !== null && [...objsA].filter(Boolean).every((o) => o === '逃げろ') && objsA.has('逃げろ');   // '' = 復帰の暗転が明けるまで(目標は隠れている)
+    // 逃げ直す: 9 番と同じ道(西の壁際を回って南の出口)→ 7F・escape
+    while (N.viewLock.active) N.pump(DT, 1, false);
+    const ex = N.spaces.exits('X705')[0];
+    const path = [[D.x0 - 6, 29.5], [D.x0 - 13.7, 26], [D.x0 - 13.7, 46.0], [D.x0, 46.0], [ex.x, ex.z + 0.6]];
+    let wi = 0, deadRun = false;
+    key('ShiftLeft', true); key('KeyW', true);
+    for (let i = 0; i < 60 * 40 && N.level === 'X705' && wi < path.length; i++) {
+      const p = N.player.pos, [x, z] = path[wi];
+      if (Math.hypot(x - p.x, z - p.z) < 0.4) { wi++; continue; }
+      face(x, z, 0); N.pump(DT, 1, false); if (N.ai.state === 'ATTACK') { deadRun = true; break; }
+    }
+    key('ShiftLeft', false); key('KeyW', false);
+    waitTrans();
+    const escaped = { level: N.level, sub: S.sub, aiLevel: N.ai.level, objective: N.hudState().objective, dead: deadRun };
+    // B) escape 中に 7F で捕まる
+    N.ai.setLevel(7); N.enemy.place(N.player.pos.x + 1.0, N.player.pos.z, Math.PI / 2); N.enemy.setState('ATTACK');
+    const B = catchAndRespawn();
+    for (let i = 0; i < 120 && N.deathState(); i++) N.pump(DT, 1, false);
+    let on7B = 0; const tB = N.ai.time;
+    for (let i = 0; N.ai.time - tB < 3.0; i++) { N.pump(DT, 1, false); if (N.ai.level === 7 || N.ai.level === 'X705') on7B++; }
+    const okB = B.caughtIn === 7 && B.at && B.at.level === 7 && Math.hypot(B.at.at.x - 16.2, B.at.at.z - 21.2) < 0.05 && B.at.sub === 'escape' && B.at.objective === 'エレベーターで1階へ'
+      && typeof B.at.aiLevel === 'number' && Math.abs(B.at.aiLevel - 7) >= 2 && !B.at.transit && B.at.avoid7 && !B.at.portal705 && B.at.car === 7 && B.at.evOn && on7B === 0;
+    const pass = ent.level === 'X705' && pickHint.includes('拾う') && subChase === 'chase' && okA && !deadRun && escaped.level === 7 && escaped.sub === 'escape' && escaped.objective === 'エレベーターで1階へ' && okB;
+    quiet();
+    return { pass, enter: ent.level, pickHint, subChase, in705: { ...A, deskFront, appear, chaseAt, minDistAfterRespawn: +Math.min(999, minD).toFixed(2), objectives: [...objsA], ok: okA }, escaped, on7F: { ...B, on7Frames3s: on7B, ok: okB } };
   });
 
   quiet();

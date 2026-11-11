@@ -24,6 +24,7 @@ export const STORY = {
   fade: 0.22,             // 別空間の出入りの暗転(片道・秒)
   siteChaseDist: 6.0,     // 第11段: 敷地へ出て玄関からこれだけ離れたら管理人が玄関から追ってくる
   chaseAppearDelay: 0.5,  // 第9段: 鍵を取ってから管理人が背後に現れるまで
+  chaseRetryDelay: 2.0,   // P6b-H(§3.14 #2 改訂): 705 の中で死んで机の手前に復帰してから、管理人が広間の口(従来の ambush)に現れるまで
   // P5b-1b 221 の組み替え: 初回は 221 の奥(玄関の壁から u 3.5m = 洋室の入口 LIVING_U0)へ進むと奥の窓際のロッカーから管理人(鍵は拾わない)。
   //  逃げ切る(追跡が解ける・階を変える)と奥の机に小さな鍵が現れる(sub: null → 'flee' → 'return')
   burst221U: 3.5,
@@ -31,6 +32,8 @@ export const STORY = {
   lureRing: 4.8,     // P6b #7: 1 回鳴っている長さ(story_221_lure の長さ 4.79 秒)。この間スマホの画面が明滅する
   phoneFromLocker: 0.4,   // P6b #7: スマホ = 221 の奥の窓際のロッカーの東の縁からこれだけ東・ロッカーの手前の縁の線(ベッドとの間の床)
   spaceExitAvoid: 30.0,   // P6b-C(§3.10 #3): 異空間から出た階には管理人がこの秒数現れない(別の階へ潜伏に行く)
+  escapeAvoid: 45.0,      // P6b-H(§3.14 #2): 705 を出たら管理人は 7F をこの秒数避ける(追跡は終わり)
+  escapeTo: 4,            // P6b-H: そのとき管理人を移す階(7F から 3 階離れ、1F でもない = EV で 1F に着いた所にいない。旧 _endFinalChaseByEV と同じ 4F)
   // P5b-1b 冒頭の見せ場: 410 の戸口(扉の面 x 7.8・z 7.25)を廊下側へこれだけ越えたら(初回だけ)。管理人は 4F の EV ホール(enemy_ai AI.intro)
   introDoor: { x: 7.8, z: 7.25, out: 0.12, half: 0.6 },
 };
@@ -46,7 +49,7 @@ export const SPAWN = {
   7: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },          // 1F ロビー(正面玄関を向く)
   8: { level: 4, x: 8.75, z: 7.3, yaw: -Math.PI / 2 },      // 410 の玄関(窓の方を向く)
   9: { level: 7, x: 18.8, z: 21.2, yaw: -Math.PI / 2 },     // 7F の 705 の手前(東を向く)
-  '9c': { level: 7, x: 16.2, z: 21.2, yaw: Math.PI / 2 },   // 最終追跡の途中で死んだ時: 705 の西の廊下(EV ホールの方を向く。P6b-D: 階段は鎖、EV で下りる)
+  '9c': { level: 7, x: 16.2, z: 21.2, yaw: Math.PI / 2 },   // 705 を出た後(escape)に死んだ時: 705 の西の廊下(EV ホールの方を向く。P6b-D: 階段は鎖、EV で下りる)。P6b-H: 705 の中で死んだ時は x705.respawn(机の手前)
   10: { level: 1, x: 6.9, z: 7.0, yaw: 0 },                 // 食堂(奥の地下への階段の方を向く)
   11: { level: 1, x: 17.6, z: 24.2, yaw: Math.PI },         // 1F ロビー(正面玄関を向く)
 };
@@ -108,6 +111,7 @@ export class Story {
     if (this.stage === 1 && this.sub === 'return') return '1r';
     if (this.stage === 3 && this.getLevel() === 'X105') return '3x';   // P6b-C: 105 は第3段
     if (this.stage === 9 && this.sub === 'chase') return '9c';
+    if (this.stage === 9 && this.sub === 'escape') return '9e';   // P6b-H(§3.14 #2): 705 を出た後「エレベーターで1階へ」
     if (this.stage === 10 && this.getLevel() === 'XB1') return '10b';   // P6b #13: 地下の中「奥の作業場で車のキーを探せ」
     if (this.stage === 11 && this.getLevel() === 'XB1') return this._xb1Hunting() ? '10h' : '10c';   // P6b #13: 車のキーを取った後、地下の中は「鉄扉へ戻れ」。P6b-D: 管理人の見回りの間は「息を潜めろ」
     return this.stage;
@@ -493,16 +497,52 @@ export class Story {
     this.log('park_car', { level });
   }
   // P6b-D: 最終追跡で EV に乗って扉が閉まった → 追跡は終わり。管理人は乗れない・追って来ない(本体は別の階へ潜伏に、1F を 30 秒避ける)
+  //  P6b-H(§3.14 #2): 705 を出た時点で追跡は終わっている(escape)。乗って扉が閉まったら、1F にいる・1F へ向かっている管理人だけ 4F へ移し、1F を 30 秒避ける
   _endFinalChaseByEV() {
     this.finalEV = true;
-    this.log('final_chase_ev');
+    this.log('final_chase_ev', { sub: this.sub });
     if (!this.aiControl) return;
-    this.ai.chaseOmni = false; this.ai.chaseFast = 0;
-    if (this.onAIReset) this.onAIReset(4);
+    const ai = this.ai;
+    ai.chaseOmni = false; ai.chaseFast = 0;
+    const near1 = this.sub !== 'escape' || ai.level === 1 || ai.level === 'G' || ai.level === 'B1' || ai.goalLv === 1 || ai.transit || ['CHASE', 'APPEAR', 'ALERT', 'ATTACK', 'EVWAIT', 'EVAMBUSH'].includes(ai.state);
+    if (near1 && this.onAIReset) this.onAIReset(STORY.escapeTo);
     this.ai.allowStairs = false; this.ai.noEV = false;
     this.ai.portals = this.ai.portals.filter((p) => p.id !== 'X705');
     this.ai.avoidFloor(1, STORY.spaceExitAvoid);
     this.pending = [];
+  }
+
+  // P6b-H(§3.14 #2 改訂): 705 の中で死んだ → 追跡のやり直し(鍵は持ったまま・副段 chase)。管理人は _startFinalChase と同じく広間の口(ambush)に現れる。
+  //  復帰の瞬間の管理人は main の ai.reset で 4F(705 = 7F から 3 階)。現れるのは chaseRetryDelay 秒後(机の手前から ambush まで約 15m)
+  _retryFinalChase() {
+    this.finalEV = false;
+    this.log('stage', { stage: 9, sub: 'chase', why: 'retry_705' });
+    this._parkCar(7);
+    if (!this.aiControl) return;
+    const D = SPACE_DEFS.X705;
+    this.ai.allowStairs = false; this.ai.noEV = true;
+    // 705 の出入り口は鍵を取った時に x705 が南の出口へ付け替えたまま残っている(無ければ南の出口 = ambush の 3.2m 南 = x705.portal(south)と同じ点で足す)
+    if (!this.ai.portals.some((p) => p.id === 'X705')) { const a0 = D.at('ambush'); this.ai.portals.push({ id: 'X705', a: { lv: 'X705', x: a0.x, z: a0.z + 3.2 }, b: { lv: 7, x: D.back.x, z: D.back.z } }); }
+    this.pending.push({ t: STORY.chaseRetryDelay, fn: () => {
+      if (this.getLevel() !== 'X705' || this.sub !== 'chase') return;
+      const a = D.at('ambush');
+      this.ai.appear({ level: 'X705', x: a.x, z: a.z, lock: 1.0, recover: 1.5, label: 'appear_705' });
+    } });
+  }
+  // P6b-H(§3.14 #2): 705 を出た(または 705 を出た後に 7F で死んで 7F の廊下から再開)→ 追跡は終わり。第9段の副段 escape「エレベーターで1階へ」。
+  //  階段は鎖のまま・EV は使える(カゴは 7F で待つ)。管理人は追って来ない: 追跡を解き、7F 以外へ移して 7F を 45 秒避ける(why = 'exit')。
+  //  死亡からの再開(why = 'respawn')では管理人の移動と 7F の猶予は main の ai.onPlayerRespawn(§3.14 #1)が行う
+  _startEscape(why) {
+    this.sub = 'escape'; this.finalEV = false;
+    this.pending = [];   // 追跡の開始の「管理人が現れる」予定が残っていれば消す
+    this.log('stage', { stage: 9, sub: 'escape', why });
+    this._parkCar(7);
+    if (!this.aiControl) return;
+    const ai = this.ai;
+    ai.chaseOmni = false; ai.chaseFast = 0;
+    ai.allowStairs = false; ai.noEV = true;   // 階段は鎖。管理人はカゴを使わない(カゴは 7F で待つ。階の移動は姿を消して行う)
+    ai.portals = ai.portals.filter((p) => p.id !== 'X705');   // 705 の出入り口は消す(705 からもう出てこない)
+    if (why === 'exit') ai.evacuateFloor(7, { sec: STORY.escapeAvoid, to: STORY.escapeTo, why: 'x705_exit' });
   }
 
   // ?stage=N / テスト: その段の開始状態へ(必要な解放と鍵)
@@ -544,7 +584,7 @@ export class Story {
     // P5b-2a: 別空間の中で死んだ時はモジュールが決める(X105 = 105 の扉の前。無ければ段の開始位置。P5b-4: X312 は死なない空間)
     const lv = this.getLevel();
     if (isSpace(lv)) { const r = this.spaces.respawn(lv); if (r) return r; }
-    return this.stage === 9 && this.sub === 'chase' ? SPAWN['9c'] : SPAWN[this.stage];
+    return this.stage === 9 && (this.sub === 'chase' || this.sub === 'escape') ? SPAWN['9c'] : SPAWN[this.stage];
   }
   afterRespawn() {
     this.trans = null; this.siteChased = false; this.pending = [];
@@ -556,12 +596,11 @@ export class Story {
       this.log('stage', { stage: 1, sub: null, why: 'respawn_before_escape' });
     }
     if (this.aiControl && this.stage === 1 && this.sub !== 'return') this.ai.setDormant(true);
-    if (this.stage === 9 && this.sub === 'chase') { this.finalEV = false; this._parkCar(7); }   // P6b-D: カゴは 7F で待つ
-    if (this.aiControl && this.stage === 9 && this.sub === 'chase') {   // 最終追跡のやり直し: 705 の戸口から現れる
-      const D = SPACE_DEFS.X705;
-      this.ai.allowStairs = false; this.ai.noEV = true;
-      this.pending.push({ t: 2.0, fn: () => this.ai.appear({ level: 7, x: D.back.x, z: D.back.z, lock: 0.8, recover: 1.2, label: 'appear_705' }) });
-    }
+    // P6b-H(§3.14 #2 改訂 2026-11-12): 死んだ時の副段と場所で分ける。
+    //  705 の中(追跡中)→ x705.respawn で机の手前に復帰・副段 chase のまま・管理人は従来の追跡の開始と同じ広間の口(ambush)から現れて追う(追跡のやり直し)。
+    //  705 を出た後(escape)・それ以外 → 7F の廊下('9c')・副段 escape。管理人を 7F から離して 7F を避けるのは main の ai.onPlayerRespawn(§3.14 #1)
+    if (this.stage === 9 && this.sub === 'chase' && this.getLevel() === 'X705') this._retryFinalChase();
+    else if (this.stage === 9 && (this.sub === 'chase' || this.sub === 'escape')) this._startEscape('respawn');
     this.log('respawn', { stage: this.stage, sub: this.sub });
   }
 
@@ -585,10 +624,10 @@ export class Story {
   }
   _fadeTo(fn) { this.trans = { t: 0, fn, done: false }; this.player.frozen = true; }
   // P6b-C(§3.10 #3): 異空間(105・312・705・地下)から出たら、管理人は異空間の追跡を終え、出た階の廊下には spaceExitAvoid 秒現れない(別の階へ潜伏に行く)。
-  //  例外: 第9段の最終追跡(705 の鍵の後)は従来どおり 705 から 7F へ追ってくる(§3.10 の表の第9段「従来どおり」。鎖が外れて階段で逃げる)
+  //  P6b-H(§3.14 #2): 第9段の最終追跡(705 の鍵の後)で 705 を出た時も追跡は終わり(旧「705 だけは 7F まで追って来る」は失効)→ 副段 escape・7F を 45 秒避ける
   _afterSpaceExit(space, back) {
+    if (space === 'X705' && this.mode === 'play' && this.stage === 9 && this.sub === 'chase') { this._startEscape('exit'); this.log('space_exit_escape', { space, ai: this.ai && this.ai.level }); return; }
     if (!this.aiControl || this.mode !== 'play') return;
-    if (space === 'X705' && this.stage === 9 && this.sub === 'chase') { this.log('space_exit_chase_kept', { space }); return; }
     const ai = this.ai;
     ai.chaseOmni = false;
     const near = ai.level === space || ai.level === back || ai.transit || ai.goalLv === back || ['CHASE', 'APPEAR', 'ALERT', 'ATTACK'].includes(ai.state);
@@ -676,10 +715,10 @@ export class Story {
         }
       }
     }
-    // P6b-D: 最終追跡で EV に乗って扉が閉まったら追跡は終わり
-    if (this.stage === 9 && this.sub === 'chase' && !this.finalEV && typeof lv === 'number' && this.elevator.inCar(p.x, p.z, lv) && this.elevator.car.open <= 0.001) this._endFinalChaseByEV();
+    // P6b-D: 最終追跡で EV に乗って扉が閉まったら追跡は終わり(P6b-H: 705 を出た後の escape も。1F を避ける)
+    if (this.stage === 9 && (this.sub === 'chase' || this.sub === 'escape') && !this.finalEV && typeof lv === 'number' && this.elevator.inCar(p.x, p.z, lv) && this.elevator.car.open <= 0.001) this._endFinalChaseByEV();
     // 第9段の最終追跡: 1F(または敷地)まで下りたら第10段「地下へ」(P6b-D: EV で 1F に着いた時も)
-    if (this.stage === 9 && this.sub === 'chase' && (lv === 1 || lv === 'G')) this.setStage(10);
+    if (this.stage === 9 && (this.sub === 'chase' || this.sub === 'escape') && (lv === 1 || lv === 'G')) this.setStage(10);
     // 第11段: 敷地へ出て玄関から離れたら、管理人が玄関から追ってくる(最後だけ。安全地帯が破られる)
     if (this.stage === 11 && lv === 'G' && !this.siteChased && this.aiControl && Math.hypot(p.x - 17.6, p.z - 28.1) >= STORY.siteChaseDist) {
       this.siteChased = true;
