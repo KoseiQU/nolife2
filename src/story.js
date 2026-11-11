@@ -529,7 +529,7 @@ export class Story {
       if (n >= 11) this._addEntrancePortal();
     }
     this._updateChains(true);   // P6b-C(§3.10 #3)
-    if (this.ai) this.ai.avoid = null;   // P6b-C: 異空間から出た階を避ける猶予は段をやり直すと消す
+    if (this.ai) { if (this.ai.clearAvoid) this.ai.clearAvoid(); else this.ai.avoid = null; }   // P6b-C: 異空間から出た階を避ける猶予は段をやり直すと消す(P6b-H: 復帰の猶予も)
     this.log('apply_stage', { stage: n });
     if (this.winWatcher) { this.winWatcher.hide('stage'); this.winWatcher.done = false; }   // P5b-2b
     if (teleport) { const s = SPAWN[n]; this.teleport(s.level, s.x, s.z, s.yaw); }

@@ -430,6 +430,7 @@ world.onDoorRepaired = (d) => doorFx.onRepaired(d);
 if (TOUR) { ai.setState('SCRIPTED'); enemy.root.removeFromParent(); }
 else if (PARAMS.has('noai')) ai.setState('SCRIPTED');
 else ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
+ai.home = ENEMY_HOME;   // P6b-H: 復帰時に管理人を移す先の EV ホールの立ち位置
 
 // ---------------------------------------------------------------- peephole (P2b → P6b-A §3.9 #1: 覗き穴のある居室すべて)
 const door410 = world.doorById.get('410');
@@ -649,6 +650,8 @@ function updateDeath(dt) {
     player.frozen = false;
     ai.reset(ENEMY_HOME.x, ENEMY_HOME.z, ENEMY_HOME.yaw);
     if (story && story.active) story.afterRespawn();
+    // P6b-H(§3.14 #1): 復帰先の階に管理人がいたら(向かっていたら・潜んでいたら)2 階以上離れた階の EV ホールへ移し、その階を 45 秒避ける(第1段の待機はそのまま)
+    if (!TOUR && !PARAMS.has('noai')) ai.onPlayerRespawn(sp.level);
     deathCount++;
   }
   if (t >= respawnAt + DEATH.fadeIn) { death = null; overlay.style.opacity = '0'; flash.style.opacity = '0'; caption.style.opacity = '0'; }

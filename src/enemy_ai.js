@@ -100,6 +100,9 @@ export const AI = {
     tense: { player: 1.8, adjacent: 1.3, patrolMul: 0.5, nearRooms: 3 },   // 緊張: プレイヤーの階へ寄せる・巡回は短く・プレイヤーに近い空室から選ぶ。P6b-A: player 2.5→1.8
     //  プレイヤーの階の確率(隣接 2 階・残り 4 階): normal 29%・tense 38%・calm 13%(P6b-A 前は 39/57/19%)
   },
+  // P6b-H(§3.14 #1): 死亡→復帰の瞬間、復帰先の階に(いる・向かっている・潜んでいる)管理人を gap 階以上離れた階の EV ホールへ移し、その階を sec 秒避ける。
+  //  home = EV ホールの立ち位置(main の ENEMY_HOME と同じ。main が ai.home に差し替える)
+  respawnAvoid: { sec: 45, gap: 2, home: { x: 6.9, z: 20.6, yaw: Math.PI } },
   // P5a: 別の階の音(階差で減衰)。聞こえた大きさ = loud × att[階差]。threshold 以上ならその階へ EV で向かう
   floorHear: { att: [1, 0.5, 0.22, 0], threshold: 0.4, cooldown: 25, runEvery: 1.5,
     loud: { run: 1.0, fall: 1.0, crash: 2.0, door: 0.45, window: 0.3 } },
@@ -242,6 +245,10 @@ export class EnemyAI {
     this.dormant = false;            // 第1段(221 の飛び出しまで)は館内に管理人がいない(描かない・動かない・何も感じない)
     this.allowStairs = false;        // 第9段の最終追跡だけ階段で追ってくる(§3.8 B の「階の移動は EV だけ」は徘徊の規則。追跡の台本上の例外)
     this.noEV = false;               // 第9段の最終追跡では EV を使わない(EV は来ない)
+    this.avoids = new Map();         // P6b-C/P6b-H: 避ける階 → いつまで(ai.time)。avoid は最後に掛けた 1 件(従来の読み口・テスト用)
+    this.avoid = null;
+    this.home = AI.respawnAvoid.home;   // P6b-H: 移す先の EV ホールの立ち位置(main が ENEMY_HOME を入れる)
+    this.goalLv = null;
     this.portals = [];               // [{ id, a:{lv,x,z}, b:{lv,x,z} }] グラフの無い階との出入り口(705 の別空間・正面玄関＝第11段だけ)
     // P5b-2a: 別空間の中の追跡。spaceNav(lv, fx, fz, tx, tz) → [{x, z}](空間のモジュールの経路。main が spaces.nav をつなぐ)、
     //  chaseOmni = 追跡中は見失わない(105 の長い廊下の追いかけっこ。扉の向こうへ逃げても追ってくる)
@@ -354,6 +361,7 @@ export class EnemyAI {
     this.uninterruptible = false;
     this.pending = null;
     this.transit = false;
+    this.goalLv = null;   // P6b-H: 向かっていた階は取り消す(古い行き先で「その階へ向かっている」と誤判定しない)
     this.setLevel(lv);
     this.enemy.place(x, z, yaw);
     this.enemy.setFace('grin', 0, true);
@@ -1790,10 +1798,11 @@ export class EnemyAI {
     const since = this.time - this.lastEncounter, D = AI.director;
     return since < D.calmAfter ? 'calm' : since > D.tenseAfter ? 'tense' : 'normal';
   }
-  _playerFloorNum() {
-    const p = this._plv();
-    if (isSpace(p)) return typeof SPACE_HOST[p] === 'number' ? SPACE_HOST[p] : 1;   // P5b-1: 別空間は入口の階
-    return typeof p === 'number' ? p : p === 'RB' ? 7 : 1;   // 屋上B=7F、敷地・地下=1F として数える
+  _playerFloorNum() { return this._floorNum(this._plv()); }
+  // 階の番号(1〜7)。P5b-1: 別空間は入口の階、屋上B=7F、敷地・地下=1F として数える(P6b-H: 管理人の階・復帰先の階にも使う)
+  _floorNum(p) {
+    if (isSpace(p)) return typeof SPACE_HOST[p] === 'number' ? SPACE_HOST[p] : 1;
+    return typeof p === 'number' ? p : p === 'RB' ? 7 : 1;
   }
   // 各階の重み(1〜7F)。phase を省くと今の監督役の段階
   floorWeights(phase = this.phase()) {
@@ -1812,8 +1821,45 @@ export class EnemyAI {
     return out;
   }
   // P6b-C(§3.10 #3): 異空間から出た階を sec 秒避ける(潜伏先の階の重み 0・その階の物音でも向かわない)。story._afterSpaceExit が呼ぶ
-  avoidFloor(lv, sec) { this.avoid = { lv, until: this.time + sec }; this.log('avoid_floor', { lv, sec }); }
-  _avoided(lv) { return !!(this.avoid && this.avoid.lv === lv && this.time < this.avoid.until); }
+  //  P6b-H: 階ごとに持つ(リスポーンの 45 秒と異空間の 30 秒が別の階で重なっても両方効く。同じ階は長い方)
+  avoidFloor(lv, sec) {
+    const until = Math.max(this.time + sec, this.avoids.get(lv) ?? -Infinity);
+    this.avoids.set(lv, until);
+    this.avoid = { lv, until };
+    this.log('avoid_floor', { lv, sec });
+  }
+  _avoided(lv) { const u = this.avoids.get(lv); return u !== undefined && this.time < u; }
+  clearAvoid() { this.avoids.clear(); this.avoid = null; }
+  // P6b-H(§3.14 #1): プレイヤーが lv(復帰先。敷地・地下・異空間は入口の階として数える)で復帰した瞬間に main が呼ぶ。
+  //  管理人がその階にいる・その階へ向かっている(EV で移動中を含む)・その階で潜んでいる → gap 階以上離れた階の EV ホールへ移す(暗転中・別の階なので見えない)。
+  //  その階は sec 秒避ける(潜伏先に選ばない・その階の物音でも来ない)。第1段の待機(dormant)はそのまま。opts.to で移す階を決め打ちできる(705 の出口)
+  onPlayerRespawn(lv, opts = {}) { return this.evacuateFloor(lv, { why: 'respawn', ...opts }); }
+  evacuateFloor(lv, { sec = AI.respawnAvoid.sec, to = null, why = 'respawn' } = {}) {
+    const pn = this._floorNum(lv), G = AI.respawnAvoid.gap;
+    if (this.dormant) { this.log('respawn_avoid', { why, lv: pn, skip: 'dormant' }); return null; }
+    const mine = this._floorNum(this.level);
+    const heading = this.goalLv != null && this._floorNum(this.goalLv) === pn && this.state !== 'DEAD';
+    const near = mine === pn || heading;
+    let dest = null;
+    if (near) {
+      if (to != null) dest = to;
+      else if (!this.transit && !heading && Math.abs(mine - pn) >= G) dest = mine;
+      else {
+        const all = [1, 2, 3, 4, 5, 6, 7];
+        let cand = all.filter((f) => Math.abs(f - pn) >= G);
+        const free = cand.filter((f) => !this._avoided(f));
+        if (free.length) cand = free;
+        if (!cand.length) { const far = Math.max(...all.map((f) => Math.abs(f - pn))); cand = all.filter((f) => Math.abs(f - pn) === far); }
+        dest = cand[Math.min(cand.length - 1, Math.floor(this._rand() * cand.length))];
+      }
+      const H = this.home || AI.respawnAvoid.home;
+      if (this.elevator && this.elevator.npc && !this.elevator.npc.ambush) this.elevator.npc = null;   // EV で移動中だった: カゴの乗客を降ろす(行き先の取り消し)
+      this.reset(H.x, H.z, H.yaw, dest);
+    }
+    this.avoidFloor(pn, sec);
+    this.log('respawn_avoid', { why, lv: pn, moved: near, from: mine, heading, to: dest });
+    return { lv: pn, moved: near, to: dest };
+  }
   _chooseFloor(phase = this.phase(), rnd = this._rand) {
     const w = this.floorWeights(phase);
     let sum = 0; for (const k in w) sum += w[k];

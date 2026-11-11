@@ -1257,6 +1257,72 @@ export async function run(N) {
     return { pass, near, far, lurkingInRoom: lurk, dormant: dorm };
   });
 
+  // 42) P6b-H(§3.14 #1): 死亡→復帰の瞬間、復帰先の階(4F)にいた管理人は 2 階以上離れた階の EV ホールへ移り、4F を 45 秒避ける(重み 0・物音で来ない・潜伏先に選ばない)。
+  //  復帰先の階へ EV で向かっていた管理人は取り消される。第1段の待機(dormant)はそのまま
+  await T('42_p6bh_respawn_manager_leaves_floor', async () => {
+    W.reset();
+    N.setView(6.9, 7.6, Math.PI, 0); N.setFlashlight(false);
+    // A) 4F の廊下で管理人に捕まる → 4F(CHECKPOINT)に復帰
+    N.enemy.place(6.9, 8.8, Math.PI);
+    N.ai.lastKnown = { x: 6.9, z: 7.6 };
+    N.ai.setState('CHASE', { force: true, log: true });
+    const d0 = N.deaths(), t0 = N.ai.time;
+    let atRespawn = null;
+    for (let i = 0; i < 60 * 12 && atRespawn === null; i++) {
+      N.pump(DT, 1, false);
+      if (N.deaths() === d0 + 1) atRespawn = { aiLevel: N.ai.level, playerLevel: N.level, transit: N.ai.transit, state: N.ai.state, w4: N.ai.floorWeights()[4], avoided: N.ai._avoided(4), t: +(N.ai.time - t0).toFixed(2) };
+    }
+    const ev = N.ai.events.filter((e) => e.t >= t0 && e.ev === 'respawn_avoid').pop() || null;
+    const tR = N.ai.time;
+    // 45 秒: 4F で走る(別の階の管理人に足音が届く)・4F の大きな物音を 3 秒ごとに出す・潜伏先の階を毎秒 20 回引く
+    let on4 = 0, toward4 = 0, picked4 = 0, noiseGo = 0, maxW4 = 0, frames = 0, run = false;
+    const ex = (e) => e.t > tR;
+    for (let i = 0; N.ai.time - tR < 44.5; i++) {
+      if (i % 90 === 0) { run = !run; W.key('ShiftLeft', run); W.key('KeyW', run); N.setView(6.9, run ? 9.0 : 16.0, run ? 0 : Math.PI, 0); }
+      if (i % 180 === 0 && N.ai.floorNoise(4, 6.9, 12.0, 'crash')) noiseGo++;
+      if (i % 3 === 0 && N.ai._chooseFloor() === 4) picked4++;
+      N.pump(DT, 1, false); frames++;
+      if (N.ai.level === 4) on4++;
+      if (N.ai.goalLv === 4) toward4++;
+      maxW4 = Math.max(maxW4, N.ai.floorWeights()[4]);
+      if (N.deaths() > d0 + 1) break;
+      if (i % 600 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+    W.key('ShiftLeft', false); W.key('KeyW', false); N.pump(DT, 2, false);
+    const evs = N.ai.events.filter(ex);
+    const heard4 = evs.filter((e) => e.ev === 'heard_floor' && e.lv === 4).length, avoidedNoise = evs.filter((e) => e.ev === 'floor_noise_avoided' && e.lv === 4).length;
+    const lurk4 = evs.filter((e) => e.ev === 'lurk_pick' && e.lv === 4).length;
+    const during = { frames, on4, toward4, picked4, noiseGo, maxW4, heard4, avoidedNoise, lurk4, dead: N.deaths() > d0 + 1 };
+    for (let i = 0; N.ai.time - tR < 45.3; i++) N.pump(DT, 1, false);
+    const after = { avoided: N.ai._avoided(4), w4: +N.ai.floorWeights()[4].toFixed(2) };
+    const okA = atRespawn && atRespawn.playerLevel === 4 && typeof atRespawn.aiLevel === 'number' && Math.abs(atRespawn.aiLevel - 4) >= 2 && !atRespawn.transit && atRespawn.state === 'PATROL'
+      && atRespawn.w4 === 0 && atRespawn.avoided && ev && ev.moved && ev.lv === 4
+      && on4 === 0 && toward4 === 0 && picked4 === 0 && noiseGo === 0 && maxW4 === 0 && heard4 === 0 && avoidedNoise >= 10 && lurk4 === 0 && !during.dead && !after.avoided && after.w4 > 0;
+    // B) 2F の管理人が 4F の物音で EV に乗って 4F へ向かう途中 → 4F で復帰(main と同じ API)→ 取り消し・2 階以上離れた階へ・4F を避ける
+    W.reset();
+    N.setView(6.9, 7.6, Math.PI, 0);
+    N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw, 2);
+    N.ai._lastFloorGo = -1e9;
+    const go = N.ai.floorNoise(4, 6.9, 12.0, 'crash');
+    let riding = null;
+    for (let i = 0; i < 60 * 30 && riding === null; i++) { N.pump(DT, 1, false); if (N.ai.transit && N.ai.goalLv === 4) riding = { level: N.ai.level, goal: N.ai.goalLv, car: N.elevator.car.state, npc: !!N.elevator.npc }; }
+    const r = N.ai.onPlayerRespawn(4);
+    const afterB = { level: N.ai.level, transit: N.ai.transit, goal: N.ai.goalLv, state: N.ai.state, npc: !!N.elevator.npc, avoided: N.ai._avoided(4) };
+    let on4B = 0, toward4B = 0;
+    for (let i = 0; i < 60 * 15; i++) { N.pump(DT, 1, false); if (N.ai.level === 4) on4B++; if (N.ai.goalLv === 4) toward4B++; }
+    const okB = go && riding && r && r.moved && typeof afterB.level === 'number' && Math.abs(afterB.level - 4) >= 2 && !afterB.transit && afterB.goal === null && afterB.state === 'PATROL' && !afterB.npc && afterB.avoided
+      && on4B === 0 && toward4B === 0;
+    // C) 第1段の待機(dormant)はそのまま(動かさない・猶予も掛けない)
+    W.reset();
+    N.ai.setDormant(true);
+    const lvC0 = N.ai.level, rC = N.ai.onPlayerRespawn(lvC0);
+    const okC = rC === null && N.ai.level === lvC0 && N.ai.dormant && !N.ai._avoided(lvC0);
+    N.ai.setDormant(false);
+    Object.assign(N.elevator.car, { level: 4, state: 'idle', open: 0, pending: [], riding: false, to: null }); N.elevator.npc = null;
+    W.reset();
+    return { pass: !!(okA && okB && okC), A: { atRespawn, event: ev, during, after }, B: { floorNoiseGo: go, riding, result: r, after: afterB, on4: on4B, toward4: toward4B }, C: { level: lvC0, result: rC, ok: okC } };
+  });
+
   W.reset();
   N.render();
   if (new URLSearchParams(location.search).get('fps') === '1') { out.fps = await measureFps(N); show(); }
@@ -1306,6 +1372,8 @@ function harness(N) {
       // 死亡演出が残っていれば流し切る
       for (let i = 0; i < 400 && N.deathState(); i++) N.pump(DT, 1, false);
       N.ai.reset(N.ENEMY_HOME.x, N.ENEMY_HOME.z, N.ENEMY_HOME.yaw);
+      if (N.ai.clearAvoid) N.ai.clearAvoid();   // P6b-H: 死亡→復帰で掛かった「階を避ける」猶予を次のテストへ持ち越さない
+      N.ai.events.length = 0;   // P6b-H: 記録は 400 件で古い方から捨てる。番号(ev0 = events.length)で切り出すテストが満杯で崩れないよう、テストごとに空にする
       N.pump(DT, 1, false);
     },
   };
