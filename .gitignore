@@ -20,3 +20,6 @@ build/logs/
 
 # P4d: ユーザーの声の録音の元ファイル(iPhone のボイスメモなど)。tools/import_rec.sh が assets/audio/tts/<ID>.wav に変換する。元ファイルはコミットしない
 assets/audio/rec_in/
+
+# 公開リポジトリに含めない（macOS読み上げの仮声・本人の録音）
+assets/audio/tts/
